@@ -366,4 +366,4 @@ antares/
 3. `make test` → confirm baseline green.
 4. Work the subphase. When exit criterion passes → phase-gate checklist (§8) → log → done.
 
-**Current position:** P1.1–P1.4 complete (listener; RESP parser + 30-case capture corpus; pooled writer; pipeline loop with 10k-command order test, live smoke green). Next: P1.5 — exact Redis error strings captured and pinned with string-equality tests.
+**Current position:** P1.1–P1.5 complete (listener; parser + 30-case capture corpus; pooled writer; pipeline loop with 10k-command test; error framework with a 12-case live differential battery byte-identical to reference Redis). Next: P1.6 — fuzz harness (15 min clean) + differential smoke via go-redis.

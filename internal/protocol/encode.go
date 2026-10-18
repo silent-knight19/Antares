@@ -44,11 +44,18 @@ func (e *Encoder) Simple(s string) {
 	e.buf = append(e.buf, '\r', '\n')
 }
 
-// Error writes -<msg>\r\n. msg is the full error body, e.g.
-// "ERR unknown command 'foo'" (P1.5 owns the exact strings).
+// Error writes -<msg>\r\n, mapping CR and LF to spaces exactly like Redis's
+// addReplyErrorFormat, so user-derived bytes (command names, arguments)
+// can never corrupt the reply stream.
 func (e *Encoder) Error(msg string) {
 	e.buf = append(e.buf, '-')
-	e.buf = append(e.buf, msg...)
+	for i := 0; i < len(msg); i++ {
+		c := msg[i]
+		if c == '\r' || c == '\n' {
+			c = ' '
+		}
+		e.buf = append(e.buf, c)
+	}
 	e.buf = append(e.buf, '\r', '\n')
 }
 

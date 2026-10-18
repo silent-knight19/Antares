@@ -108,3 +108,15 @@
 - QBank updated: Q11 refreshed with the current strongest evidence; note 4 wording fixed.
 - Exit evidence: `make test-race` green — server 14/14 including a 10 000-command single-write ECHO pipeline (distinct payloads read back in order, no extra replies), flush-without-further-input, and protocol-error reply+close; live smoke: mixed multibulk/inline pipeline against `bin/antares -port 6381` → `+PONG +PONG $2 hi -ERR unknown command 'FOO'`, SIGTERM → clean stop.
 - Next session first task: P1.5 — capture exact Redis error strings (unknown command incl. arg quoting/limits, protocol errors, wrong arity) and pin them with string-equality tests.
+
+---
+
+### 2026-10-18 — P1.5: error framework, captured from Redis 7.4.11
+
+- Built: `internal/protocol/errors.go` — `ProtocolErrorReply`, `WrongArity`, `UnknownCommand` with Redis's 128-byte quoted-args budget; `Encoder.Error` now sanitizes CR/LF to spaces like `addReplyErrorFormat`, so user-derived bytes can never corrupt the reply stream; `internal/server/server.go` uses the shared protocol-error body; `cmd/antares` stopgap handler now replies capture-exact (PING message → bulk, PING/ECHO arity, unknown command). Tests: `internal/protocol/errors_test.go` (string-equality table + sanitization) and `cmd/antares/main_test.go` (handler replies).
+- Files touched: `internal/protocol/errors.go`, `internal/protocol/errors_test.go`, `internal/protocol/encode.go`, `internal/server/server.go`, `cmd/antares/main.go`, `cmd/antares/main_test.go`, `docs/COMPATIBILITY.md`, `docs/PLAN.md`, `docs/FILE_MANIFEST.md`, `docs/PROJECT_LOG.md`.
+- Issues: two more capture-vs-memory corrections: (1) Redis 7.4 quotes unknown-command arguments space-separated (`'bar' 'baz' `) with no commas, group capped at 128 bytes, each argument cut to the remaining budget; (2) formatted error replies map CR/LF to spaces — visible both in an argument containing CRLF and in the empty-bulk-header protocol error (`got ' '`).
+- ADRs written: none.
+- QBank updated: none.
+- Exit evidence: `make test-race` green across all packages; live 12-case differential battery (unknown command incl. truncation edges, arity, PING forms, protocol errors, CRLF sanitization) byte-identical between `bin/antares` and the digest-pinned reference Redis; COMPATIBILITY open question updated (only OOM wording remains, P7.2).
+- Next session first task: P1.6 — fuzz harness (`go test -fuzz`) with 15-minute clean run, then differential smoke via go-redis (PING/ECHO).

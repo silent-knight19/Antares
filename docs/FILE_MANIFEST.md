@@ -34,12 +34,13 @@
 
 | Path | What it is | Ownership |
 |---|---|---|
-| `cmd/antares/main.go` | Server entry point: flags (`-bind`, `-port`, `-max-conns`, `-idle-timeout`), slog logs, SIGINT/SIGTERM → graceful shutdown; P1.4 stopgap handler (PING/ECHO) until the executor | scaffold |
+| `cmd/antares/main.go` | Server entry point: flags (`-bind`, `-port`, `-max-conns`, `-idle-timeout`), slog logs, SIGINT/SIGTERM → graceful shutdown; P1.6 stopgap handler (PING/ECHO) until the executor | scaffold |
+| `cmd/antares/main_test.go` | Stopgap-handler replies pinned to Redis 7.4.11 captures | scaffold |
 | `cmd/observatory/main.go` | Observatory bridge entry point; P0 stub → U2 | stub |
 
 ## Packages (`internal/`)
 
-Each package carries a `doc.go` charter referencing its ADR; real files land in their phases. `internal/server` received its listener at P1.1 and its parse → handle → flush loop at P1.4; `internal/protocol` its parser and encoder at P1.2–P1.3; critical-path packages are re-listed in "Hand-own commitments" below.
+Each package carries a `doc.go` charter referencing its ADR; real files land in their phases. `internal/server` received its listener at P1.1 and its parse → handle → flush loop at P1.4; `internal/protocol` its parser, encoder, and error strings at P1.2–P1.5; critical-path packages are re-listed in "Hand-own commitments" below.
 
 | Path | What it will contain | Ownership |
 |---|---|---|
@@ -48,6 +49,8 @@ Each package carries a `doc.go` charter referencing its ADR; real files land in 
 | `internal/protocol/parse_test.go` | Edge corpus, expectations captured live from Redis 7.4.11: multibulk, inline quoting/escapes, length limits, skips, lax CRLF handling, truncation, pipelining | scaffold |
 | `internal/protocol/encode.go` | RESP2 reply encoder on pooled buffers: `+simple`, `-error`, `:int`, `$bulk`/`$-1`, `*array`/`*-1` (ADR-003) | **hand-own** — owner line-by-line review pending (PLAN §8) |
 | `internal/protocol/encode_test.go` | Byte-exact framing tests, parser round-trips, pool reuse | scaffold |
+| `internal/protocol/errors.go` | Error bodies in captured Redis wording: `ProtocolErrorReply`, `WrongArity`, `UnknownCommand` (128-byte args truncation) | **hand-own** — owner line-by-line review pending (PLAN §8) |
+| `internal/protocol/errors_test.go` | String-equality table vs Redis 7.4.11 captures + CRLF sanitization | scaffold |
 | `internal/server/doc.go` | Package charter: listener, conn goroutines, executor loop (ADR-002) | scaffold |
 | `internal/server/server.go` | TCP listener: accept loop, conn registry, max-conns cap, graceful `Shutdown(ctx)`; per-conn loop parses RESP requests, dispatches in arrival order to the `Handler`, flushes replies pipeline-aware; idle deadline resets per underlying read (ADR-002) | scaffold (executor flips to hand-own at P2.2) |
 | `internal/server/server_test.go` | Listener + pipeline tests: accept/close, max-conns, idle timeout incl. reset-on-partial-activity, graceful/forced shutdown, 10k-command pipeline order/flush, protocol-error reply+close | scaffold |
@@ -95,7 +98,7 @@ All entries below are `placeholder` `.gitkeep` files — directories reserved pe
 
 When these files exist, they carry the `hand-own` marker here and nothing is "done" on this path until the owner has reviewed every line and can defend it:
 
-- `internal/protocol/` — RESP parser (`parse.go`) + encoder (`encode.go`); owner line-by-line review pending
+- `internal/protocol/` — RESP parser (`parse.go`), encoder (`encode.go`), error strings (`errors.go`); owner line-by-line review pending
 - `internal/persist/` — frame format, writer, recovery, rewrite
 - `internal/expire/` — lazy + active cycle
 - `internal/evict/` — approximation, pool, policies

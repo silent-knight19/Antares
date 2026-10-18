@@ -1,9 +1,8 @@
 // Command antares is the Redis-compatible server (docs/PLAN.md §3.1).
 //
-// P1.4: RESP requests are parsed and answered in arrival order with
-// pipeline-aware flushing. The handler here is the P1.5/P1.6 stopgap: PING
-// and ECHO until the real executor lands at P2.2. Exact Redis error wording
-// for the remaining cases is captured at P1.5.
+// P1.5: error strings are capture-exact (unknown command, arity, protocol
+// errors). The handler here is the P1.6 stopgap: PING and ECHO until the
+// real executor lands at P2.2.
 package main
 
 import (
@@ -27,21 +26,28 @@ var version = "dev"
 
 const shutdownGrace = 5 * time.Second
 
-// stopgapHandler answers PING/ECHO so the differential smoke (P1.6) can run
-// against real clients; the executor replaces it at P2.2.
+// stopgapHandler answers PING/ECHO with capture-exact replies and errors so
+// the differential smoke (P1.6) can run against real clients; the executor
+// replaces it at P2.2.
 func stopgapHandler(req protocol.Request, out *protocol.Encoder) {
-	name := strings.ToUpper(string(req[0]))
-	switch name {
+	switch strings.ToUpper(string(req[0])) {
 	case "PING":
-		out.Simple("PONG")
+		switch len(req) {
+		case 1:
+			out.Simple("PONG")
+		case 2:
+			out.Bulk(req[1])
+		default:
+			out.Error(protocol.WrongArity("ping"))
+		}
 	case "ECHO":
 		if len(req) == 2 {
 			out.Bulk(req[1])
 		} else {
-			out.Error("ERR wrong number of arguments for 'echo' command")
+			out.Error(protocol.WrongArity("echo"))
 		}
 	default:
-		out.Error("ERR unknown command '" + string(req[0]) + "'")
+		out.Error(protocol.UnknownCommand(string(req[0]), req[1:]...))
 	}
 }
 

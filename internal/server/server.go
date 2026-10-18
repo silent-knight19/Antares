@@ -170,7 +170,7 @@ func (s *Server) serveConn(conn net.Conn) {
 			var pe *protocol.ProtocolError
 			if errors.As(err, &pe) {
 				enc.Reset()
-				enc.Error("ERR Protocol error: " + pe.Msg)
+				enc.Error(protocol.ProtocolErrorReply(pe.Msg))
 				bw.Write(enc.Bytes())
 				bw.Flush()
 			}

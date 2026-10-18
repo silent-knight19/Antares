@@ -42,7 +42,7 @@ Rationale for pinning strategy: ADR-020 (tooling policy, digest pinning) and PLA
 ## Open questions (decide at the phase noted)
 
 - What should `INFO server` report as `redis_version`? A 7.4-compatible string (some clients gate features on it) vs a suffixed identifier. Decide at P5.3 with go-redis behavior evidence.
-- Exact error strings for protocol errors and OOM must match Redis captures — P1.5, P7.2 (string-equality tests against real Redis).
+- OOM error strings must match Redis captures — P7.2 (protocol and command error strings were pinned by live capture at P1.5: unknown command incl. 128-byte args truncation, arity, `-ERR Protocol error: …`, CRLF sanitization).
 - SCAN cursor semantics (reverse-binary) — document observed ordering guarantees at P5.2.
 - `HELLO` reply shape vs client expectations (go-redis, Jedis) — P5.3 differential.
 
