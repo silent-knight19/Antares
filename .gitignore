@@ -1,0 +1,74 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trashes
+
+# Editor & IDE artifacts
+.vscode/
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+.idea/
+*.sublime-project
+*.sublime-workspace
+*.swp
+*.swo
+*~
+
+# Go build & test artifacts
+bin/
+dist/
+/antares-server
+/observatory
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+*.prof
+cpu.pprof
+mem.pprof
+trace.out
+coverage.html
+coverage.txt
+
+# Antares runtime & persistence data
+*.rdb
+*.aof
+dump.rdb
+appendonly.aof
+data/
+*.wal
+*.tap.sock
+event-tap.sock
+claims.json
+
+# Node / UI build artifacts (Antares Observatory)
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.pnpm-debug.log*
+ui/dist/
+ui/build/
+ui/.next/
+web/dist/
+web/build/
+
+# Testing & CI artifacts
+test-results/
+playwright-report/
+blob-report/
+playwright/.cache/
+
+# Environment files
+.env
+.env.local
+.env.*.local
