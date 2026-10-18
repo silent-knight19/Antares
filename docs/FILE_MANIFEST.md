@@ -46,6 +46,8 @@ Each package carries a `doc.go` charter referencing its ADR; real files land in 
 | `internal/protocol/doc.go` | Package charter: RESP2 parse/encode + fuzz corpus (ADR-003) | scaffold |
 | `internal/protocol/parse.go` | RESP2 request reader: multibulk arrays + inline commands, sdssplitargs quoting, string2ll counts; limits and error wording pinned by live capture (ADR-003) | **hand-own** — owner line-by-line review pending (PLAN §8) |
 | `internal/protocol/parse_test.go` | Edge corpus, expectations captured live from Redis 7.4.11: multibulk, inline quoting/escapes, length limits, skips, lax CRLF handling, truncation, pipelining | scaffold |
+| `internal/protocol/encode.go` | RESP2 reply encoder on pooled buffers: `+simple`, `-error`, `:int`, `$bulk`/`$-1`, `*array`/`*-1` (ADR-003) | **hand-own** — owner line-by-line review pending (PLAN §8) |
+| `internal/protocol/encode_test.go` | Byte-exact framing tests, parser round-trips, pool reuse | scaffold |
 | `internal/server/doc.go` | Package charter: listener, conn goroutines, executor loop (ADR-002) | scaffold |
 | `internal/server/server.go` | TCP listener: accept loop, conn registry, max-conns cap, idle-timeout deadlines, graceful `Shutdown(ctx)` (ADR-002) | scaffold (executor flips to hand-own at P2.2) |
 | `internal/server/server_test.go` | Listener unit tests: accept/close, max-conns, idle timeout, graceful/forced shutdown | scaffold |

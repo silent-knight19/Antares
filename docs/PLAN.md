@@ -366,4 +366,4 @@ antares/
 3. `make test` → confirm baseline green.
 4. Work the subphase. When exit criterion passes → phase-gate checklist (§8) → log → done.
 
-**Current position:** P0 complete; P1.1 complete (listener + review hardening, 11 tests green). P1.2 complete — RESP parser implemented, 30-case Redis-7.4.11-captured corpus green under race (owner line-by-line review pending per the §8 defend-rule). Next: P1.3 (RESP writer).
+**Current position:** P1.1 and P1.2 complete (listener 11/11; RESP parser + 30-case capture corpus green). P1.3 complete — pooled RESP writer with byte-exact and round-trip tests (critical path awaits owner line-by-line review per §8). Next: P1.4 (pipelining: 10k commands in one packet, order preserved).

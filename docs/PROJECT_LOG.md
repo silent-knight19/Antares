@@ -84,3 +84,15 @@
 - QBank updated: §5 note 4 — protocol fidelity comes from capture, not memory, listing the Redis 7.4 quirks.
 - Exit evidence: `make test-race` green — protocol 30 corpus cases + 5 truncation inputs, server 11/11; `gofmt -l .` clean; vet/build green.
 - Next session first task: P1.3 — RESP writer (`+OK`, `-ERR`, integers, bulk, arrays; buffer pooling; parse↔encode round-trip tests).
+
+---
+
+### 2026-10-18 — P1.3: RESP writer with pooled buffers
+
+- Built: `internal/protocol/encode.go` — `Encoder` appending RESP2 replies to a reused byte buffer: `Simple` (`+OK`), `Error` (`-ERR …`), `Int` (`:n`), `Bulk` (`$len\r\n…`; nil → `$-1`, empty → `$0`), `Null`, `ArrayHeader`, `NullArray`; `GetEncoder`/`Release` over a `sync.Pool` that drops buffers grown past 64 KiB so one 512 MB reply cannot pin pool memory. `internal/protocol/encode_test.go` — byte-exact framing table (17 cases incl. int64 extremes, binary payloads with NUL/CR/LF/0xFF, nested arrays), request round-trips through `ReadRequest` (single + pipelined), pool-reuse reset.
+- Files touched: `internal/protocol/encode.go`, `internal/protocol/encode_test.go`, `docs/PLAN.md` (current position), `docs/FILE_MANIFEST.md`, `docs/PROJECT_LOG.md`.
+- Issues: none. Micro-decision logged: `Bulk(nil)` writes `$-1` (Redis addReplyNull semantics) while an empty non-nil slice writes `$0` — the distinction string commands depend on from P2.4.
+- ADRs written: none.
+- QBank updated: none.
+- Exit evidence: `make test-race` green — encode suite (17 framing + 3 round-trip/pool tests) plus full protocol and server packages; `gofmt -l .` clean; vet/build green.
+- Next session first task: P1.4 — pipelining: read and handle multiple commands per packet in order; exit test streams 10 000 commands in one write.
