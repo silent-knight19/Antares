@@ -15,7 +15,7 @@ Build a Redis-compatible server from scratch in Go (RESP protocol, ~40 commands,
 - Replication (PSYNC/backlog) is the most differentiating SDE-1 project feature; very few candidates can discuss it from implementation experience.
 - Every claim is machine-verifiable: differential tests vs real Redis, crash tests, benchmarks, CI-verified numbers displayed in the UI.
 - The Observatory converts internal correctness work (WAL frames, eviction sampling, expirations) into a visible demo — story #5 ("cut the replica link, watch partial resync") is unforgettable in a project deep-dive.
-- 4 living docs (ADR log, session log, file manifest, interview Q-bank) + phase-gate AI grills turn engineering artifacts into rehearsed interview answers.
+- 4 living docs (ADR log, session log, file manifest, interview Q-bank) turn engineering artifacts into rehearsed interview answers.
 
 **Scope decision:** v1 + v2 + v3 including replication (ADR-012).
 
@@ -274,7 +274,6 @@ Tentative dates (start 2026-10-19): W1 = Oct 19–25 → W22 ends ~Mar 21, 2027.
 ### Phase gate (mandatory before advancing)
 1. Exit criteria green (command evidence logged).
 2. Docs updated (no orphan files in manifest; new decisions logged).
-3. **AI grill (10 min):** AI plays interviewer — walks every ADR and file of the phase with why-questions, opens random files ("explain this function"), asks 3 boundary questions ("what breaks at 10x?"). Pass = explain each without notes, score ≥8/10 → logged in PROJECT_LOG. Fail → one re-study day, re-grill. UI phases: grill includes a live demo run of that milestone's stories.
 
 ## 9. Verification Strategy (pyramid, all CI-enforced)
 
@@ -309,7 +308,7 @@ Tentative dates (start 2026-10-19): W1 = Oct 19–25 → W22 ends ~Mar 21, 2027.
 | "How did you test it?" | §9 pyramid + claims.json + live labs |
 | "Which part did you write?" | FILE_MANIFEST hand-own list + session log honesty |
 | "How would you add feature Z?" | non-goals in ADR-012/019 with extension paths |
-| "What breaks at 10x?" | FAILURE_MODES.md (S3.3) + phase-gate grills |
+| "What breaks at 10x?" | FAILURE_MODES.md (S3.3) |
 | "What does it NOT do?" | explicit non-goals lists, each with a reason |
 | "Show me" (interviewers open GitHub) | FILE_MANIFEST + clean repo + demo |
 | LLD-style object questions | command registry, store types, actor boundary — all documented in ARCHITECTURE.md |
@@ -323,7 +322,7 @@ Tentative dates (start 2026-10-19): W1 = Oct 19–25 → W22 ends ~Mar 21, 2027.
 | Differential canonicalization rabbit holes (SCAN order, float formats, INFO) | Canonicalization rules centralized + reviewed (ADR-017 area); per-family timebox 1 session |
 | Tcl suite version drift | Pin Redis 7.4 docker image + vendored test files commit hash |
 | Mid-project motivation dip (P6 AOF grind) | M1 dev console exists by then; every session ends with visible progress; stories demo-able |
-| AI over-dependence ("can't defend code") | Hand-own rule on critical path + phase-gate grills fail you fast |
+| AI over-dependence ("can't defend code") | Hand-own rule on critical path |
 | Benchmark noise on macOS | Quiet runs, 3-run median, report context honestly (no CPU pinning on mac) |
 | UI scope creep | ADR-019 non-goals; 250KB budget; each story must map to a QBank probe |
 | Real Redis 7.4 divergence with newer Redis docs | Pin version everywhere; note doc/version in COMPATIBILITY.md |
@@ -367,4 +366,4 @@ antares/
 3. `make test` → confirm baseline green.
 4. Work the subphase. When exit criterion passes → phase-gate checklist (§8) → log → done.
 
-**Current position:** P0 complete (P0.1–P0.3; docs seeded, CI green, pinned reference Redis verified) — P0 phase-gate grill pending. Next: P1.1 (TCP listener).
+**Current position:** P0 complete (P0.1–P0.3; docs seeded, CI green, pinned reference Redis verified). Next: P1.1 (TCP listener).

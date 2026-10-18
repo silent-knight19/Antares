@@ -87,6 +87,9 @@ Evidence: `COMPATIBILITY.md`; ADR-004, ADR-007, ADR-008.
 
 ---
 
-## 5. Weak spots to revisit (filled by the daily quiz and phase-gate grills)
+## 5. Weak spots to revisit (filled by the daily quiz)
 
-- (pending the P0 phase-gate grill — record score and weak spots here, then warm up on them next session)
+- **P0 grill, 2026-10-18 — 8/10 (narrow pass).** Drill in the daily quiz until clean:
+  1. `claims.json` is the provenance store the Observatory renders from (ADR-018) — never describe it as scratch output.
+  2. 10× bottlenecks: group commit (`everysec`) decouples fsync from the executor; executor stalls on fsync only under `fsync=always`. Second-order: parser allocations / GC pressure.
+  3. Digest-bump process: also log the why (CVE/version) as its own PROJECT_LOG entry, and require a clean CI run before accepting the new digest.

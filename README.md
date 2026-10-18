@@ -124,9 +124,11 @@ make test-race   # go test -race ./...
 **Run**
 
 ```bash
-make run              # run the antares server (stub until P1.1)
+make run              # run the antares server on 127.0.0.1:6380
 make run-observatory  # run the observatory bridge (stub until U2)
 ```
+
+Antares listens on port 6380 by default (`-port`, `-bind`, `-max-conns`, `-idle-timeout` flags available), so it can run alongside the reference Redis on 6379.
 
 **Reference Redis**
 

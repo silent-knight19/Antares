@@ -34,17 +34,19 @@
 
 | Path | What it is | Ownership |
 |---|---|---|
-| `cmd/antares/main.go` | Server entry point; P0 stub: `--version`, then fails loudly → P1.1 wires the TCP listener | stub |
+| `cmd/antares/main.go` | Server entry point: flags (`-bind`, `-port`, `-max-conns`, `-idle-timeout`), slog logs, SIGINT/SIGTERM → graceful shutdown | scaffold |
 | `cmd/observatory/main.go` | Observatory bridge entry point; P0 stub → U2 | stub |
 
 ## Packages (`internal/`)
 
-Each package currently holds only `doc.go` — a one-line charter referencing its ADR. Real files land in their phases; critical-path packages are re-listed in "Hand-own commitments" below.
+Each package carries a `doc.go` charter referencing its ADR; real files land in their phases. `internal/server` received its listener at P1.1; critical-path packages are re-listed in "Hand-own commitments" below.
 
 | Path | What it will contain | Ownership |
 |---|---|---|
 | `internal/protocol/doc.go` | RESP2 parse/encode + fuzz corpus (ADR-003) | scaffold → hand-own at P1.2 |
-| `internal/server/doc.go` | Listener, conn goroutines, executor loop (ADR-002) | scaffold → hand-own at P1.1/P2.2 |
+| `internal/server/doc.go` | Package charter: listener, conn goroutines, executor loop (ADR-002) | scaffold |
+| `internal/server/server.go` | TCP listener: accept loop, conn registry, max-conns cap, idle-timeout deadlines, graceful `Shutdown(ctx)` (ADR-002) | scaffold (executor flips to hand-own at P2.2) |
+| `internal/server/server_test.go` | Listener unit tests: accept/close, max-conns, idle timeout, graceful/forced shutdown | scaffold |
 | `internal/store/doc.go` | Keyspace, value types, WRONGTYPE, empty-collection auto-delete | scaffold → hand-own |
 | `internal/persist/doc.go` | Framed AOF, group commit, recovery, rewrite (ADR-004/007/010) | scaffold → hand-own at P6 |
 | `internal/expire/doc.go` | Lazy + active expiry cycle (ADR-005) | scaffold → hand-own at P3 |

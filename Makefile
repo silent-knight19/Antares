@@ -22,7 +22,7 @@ help:
 	@echo "  vet              run go vet"
 	@echo "  fmt              format the tree with gofmt"
 	@echo "  tidy             go mod tidy"
-	@echo "  run              run the antares server (stub until P1.1)"
+	@echo "  run              run the antares server on 127.0.0.1:6380 (flags: -port -max-conns -idle-timeout)"
 	@echo "  run-observatory  run the observatory bridge (stub until U2)"
 	@echo "  clean            remove build artifacts"
 	@echo "  phase-gated:     verify diff-test crash-test fuzz bench tcl showcase showcase-e2e ui-dev"

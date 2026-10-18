@@ -273,17 +273,16 @@
 
 ---
 
-## ADR-011 — Tracking system: 4 living docs + session protocol + phase-gate grills
+## ADR-011 — Tracking system: 4 living docs + session protocol
 - Date: 2026-10-18 · Phase: P0 · Status: Accepted
 - Context: Interview deep-dives probe: why decisions, hardest bugs, testing method, ownership ("which part did you write?"), and boundaries ("what does it NOT do?"). We need artifacts that answer these probes and counter AI-assisted "can't defend my code" risk.
 - Options:
   - A. README + code comments only.
   - B. Code comments + occasional blog post.
-  - C. Four living docs, each mapped to a probe class + a 10/100/30 session protocol + phase-gate AI grills.
+  - C. Four living docs, each mapped to a probe class + a 10/100/30 session protocol.
 - Decision: C (spec in PLAN.md §8).
 - Why chosen:
   - Each doc maps to a probe class: DECISIONS → "why X over Y"; PROJECT_LOG → "hardest bug / STAR stories"; FILE_MANIFEST → "explain this file / which part did you write"; INTERVIEW_QBANK → rehearsal + boundary list.
-  - The grills convert written artifacts into spoken answers — the actual interview skill.
   - Full protocol every session (~30 min, ~8% overhead) keeps artifacts current; retroactive writing is where truthfulness dies.
 - Why rejected:
   - A/B: no decision trail, no bug narratives, nothing to rehearse, no defense against "AI wrote it" skepticism.
@@ -292,7 +291,7 @@
 - Interview Q&A:
   - "How do you track engineering decisions?" → show DECISIONS.md live.
   - "What was hard here?" → PROJECT_LOG has the bug, diagnosis, fix, prevention — tell it as STAR.
-- Proof: this repo's docs/ directory; phase-gate grill pass log in PROJECT_LOG.
+- Proof: this repo's docs/ directory.
 
 ---
 

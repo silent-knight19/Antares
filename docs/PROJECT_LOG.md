@@ -15,7 +15,7 @@
 - ADRs written: <ADR-NNN or none>
 - QBank updated: <questions added/changed>
 - Exit evidence: <commands run + observed output, CI run IDs>
-- AI quiz / grill: <score, weak spots> (daily 5-question quiz; full grill at phase gates)
+- AI quiz: <score, weak spots> (daily 5-question quiz)
 - Next session first task: <the very first action of next session>
 ```
 
@@ -60,5 +60,18 @@
 - ADRs written: none.
 - QBank updated: seeded with Q1–Q12 (narrative, decisions, verification, boundaries) — weak-spots section opens at the P0 grill.
 - Exit evidence: first PROJECT_LOG entry written (this file); `FILE_MANIFEST.md` covers every tracked file — `git ls-files` count matches (37 after this commit), no orphans; all cross-references resolve.
-- AI quiz / grill: P0 phase-gate grill pending — to be recorded here with score and weak spots before P1.1 starts.
-- Next session first task: run the P0 phase-gate AI grill (PLAN §8; pass ≥8/10 required); then P1.1 — TCP listener with graceful shutdown, connection limits/timeouts, and accept/close/shutdown unit tests.
+- AI quiz / grill: P0 phase-gate grill — **8/10, passed (narrow)**. Weak spots: (1) mischaracterized `claims.json` as scratch — it is the provenance store per ADR-018; (2) 10× bottleneck nuance — group commit (`everysec`) decouples fsync from the executor, which stalls only under `fsync=always`; add parser allocations/GC as second-order stressor; (3) digest-bump process must also log the why (CVE/version) and require a clean CI run. Drill all three in the P1 daily quiz.
+- Next session first task: P1.1 — TCP listener with graceful shutdown, connection limits/timeouts, and accept/close/shutdown unit tests.
+
+---
+
+### 2026-10-18 — P1.1: TCP listener with graceful shutdown
+
+- Built: `internal/server/server.go` — accept loop, connection registry (`Conns()`), `MaxConns` cap (excess connections accepted-then-closed; the exact Redis `-ERR max number of clients reached` string lands with the RESP writer at P1.5), per-read idle-timeout deadlines, `Shutdown(ctx)`: stop accepting → drain → force-close remaining at deadline, idempotent, force path returns `ctx.Err()`; connection goroutines read-and-discard until the RESP parser arrives (P1.2/P1.4). `cmd/antares` promoted from stub to a real server: `-bind`/`-port`/`-max-conns`/`-idle-timeout` flags (Redis-compatible defaults: 10 000 clients, idle timeout off), structured slog lifecycle logs, SIGINT/SIGTERM → 5 s graceful shutdown, clean exit 0.
+- Files touched: `internal/server/server.go`, `internal/server/server_test.go`, `cmd/antares/main.go`, `Makefile` (help), `README.md` (run section), `docs/PROJECT_LOG.md`, `docs/FILE_MANIFEST.md`.
+- Issues: none. Micro-decision logged: default port **6380** so `make run` coexists with the reference Redis on 6379 (Redis parity available via `-port 6379`; revisit for the demo stack at U2).
+- ADRs written: none (micro-decision above).
+- QBank updated: none (P0 grill weak spots already seeded).
+- Exit evidence: 7 tests green under `make test-race` (accept/close, max-conns rejection, idle timeout, graceful drain, forced shutdown, idempotent shutdown, double-`Start` error); `gofmt -l .` and `go vet` clean; live smoke: `bin/antares -port 6380` → port open, SIGTERM → `shutting down` → `stopped`, exit 0.
+- AI quiz: pending — 5 questions on today's module (P0 docs + P1.1 listener) at session close; P0 grill record (8/10) lives in the P0.3 entry as history.
+- Next session first task: P1.2 — RESP parser (hand-own begins): arrays of bulk strings + inline commands, edge-case corpus.
