@@ -1,0 +1,30 @@
+name: ci
+
+on: [push, pull_request]
+
+permissions:
+  contents: read
+
+jobs:
+  build-vet-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: gofmt check
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "gofmt needed in:"
+            echo "$unformatted"
+            exit 1
+          fi
+      - name: vet
+        run: make vet
+      - name: build
+        run: make build
+      - name: test with race detector
+        run: make test-race

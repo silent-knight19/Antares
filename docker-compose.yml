@@ -1,0 +1,16 @@
+# Reference Redis for development and differential verification (PLAN P0.2, ADR-017).
+# Pinned to redis 7.4.11 (upstream release 2026-08-17) by image-index digest for reproducibility.
+name: antares-dev
+
+services:
+  redis-ref:
+    image: redis:7.4.11@sha256:4fa24486b8bcca8eec45ee0eb166edc674795e53a2b53d1a9ef263eecebaac85
+    container_name: antares-redis-ref
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    ports:
+      - "127.0.0.1:6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 1s
+      retries: 15

@@ -481,3 +481,26 @@
 - Revisit if: a specific feature maps to an interview probe that nothing else covers.
 - Interview Q&A:
   - "Why doesn't the UI have X?" → deliberate scope decision with reason; boundary-of-knowledge answer.
+
+---
+
+## ADR-020 — Tooling & licensing policy: OSS or free-to-use only, auditable by default
+- Date: 2026-10-18 · Phase: P0 · Status: Accepted
+- Context: During P0.1/P0.2 scaffolding we installed a container runtime (initially OrbStack — proprietary, free for personal use only, paid for commercial use) and host redis-cli. Owner constraint: every tool in the stack must be open source or free for unrestricted use, and safe/secure. A proprietary privileged VM/helper is also unauditable.
+- Options:
+  - A. Best-of-breed regardless of license (Docker Desktop / OrbStack) — better UX, license exposure and unauditable privileged components.
+  - B. Policy: all tooling must be OSS or free-for-unrestricted-use; container runtime = colima (MIT) + lima (Apache-2.0) + docker CLI/compose (Apache-2.0). One documented exception: Redis 7.4.11 test reference (RSALv2/SSPLv1 — source-available, free to use, never redistributed) because differential parity with real Redis is the core claim (ADR-017).
+- Decision: B — migrated OrbStack → colima during P0.2; exception recorded for the Redis reference image only.
+- Why chosen:
+  - colima/lima/docker CLI are MIT/Apache-2.0, fully auditable, and expose the same `docker compose` interface — migration was config-only (no Makefile/docs changes).
+  - Zero commercial-license exposure if the repo is demoed or used at an employer (Docker Desktop requires paid subscription for larger orgs; OrbStack paid for commercial use).
+  - Closed-source privileged VM/helper removed from the host attack surface; OSS stack keeps it inspectable.
+  - Supply-chain hygiene continues: images digest-pinned (`redis:7.4.11@sha256:4fa2…`), ports bound to 127.0.0.1 only.
+- Why rejected:
+  - A: license risk + unauditable privileged components; reviewers/demo viewers should never need paid software to reproduce claims.
+- Trade-offs accepted: colima has no GUI/dashboard and needs explicit `colima start` (documented in runbook); slower first boot than OrbStack — irrelevant for the reference-Redis workload. Host redis-cli (AGPLv3, Homebrew) is free-to-use and never the reference server — the pinned container always is.
+- Revisit if: colima blocks a required workflow (e.g., host networking needs) → evaluate Podman (Apache-2.0) or log a new exception here.
+- Interview Q&A:
+  - "Why not Docker Desktop?" → licensing + auditability; colima is MIT, same CLI, and the swap was a config-only change — logged, with the one necessary exception (Redis reference) recorded.
+  - "How do you keep the dependency surface safe?" → OSS-only policy, digest-pinned images, localhost binds, pinned versions everywhere.
+- Proof: this ADR; `docker-compose.yml` (digest pin + 127.0.0.1 binding); P0.2 verification `redis-cli -p 6379 PING → PONG` on colima stack (redis 7.4.11); COMPATIBILITY.md license note arrives in P0.3.
