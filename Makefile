@@ -11,8 +11,10 @@ BIN := bin
 ANTARES_BIN := $(BIN)/antares
 OBSERVATORY_BIN := $(BIN)/observatory
 
-.PHONY: help build test test-race vet fmt tidy run run-observatory clean \
-	verify diff-test crash-test fuzz bench tcl showcase showcase-e2e ui-dev
+FUZZTIME ?= 30s
+
+.PHONY: help build test test-race vet fmt tidy run run-observatory clean fuzz \
+	verify diff-test crash-test bench tcl showcase showcase-e2e ui-dev
 
 help:
 	@echo "Antares targets:"
@@ -25,7 +27,8 @@ help:
 	@echo "  run              run the antares server on 127.0.0.1:6380 (flags: -port -max-conns -idle-timeout)"
 	@echo "  run-observatory  run the observatory bridge (stub until U2)"
 	@echo "  clean            remove build artifacts"
-	@echo "  phase-gated:     verify diff-test crash-test fuzz bench tcl showcase showcase-e2e ui-dev"
+	@echo "  fuzz             run the RESP fuzzer for FUZZTIME (default 30s, e.g. FUZZTIME=15m)"
+	@echo "  phase-gated:     verify diff-test crash-test bench tcl showcase showcase-e2e ui-dev"
 
 build:
 	@mkdir -p $(BIN)
@@ -56,6 +59,9 @@ run-observatory:
 clean:
 	rm -rf $(BIN)
 
-verify diff-test crash-test fuzz bench tcl showcase showcase-e2e ui-dev:
+fuzz:
+	$(GO) test -run='^$$' -fuzz=FuzzReadRequest -fuzztime=$(FUZZTIME) ./internal/protocol/
+
+verify diff-test crash-test bench tcl showcase showcase-e2e ui-dev:
 	@echo "make $@: not implemented yet — arrives at the phase marked in docs/PLAN.md §5–§7 (DoD: §2)"
 	@exit 1

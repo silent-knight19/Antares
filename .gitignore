@@ -30,6 +30,10 @@ ehthumbs.db
 opencode.json
 opencode.local.json
 .opencode/
+.gemini/
+.claude/
+.cursor/
+*.local.md
 
 # ==============================================================================
 # Go Build, Binary & Profiling Artifacts

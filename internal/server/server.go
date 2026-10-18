@@ -17,6 +17,10 @@ const (
 
 	readBufferSize   = 16 * 1024 // PROTO_IOBUF_LEN: batches pipeline reads, fewer flushes
 	acceptRetryDelay = 100 * time.Millisecond
+
+	// errMaxClients is Redis's refusal, captured from redis 7.4.11: an
+	// over-cap connection gets this reply, then the connection closes.
+	errMaxClients = "-ERR max number of clients reached\r\n"
 )
 
 // Handler executes one parsed request and writes its reply to out. The
@@ -136,7 +140,11 @@ func (s *Server) acceptLoop() {
 
 		s.mu.Lock()
 		if s.stopped || (s.cfg.MaxConns > 0 && len(s.conns) >= s.cfg.MaxConns) {
+			stopped := s.stopped
 			s.mu.Unlock()
+			if !stopped {
+				conn.Write([]byte(errMaxClients))
+			}
 			conn.Close()
 			continue
 		}
@@ -157,8 +165,10 @@ func (s *Server) serveConn(conn net.Conn) {
 		conn.Close()
 	}()
 
-	br := bufio.NewReaderSize(idleConn{Conn: conn, timeout: s.cfg.IdleTimeout}, readBufferSize)
-	bw := bufio.NewWriter(conn)
+	ic := &connIO{Conn: conn, timeout: s.cfg.IdleTimeout}
+	bw := bufio.NewWriter(ic)
+	ic.bw = bw
+	br := bufio.NewReaderSize(ic, readBufferSize)
 	enc := protocol.GetEncoder()
 	defer enc.Release()
 
@@ -181,31 +191,42 @@ func (s *Server) serveConn(conn net.Conn) {
 			s.handler(req, enc)
 			bw.Write(enc.Bytes())
 		}
-		// Flush once the pipeline is drained — all commands already buffered
-		// are executed first, then replies go out in one batch (classic Redis
-		// pipeline behavior). The kernel may still hold more bytes, which
-		// only costs an extra flush.
-		if br.Buffered() == 0 {
-			if err := bw.Flush(); err != nil {
-				return
-			}
-		}
+		// No explicit flush here: connIO.Read flushes pending replies right
+		// before the parser blocks on the socket, so a burst of fully
+		// buffered pipelined commands still goes out in one batch, and
+		// replies are never withheld behind a partial trailing command
+		// (captured: real Redis answers PING in "PING\r\nECH" immediately).
 	}
 }
 
-// idleConn resets the read deadline on every underlying read, so any byte of
-// activity keeps the connection alive (Redis lastinteraction semantics) —
-// not just completed commands.
-type idleConn struct {
+// connIO is the per-connection I/O policy: it resets the read deadline on
+// every underlying read so any byte of activity keeps the connection alive
+// (Redis lastinteraction semantics), bounds writes by the same idle timeout
+// when one is set, and flushes pending replies before the parser blocks
+// waiting for more input.
+type connIO struct {
 	net.Conn
 	timeout time.Duration
+	bw      *bufio.Writer
 }
 
-func (c idleConn) Read(p []byte) (int, error) {
+func (c *connIO) Read(p []byte) (int, error) {
+	if c.bw.Buffered() > 0 {
+		if err := c.bw.Flush(); err != nil {
+			return 0, err
+		}
+	}
 	if c.timeout > 0 {
 		c.Conn.SetReadDeadline(time.Now().Add(c.timeout))
 	}
 	return c.Conn.Read(p)
+}
+
+func (c *connIO) Write(p []byte) (int, error) {
+	if c.timeout > 0 {
+		c.Conn.SetWriteDeadline(time.Now().Add(c.timeout))
+	}
+	return c.Conn.Write(p)
 }
 
 func (s *Server) forceCloseConns() bool {

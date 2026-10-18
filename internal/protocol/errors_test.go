@@ -25,6 +25,7 @@ func TestErrorBodies(t *testing.T) {
 		{"unknown long arg truncated at 128", UnknownCommand("FOO", bytes.Repeat([]byte("a"), 200)), "ERR unknown command 'FOO', with args beginning with: '" + strings.Repeat("a", 128) + "' "},
 		{"unknown exact 128-char arg", UnknownCommand("FOO", bytes.Repeat([]byte("x"), 128)), "ERR unknown command 'FOO', with args beginning with: '" + strings.Repeat("x", 128) + "' "},
 		{"unknown budget cuts second arg", UnknownCommand("FOO", bytes.Repeat([]byte("x"), 124), []byte("abcdef")), "ERR unknown command 'FOO', with args beginning with: '" + strings.Repeat("x", 124) + "' 'a' "},
+		{"unknown long name truncated at 128", UnknownCommand(strings.Repeat("c", 200)), "ERR unknown command '" + strings.Repeat("c", 128) + "', with args beginning with: "},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

@@ -120,3 +120,40 @@
 - QBank updated: none.
 - Exit evidence: `make test-race` green across all packages; live 12-case differential battery (unknown command incl. truncation edges, arity, PING forms, protocol errors, CRLF sanitization) byte-identical between `bin/antares` and the digest-pinned reference Redis; COMPATIBILITY open question updated (only OOM wording remains, P7.2).
 - Next session first task: P1.6 — fuzz harness (`go test -fuzz`) with 15-minute clean run, then differential smoke via go-redis (PING/ECHO).
+
+---
+
+### 2026-10-18 — P1.6: parser fuzzing + differential smoke; P1 complete
+
+- Built: `FuzzReadRequest` (`internal/protocol/fuzz_test.go`) — 39 capture-shaped seeds from the P1.2 corpus, invariants: never crash or hang; returned args never nil; and parse → encode → re-parse is byte-identical (parser/encoder agreement). Hardening the fuzzer design surfaced: `readBulk` no longer preallocates the declared payload length — it grows with received bytes, so a client declaring 512 MB and sending nothing no longer forces a 512 MB allocation (Redis sizes structures from received bytes too; regression test included). `make fuzz FUZZTIME=…` is now a real target (was a phase-gated stub). `server.StopgapHandler` moved out of `cmd/antares` so tests and the differential harness can run a full in-process server. `tests/differential/smoke_test.go` — go-redis v9 (first direct dependency, ADR-017) against in-process Antares: PING, ECHO, pipelined PING+ECHO, and byte-exact unknown-command error.
+- Files touched: `internal/protocol/parse.go`, `internal/protocol/fuzz_test.go`, `internal/server/stopgap.go`, `internal/server/stopgap_test.go`, `cmd/antares/main.go` (removed `main_test.go` — handler moved), `tests/differential/smoke_test.go` (removed `.gitkeep`), `Makefile`, `go.mod`, `go.sum`, docs.
+- Issues: designing the fuzz round-trip invariant exposed a real bug — an inline `""` argument parsed to nil, which the encoder would have written as the null bulk `$-1` (wrong: it is an empty string); arguments are now guaranteed non-nil. Also noted for P2.6: go-redis v9 sends `HELLO`/`CLIENT SETINFO` on connect; the smoke pins `Protocol: 2` + `DisableIdentity` until P5.3 negotiates properly.
+- ADRs written: none.
+- QBank updated: Q11.
+- Exit evidence: `make fuzz FUZZTIME=15m` clean — **165,807,798 executions in 15m0s, no failures** (143 interesting inputs found; committed regression corpus is P9.3); full race suite green including the new differential package; `make build` clean.
+- Next session first task: P2.1 — command registry (name → handler, arity, flags) with the `COMMAND` stub for redis-cli.
+
+---
+
+### 2026-10-18 — P1.6 review fixes (owner-requested review of the uncommitted diff)
+
+- Built: review found no functional bug in the P1.6 changes; all flagged items fixed. `readBulk` keeps a single exact allocation for payloads ≤ 64 KiB (the interim `bytes.Buffer` version paid an extra allocation and indirection per argument) and above that grows with a manually clamped loop — capacity never exceeds the declared size, so a large value no longer retains up to 2× its size while it lives. Dead nil-guard and hand-written `min64` helper deleted (Go builtin `min`).
+- Issues: two test gaps closed. A 200 KiB `ECHO` corpus case now drives the growth path and asserts exact content and length. `TestReadBulkTruncatedHugeLength` now enforces the security property it claimed: a `runtime.MemStats` allocation delta (< 8 MB) around an unsent 512 MB declared payload — the previous error-only assertion would also have passed with the old preallocating implementation.
+- Files touched: `internal/protocol/parse.go`, `internal/protocol/parse_test.go`, `internal/protocol/fuzz_test.go`, `docs/FILE_MANIFEST.md`, `docs/PLAN.md`, `docs/PROJECT_LOG.md`.
+- ADRs written: none (no decision changed; parser internals only).
+- QBank updated: none.
+- Exit evidence: race suite green across all packages; `make fuzz FUZZTIME=60s` clean on the rewritten `readBulk`.
+- Next session first task: P2.1 — command registry (name → handler, arity, flags) with the `COMMAND` stub for redis-cli.
+
+---
+
+### 2026-10-18 — P1 audit fixes (whole-repo audit → every finding fixed)
+
+- Built: whole-repo audit of the P1 codebase (README/build/deps/entry points/tests + full read of `internal/protocol`, `internal/server`, docs) found 5 code issues and 4 tidy-ups; all fixed this session. Server: replies now flush from `connIO.Read` right before the parser blocks on the socket — a reply can no longer be withheld (or discarded on close) behind a partial trailing command; the deadline wrapper now also bounds writes when `-idle-timeout` is set; over-cap connections get Redis's captured `-ERR max number of clients reached` before the close (was silent). Protocol: `UnknownCommand` cuts the command name at 128 bytes like Redis; the `expected '$'` error carries the raw non-ASCII byte instead of a UTF-8 rendering (Go `%c` bug).
+- Issues (symptom → diagnosis → fix → prevention): (1) `PING\r\nECH` got no `+PONG` while reference Redis answered instantly — the P1.4 flush gate waited for a drained read buffer, so any partial trailing command held earlier replies; fixed by flushing at the read boundary, regression test covers hold-open and half-close. (2) a 200-byte unknown command name produced a 253-byte reply vs Redis's 181 — the P1.5 capture set never included a long name; fixed at 128 bytes, capture-backed test added. (3) `*1\r\n\xff\r\n` echoed the byte as UTF-8 — `fmt.Sprintf("%c")` treats a byte as a rune; fixed to raw-byte formatting. (4) max-conns closed silently — capture shows Redis answers first; now matched. (5) stalled writers were unbounded — the opt-in idle timeout now also covers writes (documented in COMPATIBILITY, S2.3 output caps still the long-term answer). Prevention: each fixed case is pinned by a capture-backed test; fuzz seed added for the 0xff header.
+- Tidy-ups: dead `.github/workflows/.gitkeep` deleted; corpus claims corrected (31-case corpus, one generated size case) in README/QBANK/parse_test comment; PLAN §9/§13 reworded — unit tests are colocated with packages, `tests/unit/` reserved for cross-package suites.
+- Files touched: `internal/server/server.go`, `internal/server/server_test.go`, `internal/protocol/parse.go`, `internal/protocol/parse_test.go`, `internal/protocol/errors.go`, `internal/protocol/errors_test.go`, `internal/protocol/fuzz_test.go`, `docs/{PLAN,COMPATIBILITY,FILE_MANIFEST,INTERVIEW_QBANK,PROJECT_LOG}.md`, `README.md`, removed `.github/workflows/.gitkeep`.
+- ADRs written: none (no new trade-off; the slow-client write bound is recorded in COMPATIBILITY's divergences).
+- QBank updated: Q11 (count + late captures).
+- Exit evidence: race suite green; live byte checks against the pinned reference Redis — `PING\r\nECH` → `+PONG` (was withheld), 200-byte name → 181-byte reply identical, `*1\r\n\xff\r\n` → raw `\377` identical, `-max-conns 2` refusal identical; `make fuzz FUZZTIME=60s` clean.
+- Next session first task: P2.1 — command registry (name → handler, arity, flags) with the `COMMAND` stub for redis-cli.

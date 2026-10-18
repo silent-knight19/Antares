@@ -1,4 +1,4 @@
-package main
+package server
 
 import (
 	"testing"
@@ -25,7 +25,7 @@ func TestStopgapHandler(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			enc := protocol.GetEncoder()
 			defer enc.Release()
-			stopgapHandler(tc.req, enc)
+			StopgapHandler(tc.req, enc)
 			if got := string(enc.Bytes()); got != tc.want {
 				t.Fatalf("got  %q\nwant %q", got, tc.want)
 			}

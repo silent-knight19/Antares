@@ -104,6 +104,15 @@ func TestMaxConnsRejectsExtra(t *testing.T) {
 	waitFor(t, "two connections tracked", func() bool { return srv.Conns() == 2 })
 
 	extra := dial(t, srv)
+	extra.SetReadDeadline(time.Now().Add(2 * time.Second))
+	br := bufio.NewReader(extra)
+	line, err := br.ReadString('\n')
+	if err != nil {
+		t.Fatalf("read refusal: %v", err)
+	}
+	if want := "-ERR max number of clients reached\r\n"; line != want {
+		t.Fatalf("got %q, want %q", line, want)
+	}
 	expectClosed(t, extra)
 	if got := srv.Conns(); got != 2 {
 		t.Fatalf("Conns() = %d, want 2", got)
@@ -269,6 +278,47 @@ func TestPipelineTenThousandCommands(t *testing.T) {
 		t.Fatalf("unexpected extra byte %q after %d replies", b, n)
 	} else if ne, ok := err.(net.Error); !ok || !ne.Timeout() {
 		t.Fatalf("post-pipeline read: %v, want timeout (idle, no extra replies)", err)
+	}
+}
+
+// A complete command followed by an incomplete one must still get its reply:
+// captured from redis 7.4.11, "PING\r\nECH" gets +PONG while the partial
+// inline command waits for the rest of its bytes, and the reply survives a
+// half-close instead of being discarded with the connection.
+func TestRepliesFlushBeforeWaitingOnPartialCommand(t *testing.T) {
+	srv := startServerHandler(t, Config{}, func(req protocol.Request, out *protocol.Encoder) {
+		out.Simple("PONG")
+	})
+	const input = "PING\r\nECH"
+	const want = "+PONG\r\n"
+
+	conn := dial(t, srv)
+	if _, err := conn.Write([]byte(input)); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	got := make([]byte, len(want))
+	if _, err := io.ReadFull(conn, got); err != nil {
+		t.Fatalf("reply withheld behind partial command: %v", err)
+	}
+	if string(got) != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+
+	conn2 := dial(t, srv)
+	if _, err := conn2.Write([]byte(input)); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if err := conn2.(*net.TCPConn).CloseWrite(); err != nil {
+		t.Fatalf("half-close: %v", err)
+	}
+	conn2.SetReadDeadline(time.Now().Add(2 * time.Second))
+	got2, err := io.ReadAll(conn2)
+	if err != nil {
+		t.Fatalf("read after half-close: %v", err)
+	}
+	if string(got2) != want {
+		t.Fatalf("after half-close got %q, want %q", got2, want)
 	}
 }
 

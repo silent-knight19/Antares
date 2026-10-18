@@ -2,7 +2,6 @@ package protocol
 
 import (
 	"bufio"
-	"fmt"
 	"io"
 )
 
@@ -10,6 +9,7 @@ const (
 	inlineMaxSize   = 64 * 1024         // PROTO_INLINE_MAX_SIZE
 	maxMultibulkLen = 1<<31 - 1         // Redis rejects multibulk counts past INT_MAX
 	maxBulkLen      = 512 * 1024 * 1024 // proto-max-bulk-len default
+	bulkReadCap     = 64 * 1024         // chunk size/growth start for payloads above this
 )
 
 // Request is one client command: the verb followed by binary-safe arguments.
@@ -95,15 +95,39 @@ func readBulk(br *bufio.Reader) ([]byte, error) {
 		got = line[0]
 	}
 	if got != '$' {
-		return nil, &ProtocolError{Msg: fmt.Sprintf("expected '$', got '%c'", got)}
+		// The raw byte goes into the reply, as Redis does: %c would encode
+		// bytes >= 0x80 as UTF-8, which would not match the capture.
+		return nil, &ProtocolError{Msg: "expected '$', got '" + string([]byte{got}) + "'"}
 	}
 	n, ok := parseCount(line[1:])
 	if !ok || n < 0 || n > maxBulkLen {
 		return nil, &ProtocolError{Msg: "invalid bulk length"}
 	}
-	buf := make([]byte, n+2)
-	if _, err := io.ReadFull(br, buf); err != nil {
-		return nil, unexpectedEOF(err)
+	need := n + 2
+	if need <= bulkReadCap {
+		buf := make([]byte, need)
+		if _, err := io.ReadFull(br, buf); err != nil {
+			return nil, unexpectedEOF(err)
+		}
+		return buf[:n:n], nil // trailer bytes discarded unvalidated, as Redis does
+	}
+	// Large payloads grow only as bytes actually arrive, so a declared-but-
+	// unsent length (up to 512 MB) cannot force the allocation upfront (Redis
+	// sizes its structures from received bytes too). Growth doubles but is
+	// clamped to the declared size, so no capacity beyond it is ever held.
+	buf := make([]byte, bulkReadCap)
+	filled := int64(0)
+	for filled < need {
+		if filled == int64(len(buf)) {
+			grown := make([]byte, min(2*int64(len(buf)), need))
+			copy(grown, buf)
+			buf = grown
+		}
+		m, err := br.Read(buf[filled:])
+		filled += int64(m)
+		if err != nil {
+			return nil, unexpectedEOF(err)
+		}
 	}
 	return buf[:n:n], nil // trailer bytes discarded unvalidated, as Redis does
 }
@@ -295,6 +319,9 @@ func splitInline(line []byte) ([][]byte, bool) {
 			if p < len(line) {
 				p++
 			}
+		}
+		if cur == nil {
+			cur = []byte{} // arguments are never nil (Redis argv entries always exist)
 		}
 		args = append(args, cur)
 	}

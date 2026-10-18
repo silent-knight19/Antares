@@ -64,10 +64,12 @@ func checkSteps(t *testing.T, in string, steps []step) {
 	}
 }
 
-// Every expectation below was captured from the pinned reference Redis
+// Edge cases captured from the pinned reference Redis
 // (redis:7.4.11@sha256:4fa24486...) on a raw TCP connection — see the
-// PROJECT_LOG P1.2 entry for the capture set.
+// PROJECT_LOG P1.2 entry for the capture set. The 200 KiB payload case is
+// generated (size path, not a capture).
 func TestReadRequest(t *testing.T) {
+	bigArg := strings.Repeat("a", 200<<10)
 	tests := []requestCase{
 		{
 			name:  "multibulk ping",
@@ -215,6 +217,13 @@ func TestReadRequest(t *testing.T) {
 			steps: []step{{errMsg: "invalid bulk length"}},
 		},
 		{
+			// Captured from redis 7.4.11: the raw byte goes on the wire, not
+			// its UTF-8 rendering.
+			name:  "expected-dollar error keeps the raw non-ASCII byte",
+			in:    "*1\r\n\xff\r\n",
+			steps: []step{{errMsg: "expected '$', got '\xff'"}},
+		},
+		{
 			name:  "bulk length above 512MB",
 			in:    "*2\r\n$4\r\nECHO\r\n$536870913\r\n",
 			steps: []step{{errMsg: "invalid bulk length"}},
@@ -228,6 +237,11 @@ func TestReadRequest(t *testing.T) {
 			name:  "inline request above 64KB without newline",
 			in:    strings.Repeat("a", 70000),
 			steps: []step{{errMsg: "too big inline request"}},
+		},
+		{
+			name:  "bulk payload larger than the initial read buffer",
+			in:    "*2\r\n$4\r\nECHO\r\n$204800\r\n" + bigArg + "\r\n",
+			steps: []step{{args: expected("ECHO", bigArg)}},
 		},
 	}
 	for _, tc := range tests {

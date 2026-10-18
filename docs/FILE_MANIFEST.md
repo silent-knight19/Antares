@@ -18,9 +18,10 @@
 |---|---|---|
 | `.gitignore` | Ignore rules: build artifacts, runtime data (aof/rdb/tap), node_modules, env files | scaffold |
 | `LICENSE` | MIT, © 2026 Sachin Kumar Singh | scaffold |
-| `Makefile` | Canonical commands (`build test test-race vet fmt tidy run clean`); phase-gated targets (`verify`, `crash-test`, `showcase`, …) exist now and fail loudly until their phase; CI calls these same targets | scaffold |
+| `Makefile` | Canonical commands (`build test test-race vet fmt tidy run clean`, `fuzz` with `FUZZTIME`); gated targets (`verify`, `crash-test`, `showcase`, …) exist now and fail loudly until their phase; CI calls these same targets | scaffold |
 | `README.md` | Public landing page: what/why, status, architecture, layout, getting started, roadmap, non-goals | scaffold |
-| `go.mod` | Module `github.com/silent-knight19/antares`; Go 1.27.1 pin; dependency-free | scaffold |
+| `go.mod` | Module `github.com/silent-knight19/antares`; Go 1.27.1 pin; single direct dependency: go-redis v9 (test-only differential client, ADR-017) | scaffold |
+| `go.sum` | Module checksums for go-redis and its indirect deps | scaffold |
 | `docker-compose.yml` | Reference Redis 7.4.11 pinned by image digest; 127.0.0.1-only; healthchecked | scaffold |
 
 ## CI
@@ -28,14 +29,12 @@
 | Path | What it is | Ownership |
 |---|---|---|
 | `.github/workflows/ci.yml` | CI: gofmt check, `vet`, `build`, race-tested test run; Go version read from `go.mod` | scaffold |
-| `.github/workflows/.gitkeep` | placeholder from the initial layout; obsolete now that the directory has `ci.yml` | placeholder |
 
 ## Binaries (`cmd/`)
 
 | Path | What it is | Ownership |
 |---|---|---|
-| `cmd/antares/main.go` | Server entry point: flags (`-bind`, `-port`, `-max-conns`, `-idle-timeout`), slog logs, SIGINT/SIGTERM → graceful shutdown; P1.6 stopgap handler (PING/ECHO) until the executor | scaffold |
-| `cmd/antares/main_test.go` | Stopgap-handler replies pinned to Redis 7.4.11 captures | scaffold |
+| `cmd/antares/main.go` | Server entry point: flags (`-bind`, `-port`, `-max-conns`, `-idle-timeout`), slog logs, SIGINT/SIGTERM → graceful shutdown; wires `server.StopgapHandler` until the executor | scaffold |
 | `cmd/observatory/main.go` | Observatory bridge entry point; P0 stub → U2 | stub |
 
 ## Packages (`internal/`)
@@ -45,15 +44,18 @@ Each package carries a `doc.go` charter referencing its ADR; real files land in 
 | Path | What it will contain | Ownership |
 |---|---|---|
 | `internal/protocol/doc.go` | Package charter: RESP2 parse/encode + fuzz corpus (ADR-003) | scaffold |
-| `internal/protocol/parse.go` | RESP2 request reader: multibulk arrays + inline commands, sdssplitargs quoting, string2ll counts; limits and error wording pinned by live capture (ADR-003) | **hand-own** — owner line-by-line review pending (PLAN §8) |
-| `internal/protocol/parse_test.go` | Edge corpus, expectations captured live from Redis 7.4.11: multibulk, inline quoting/escapes, length limits, skips, lax CRLF handling, truncation, pipelining | scaffold |
+| `internal/protocol/parse.go` | RESP2 request reader: multibulk arrays + inline commands, sdssplitargs quoting, string2ll counts; limits and error wording pinned by live capture; one exact allocation for payloads ≤ 64 KiB, larger ones grow with received bytes clamped to the declared size (a declared 512 MB length can never force the allocation) (ADR-003) | **hand-own** — owner line-by-line review pending (PLAN §8) |
+| `internal/protocol/parse_test.go` | Edge corpus from live Redis 7.4.11 captures: multibulk, inline quoting/escapes, length limits, skips, lax CRLF handling, truncation, pipelining; plus a generated 200 KiB size-path case | scaffold |
+| `internal/protocol/fuzz_test.go` | `FuzzReadRequest` — capture-shaped seeds + round-trip invariant (parse → encode → parse byte-identical); no-crash/no-hang on arbitrary bytes; huge-declared-length regression | scaffold |
 | `internal/protocol/encode.go` | RESP2 reply encoder on pooled buffers: `+simple`, `-error`, `:int`, `$bulk`/`$-1`, `*array`/`*-1` (ADR-003) | **hand-own** — owner line-by-line review pending (PLAN §8) |
 | `internal/protocol/encode_test.go` | Byte-exact framing tests, parser round-trips, pool reuse | scaffold |
-| `internal/protocol/errors.go` | Error bodies in captured Redis wording: `ProtocolErrorReply`, `WrongArity`, `UnknownCommand` (128-byte args truncation) | **hand-own** — owner line-by-line review pending (PLAN §8) |
+| `internal/protocol/errors.go` | Error bodies in captured Redis wording: `ProtocolErrorReply`, `WrongArity`, `UnknownCommand` (128-byte name/args truncation) | **hand-own** — owner line-by-line review pending (PLAN §8) |
 | `internal/protocol/errors_test.go` | String-equality table vs Redis 7.4.11 captures + CRLF sanitization | scaffold |
 | `internal/server/doc.go` | Package charter: listener, conn goroutines, executor loop (ADR-002) | scaffold |
-| `internal/server/server.go` | TCP listener: accept loop, conn registry, max-conns cap, graceful `Shutdown(ctx)`; per-conn loop parses RESP requests, dispatches in arrival order to the `Handler`, flushes replies pipeline-aware; idle deadline resets per underlying read (ADR-002) | scaffold (executor flips to hand-own at P2.2) |
+| `internal/server/server.go` | TCP listener: accept loop, conn registry, max-conns cap (over-cap connections get the captured refusal error), graceful `Shutdown(ctx)`; per-conn loop parses RESP requests, dispatches in arrival order to the `Handler`; `connIO` flushes replies before the parser blocks and resets the idle deadline per underlying read (writes bounded when the timeout is set) (ADR-002) | scaffold (executor flips to hand-own at P2.2) |
 | `internal/server/server_test.go` | Listener + pipeline tests: accept/close, max-conns, idle timeout incl. reset-on-partial-activity, graceful/forced shutdown, 10k-command pipeline order/flush, protocol-error reply+close | scaffold |
+| `internal/server/stopgap.go` | P1.6 stopgap handler: capture-exact PING/ECHO replies; lives here so tests and the differential harness can start a full in-process server; deleted when the P2.2 executor lands | scaffold |
+| `internal/server/stopgap_test.go` | Stopgap replies pinned byte-for-byte to Redis 7.4.11 captures | scaffold |
 | `internal/store/doc.go` | Keyspace, value types, WRONGTYPE, empty-collection auto-delete | scaffold → hand-own |
 | `internal/persist/doc.go` | Framed AOF, group commit, recovery, rewrite (ADR-004/007/010) | scaffold → hand-own at P6 |
 | `internal/expire/doc.go` | Lazy + active expiry cycle (ADR-005) | scaffold → hand-own at P3 |
@@ -78,14 +80,14 @@ Planned docs from `PLAN.md` §13, arriving at their phases: `UI-DESIGN.md` (U0),
 
 ## Tests, benchmarks, UI, deploy
 
-All entries below are `placeholder` `.gitkeep` files — directories reserved per `PLAN.md` §13, populated at the phase noted.
+All entries below except the differential smoke are `placeholder` `.gitkeep` files — directories reserved per `PLAN.md` §13, populated at the phase noted.
 
 | Path | Arrives |
 |---|---|
-| `tests/unit/.gitkeep` | P1.1 onward |
-| `tests/differential/.gitkeep` | P2.6 (harness v0), P9.1 (full) |
+| `tests/unit/.gitkeep` | reserved for cross-package suites; unit tests are colocated with their package (Go convention) |
+| `tests/differential/smoke_test.go` | P1.6 (go-redis PING/ECHO/pipeline/unknown-command against in-process server); grows into harness v0 at P2.6, full at P9.1 |
 | `tests/chaos/.gitkeep` | P6.4 (crash), S2.4 (replica chaos) |
-| `tests/fuzz/.gitkeep` | P1.6, P9.3 (soak + corpus) |
+| `tests/fuzz/.gitkeep` | P9.3 (soak + committed regression corpus; the P1.6 harness itself is `internal/protocol/fuzz_test.go`) |
 | `tests/tcl/.gitkeep` | P3.4, P9.2 (vendored Tcl subset) |
 | `bench/scripts/.gitkeep` | P9.4 |
 | `bench/results/.gitkeep` | P9.4 (commit-keyed raw outputs) |

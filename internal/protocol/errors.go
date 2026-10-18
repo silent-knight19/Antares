@@ -20,10 +20,14 @@ func WrongArity(name string) string {
 	return "ERR wrong number of arguments for '" + name + "' command"
 }
 
-// UnknownCommand returns Redis's unknown-command error. Arguments render as
-// quoted, space-separated 'arg' groups; the group stops growing once it
-// reaches 128 bytes, and an argument is cut to fit the remaining budget.
+// UnknownCommand returns Redis's unknown-command error. The name and the
+// quoted-args group are each cut at 128 bytes (captured: a 200-byte name
+// yields a 128-byte name), and an argument is cut to fit the budget left in
+// the group.
 func UnknownCommand(name string, args ...[]byte) string {
+	if len(name) > argsCap {
+		name = name[:argsCap]
+	}
 	var sb strings.Builder
 	for _, a := range args {
 		if sb.Len() >= argsCap {

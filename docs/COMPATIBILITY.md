@@ -38,11 +38,12 @@ Rationale for pinning strategy: ADR-020 (tooling policy, digest pinning) and PLA
 | Missing command families | Lua, cluster, Sentinel, Streams, pub/sub, GEO/HLL/Bitmaps, ACL — commands return the standard unknown-command error | ADR-012, ADR-019 |
 | Sharded/striped keyspace | Single executor, one keyspace — no slot model | ADR-002, ADR-012 |
 | Full-resync payload | Snapshot transferred as a framed command stream (reuses AOF rewrite format) — larger than RDB for big values | ADR-007 |
+| Slow clients | When `-idle-timeout` is set, a connection blocked writing to a client that stopped reading is closed after that period (default 0 = no bound); real Redis's default never closes a slow client and buffers output unboundedly | ADR-002 goroutine-per-conn model; revisit with output-buffer caps at S2.3 |
 
 ## Open questions (decide at the phase noted)
 
 - What should `INFO server` report as `redis_version`? A 7.4-compatible string (some clients gate features on it) vs a suffixed identifier. Decide at P5.3 with go-redis behavior evidence.
-- OOM error strings must match Redis captures — P7.2 (protocol and command error strings were pinned by live capture at P1.5: unknown command incl. 128-byte args truncation, arity, `-ERR Protocol error: …`, CRLF sanitization).
+- OOM error strings must match Redis captures — P7.2 (protocol and command error strings were pinned by live capture at P1.5 and extended at the P1 audit: unknown command incl. 128-byte name and args truncation, arity, `-ERR Protocol error: …` incl. raw non-ASCII byte passthrough, CRLF sanitization, over-cap connection refusal).
 - SCAN cursor semantics (reverse-binary) — document observed ordering guarantees at P5.2.
 - `HELLO` reply shape vs client expectations (go-redis, Jedis) — P5.3 differential.
 

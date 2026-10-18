@@ -277,7 +277,7 @@ Tentative dates (start 2026-10-19): W1 = Oct 19–25 → W22 ends ~Mar 21, 2027.
 
 ## 9. Verification Strategy (pyramid, all CI-enforced)
 
-1. **Unit tests** (fast, table-driven) — per subphase, in `tests/unit/`.
+1. **Unit tests** (fast, table-driven) — colocated with the package under test (Go convention); `tests/unit/` is reserved for cross-package suite-level tests.
 2. **Differential vs real Redis** (ADR-017: independent go-redis client, pinned Redis 7.4) — response canonicalization rules in harness config; 0 mismatches.
 3. **Official Tcl suites subset** — `unit/expire`, `unit/type/incr` (+ documented broader subset); pinned versions vendored.
 4. **Chaos** — kill -9 matrix (100×), torn-write injection, replica kill/reconnect (50×), split-brain; `chaos.yml` nightly.
@@ -359,6 +359,8 @@ antares/
 └── .github/workflows/  ci.yml chaos.yml bench.yml
 ```
 
+(Unit tests are colocated with the package under test; `tests/unit/` is for cross-package suites.)
+
 ## 14. How to Start Every Session
 
 1. Open `docs/PLAN.md` §5/§6 → find current subphase → read its exit criterion.
@@ -366,4 +368,4 @@ antares/
 3. `make test` → confirm baseline green.
 4. Work the subphase. When exit criterion passes → phase-gate checklist (§8) → log → done.
 
-**Current position:** P1.1–P1.5 complete (listener; parser + 30-case capture corpus; pooled writer; pipeline loop with 10k-command test; error framework with a 12-case live differential battery byte-identical to reference Redis). Next: P1.6 — fuzz harness (15 min clean) + differential smoke via go-redis.
+**Current position:** P1 complete — the wire path is capture-exact and machine-verified (parser + encoder + error strings; 10k pipeline test; live differential battery byte-identical; 15-min fuzz clean: 166M execs; go-redis smoke green), including all P1.6 review fixes and the P1 audit fixes (flush-before-block, 128-byte name truncation, raw-byte protocol error, max-conns refusal, write timeout) re-fuzzed. Next: P2.1 — command registry, then the executor and string commands.

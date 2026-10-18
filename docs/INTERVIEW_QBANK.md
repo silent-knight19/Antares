@@ -68,8 +68,8 @@ Evidence: PLAN §9; ADR-017; ADR-018.
 
 ### Q11. What's the strongest verified evidence in the repo right now?
 
-Honest answer: early but real — the wire path is machine-verified. Evidence: the RESP parser's 30-case edge corpus with expectations captured live from the digest-pinned Redis 7.4.11 (several captures overturned assumed Redis behavior); a 10 000-command single-write pipeline test asserting reply order; byte-exact RESP writer framing tests; a live smoke against the binary (mixed multibulk/inline pipeline, protocol-error reply+close, clean SIGTERM); and CI (gofmt + vet + build + race tests) green on every push (run #1, commit `80427de`). Redis itself is the oracle for every protocol claim.
-Evidence: `PROJECT_LOG.md` P1.2–P1.4 entries; GitHub Actions run [39138833199](https://github.com/silent-knight19/Antares/actions/runs/39138833199).
+Honest answer: early but real — the wire path is machine-verified end to end. Evidence: the RESP parser's 31-case edge corpus (30 live captures plus a generated 200 KiB size case) with expectations captured live from the digest-pinned Redis 7.4.11 (several captures overturned assumed Redis behavior); error strings additionally verified by a 12-case live differential battery byte-identical to reference Redis, extended at the P1 audit with two late captures (128-byte command-name truncation, raw non-ASCII byte in the `expected '$'` error) and the over-cap refusal wording; a 15-minute parser fuzz clean (165.8M executions, zero failures) with a parse→encode→re-parse invariant; a 10 000-command single-write pipeline test asserting reply order; a go-redis (independent client, ADR-017) smoke against an in-process server covering PING/ECHO/pipeline/unknown-command error equality; and CI (gofmt + vet + build + race tests) green on every push (run #1, commit `80427de`). Redis itself is the oracle for every protocol claim.
+Evidence: `PROJECT_LOG.md` P1.2–P1.6 entries; GitHub Actions run [39138833199](https://github.com/silent-knight19/Antares/actions/runs/39138833199).
 
 ---
 
