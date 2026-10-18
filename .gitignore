@@ -1,12 +1,18 @@
-# macOS
+# ==============================================================================
+# OS Metadata
+# ==============================================================================
 .DS_Store
 .AppleDouble
 .LSOverride
 ._*
 .Spotlight-V100
 .Trashes
+Thumbs.db
+ehthumbs.db
 
-# Editor & IDE artifacts
+# ==============================================================================
+# Editor & IDE State
+# ==============================================================================
 .vscode/
 !.vscode/settings.json
 !.vscode/tasks.json
@@ -18,12 +24,16 @@
 *.swp
 *.swo
 *~
+*.bak
 
-# Go build & test artifacts
+# ==============================================================================
+# Go Build, Binary & Profiling Artifacts
+# ==============================================================================
 bin/
 dist/
 /antares-server
 /observatory
+/antares
 *.exe
 *.exe~
 *.dll
@@ -37,38 +47,63 @@ mem.pprof
 trace.out
 coverage.html
 coverage.txt
+coverage.out
 
-# Antares runtime & persistence data
+# Go workspace file (should not be committed)
+go.work
+go.work.sum
+
+# ==============================================================================
+# Antares Runtime, State & Persistence Data
+# ==============================================================================
 *.rdb
 *.aof
 dump.rdb
 appendonly.aof
+appendonlydir/
 data/
 *.wal
 *.tap.sock
 event-tap.sock
+*.log
+logs/
+
+# Auto-generated verification & benchmark data (regenerated via `make verify`)
 claims.json
 
-# Node / UI build artifacts (Antares Observatory)
+# ==============================================================================
+# UI Workstream / Node.js (Antares Observatory & Web SPA)
+# ==============================================================================
 node_modules/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 .pnpm-debug.log*
+
+# UI builds and caches
 ui/dist/
 ui/build/
 ui/.next/
 web/dist/
 web/build/
+.next/
+.turbo/
+.cache/
 
-# Testing & CI artifacts
+# ==============================================================================
+# Testing, Benchmarks, Chaos & E2E Suites
+# ==============================================================================
 test-results/
 playwright-report/
 blob-report/
 playwright/.cache/
+bench/results/tmp/
+tests/tcl/tmp/
 
-# Environment files
+# ==============================================================================
+# Environment & Secret Files
+# ==============================================================================
 .env
 .env.local
 .env.*.local
