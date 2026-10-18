@@ -68,8 +68,8 @@ Evidence: PLAN §9; ADR-017; ADR-018.
 
 ### Q11. What's the strongest verified evidence in the repo right now?
 
-Honest answer: it's early — P0 is foundations. What is already machine-verified: CI (gofmt + vet + build + race tests) is green on every push (run #1, commit `80427de`), and `redis-cli -p 6379 PING` returns PONG against the digest-pinned 7.4.11 reference that all future differential tests will use. The first real server evidence arrives at P1.x/P2.x with parser and command tests.
-Evidence: GitHub Actions run [39138833199](https://github.com/silent-knight19/Antares/actions/runs/39138833199); `PROJECT_LOG.md` P0.2 entry.
+Honest answer: early but real — the wire path is machine-verified. Evidence: the RESP parser's 30-case edge corpus with expectations captured live from the digest-pinned Redis 7.4.11 (several captures overturned assumed Redis behavior); a 10 000-command single-write pipeline test asserting reply order; byte-exact RESP writer framing tests; a live smoke against the binary (mixed multibulk/inline pipeline, protocol-error reply+close, clean SIGTERM); and CI (gofmt + vet + build + race tests) green on every push (run #1, commit `80427de`). Redis itself is the oracle for every protocol claim.
+Evidence: `PROJECT_LOG.md` P1.2–P1.4 entries; GitHub Actions run [39138833199](https://github.com/silent-knight19/Antares/actions/runs/39138833199).
 
 ---
 
@@ -92,4 +92,4 @@ Evidence: `COMPATIBILITY.md`; ADR-004, ADR-007, ADR-008.
 1. `claims.json` is the provenance store the Observatory renders from (ADR-018) — never describe it as scratch output.
 2. 10× bottlenecks: executor saturation first; group commit (`everysec`) decouples fsync from the executor, which stalls only under `fsync=always`; second-order: parser allocations / GC pressure.
 3. Digest-bump process: pull the new release → resolve the index digest → update `docker-compose.yml` + `COMPATIBILITY.md` → log the why (CVE/version) in PROJECT_LOG → re-run differential + Tcl suites before accepting.
-4. Protocol fidelity comes from capture, not memory: Redis 7.4 accepts multibulk counts up to INT_MAX, silently skips counts ≤ 0, blinds through the byte after a header `\r`, never validates bulk trailers, and takes bare-LF inline. Three of those overturned assumptions in P1.2 — verify against the reference binary, then pin it in tests.
+4. Protocol fidelity comes from capture, not memory: Redis 7.4 accepts multibulk counts up to INT_MAX, silently skips counts ≤ 0, blinds through the byte after a header `\r`, never validates bulk trailers, and takes bare-LF inline. Each of those contradicted an initial assumption in P1.2 — verify against the reference binary, then pin it in tests.

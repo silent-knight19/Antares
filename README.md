@@ -45,15 +45,16 @@ Every claim the project makes is meant to be machine-verifiable — differential
 
 ## Project status
 
-> **Phase P0.3 — tracking docs seeded; P1.1 (wire protocol) is next.** The project is under active construction.
+> **Phase P1.4 — the wire path works: TCP listener (P1.1), RESP parser + writer (P1.2–P1.3), pipelining (P1.4).** The binary answers PING/ECHO over RESP2; the command executor arrives at P2. The project is under active construction.
 
 | Works today | Arrives later |
 |---|---|
-| `make build` (both binaries), `make test`, `make test-race`, `make vet`, `make fmt`, `make tidy` | TCP listener (P1.1), command set, expiry, persistence, eviction, transactions, replication |
-| CI: gofmt check + `vet` + `build` + race-tested test run | `make verify`, `make diff-test`, `make crash-test`, `make tcl`, `make bench`, `make showcase` |
-| `docker compose up` — pinned reference Redis 7.4.11 | Observatory bridge and web UI (U2 onward) |
+| `make build` (both binaries), `make test`, `make test-race`, `make vet`, `make fmt`, `make tidy` | Command set (P2 onward), expiry, persistence, eviction, transactions, replication |
+| TCP server speaking RESP2 — parser with a 30-case corpus captured from real Redis, pooled reply writer, pipeline-aware flushing; PING/ECHO answered until the executor lands | `make verify`, `make diff-test`, `make crash-test`, `make tcl`, `make bench`, `make showcase` |
+| CI: gofmt check + `vet` + `build` + race-tested test run | Observatory bridge and web UI (U2 onward) |
+| `docker compose up` — pinned reference Redis 7.4.11 | |
 
-The server binary (`cmd/antares`) and Observatory bridge (`cmd/observatory`) currently ship as version-printing stubs; each fails loudly with a pointer to the phase that implements it.
+The Observatory bridge (`cmd/observatory`) still ships as a version-printing stub and fails loudly with a pointer to its phase; `cmd/antares` is the real server.
 
 ## Architecture
 

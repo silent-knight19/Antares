@@ -96,3 +96,15 @@
 - QBank updated: none.
 - Exit evidence: `make test-race` green — encode suite (17 framing + 3 round-trip/pool tests) plus full protocol and server packages; `gofmt -l .` clean; vet/build green.
 - Next session first task: P1.4 — pipelining: read and handle multiple commands per packet in order; exit test streams 10 000 commands in one write.
+
+---
+
+### 2026-10-18 — P1.4: pipelining — parse → handle → flush per connection
+
+- Built: `internal/server/server.go` — the conn goroutine now parses requests with `protocol.ReadRequest` and dispatches each to a new `Handler` type (`func(protocol.Request, *protocol.Encoder)`) in arrival order; replies batch in a per-conn `bufio.Writer` and flush only when no buffered input remains (classic Redis pipeline behavior); protocol errors get `-ERR Protocol error: …` then close, I/O errors (EOF, idle timeout, reset) close silently; reader buffer 4 KB → 16 KB (PROTO_IOBUF_LEN) to batch pipeline reads; idle deadline moved into an `idleConn` reader wrapper that resets it on every underlying read, so any byte of activity keeps the connection alive (Redis `lastinteraction` semantics). `cmd/antares/main.go` — P1.4 stopgap handler: PING/ECHO with the captured `wrong number of arguments for 'echo' command` string; unknown-command wording is refined at P1.5.
+- Files touched: `internal/server/server.go`, `internal/server/server_test.go`, `cmd/antares/main.go`, `README.md` (status), `docs/PLAN.md` (current position), `docs/FILE_MANIFEST.md`, `docs/INTERVIEW_QBANK.md` (Q11 evidence), `docs/PROJECT_LOG.md`.
+- Issues: one design trap caught before it shipped — resetting the read deadline per request (instead of per read) would have broken idle-timeout semantics for slow partial commands; `TestIdleTimeoutResetsOnActivity` guards it.
+- ADRs written: none.
+- QBank updated: Q11 refreshed with the current strongest evidence; note 4 wording fixed.
+- Exit evidence: `make test-race` green — server 14/14 including a 10 000-command single-write ECHO pipeline (distinct payloads read back in order, no extra replies), flush-without-further-input, and protocol-error reply+close; live smoke: mixed multibulk/inline pipeline against `bin/antares -port 6381` → `+PONG +PONG $2 hi -ERR unknown command 'FOO'`, SIGTERM → clean stop.
+- Next session first task: P1.5 — capture exact Redis error strings (unknown command incl. arg quoting/limits, protocol errors, wrong arity) and pin them with string-equality tests.

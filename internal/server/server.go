@@ -1,20 +1,27 @@
 package server
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"net"
 	"sync"
 	"time"
+
+	"github.com/silent-knight19/antares/internal/protocol"
 )
 
 const (
 	DefaultAddr     = "127.0.0.1:6380"
 	DefaultMaxConns = 10000
 
-	readBufferSize   = 4 * 1024
+	readBufferSize   = 16 * 1024 // PROTO_IOBUF_LEN: batches pipeline reads, fewer flushes
 	acceptRetryDelay = 100 * time.Millisecond
 )
+
+// Handler executes one parsed request and writes its reply to out. The
+// executor replaces this at P2.2; P1.4 hands requests to it in arrival order.
+type Handler func(req protocol.Request, out *protocol.Encoder)
 
 type Config struct {
 	Addr        string
@@ -23,7 +30,8 @@ type Config struct {
 }
 
 type Server struct {
-	cfg Config
+	cfg     Config
+	handler Handler
 
 	mu      sync.Mutex
 	ln      net.Listener
@@ -34,7 +42,9 @@ type Server struct {
 	stopOnce sync.Once
 }
 
-func New(cfg Config) *Server {
+// New builds a server. A nil handler drops every request (tests); the real
+// binary always supplies one.
+func New(cfg Config, handler Handler) *Server {
 	if cfg.Addr == "" {
 		cfg.Addr = DefaultAddr
 	}
@@ -42,8 +52,9 @@ func New(cfg Config) *Server {
 		cfg.MaxConns = DefaultMaxConns
 	}
 	return &Server{
-		cfg:   cfg,
-		conns: make(map[net.Conn]struct{}),
+		cfg:     cfg,
+		handler: handler,
+		conns:   make(map[net.Conn]struct{}),
 	}
 }
 
@@ -146,15 +157,55 @@ func (s *Server) serveConn(conn net.Conn) {
 		conn.Close()
 	}()
 
-	buf := make([]byte, readBufferSize)
+	br := bufio.NewReaderSize(idleConn{Conn: conn, timeout: s.cfg.IdleTimeout}, readBufferSize)
+	bw := bufio.NewWriter(conn)
+	enc := protocol.GetEncoder()
+	defer enc.Release()
+
 	for {
-		if s.cfg.IdleTimeout > 0 {
-			conn.SetReadDeadline(time.Now().Add(s.cfg.IdleTimeout))
-		}
-		if _, err := conn.Read(buf); err != nil {
+		req, err := protocol.ReadRequest(br)
+		if err != nil {
+			// Protocol errors get Redis's reply before the close; I/O errors
+			// (EOF, idle timeout, reset) close silently, as Redis does.
+			var pe *protocol.ProtocolError
+			if errors.As(err, &pe) {
+				enc.Reset()
+				enc.Error("ERR Protocol error: " + pe.Msg)
+				bw.Write(enc.Bytes())
+				bw.Flush()
+			}
 			return
 		}
+		if s.handler != nil {
+			enc.Reset()
+			s.handler(req, enc)
+			bw.Write(enc.Bytes())
+		}
+		// Flush once the pipeline is drained — all commands already buffered
+		// are executed first, then replies go out in one batch (classic Redis
+		// pipeline behavior). The kernel may still hold more bytes, which
+		// only costs an extra flush.
+		if br.Buffered() == 0 {
+			if err := bw.Flush(); err != nil {
+				return
+			}
+		}
 	}
+}
+
+// idleConn resets the read deadline on every underlying read, so any byte of
+// activity keeps the connection alive (Redis lastinteraction semantics) —
+// not just completed commands.
+type idleConn struct {
+	net.Conn
+	timeout time.Duration
+}
+
+func (c idleConn) Read(p []byte) (int, error) {
+	if c.timeout > 0 {
+		c.Conn.SetReadDeadline(time.Now().Add(c.timeout))
+	}
+	return c.Conn.Read(p)
 }
 
 func (s *Server) forceCloseConns() bool {

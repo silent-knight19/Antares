@@ -1,20 +1,30 @@
 package server
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"testing"
 	"time"
+
+	"github.com/silent-knight19/antares/internal/protocol"
 )
 
 func startServer(t *testing.T, cfg Config) *Server {
 	t.Helper()
+	return startServerHandler(t, cfg, nil)
+}
+
+func startServerHandler(t *testing.T, cfg Config, handler Handler) *Server {
+	t.Helper()
 	if cfg.Addr == "" {
 		cfg.Addr = "127.0.0.1:0"
 	}
-	srv := New(cfg)
+	srv := New(cfg, handler)
 	if err := srv.Start(); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
@@ -200,4 +210,85 @@ func TestStartAfterShutdownFails(t *testing.T) {
 	if err := srv.Start(); err == nil {
 		t.Fatal("Start after Shutdown succeeded; want error")
 	}
+}
+
+func TestPipelineFlushesWithoutFurtherInput(t *testing.T) {
+	srv := startServerHandler(t, Config{}, func(req protocol.Request, out *protocol.Encoder) {
+		out.Simple("PONG")
+	})
+	conn := dial(t, srv)
+	if _, err := conn.Write([]byte("*1\r\n$4\r\nPING\r\n*1\r\n$4\r\nPING\r\n")); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	want := "+PONG\r\n+PONG\r\n"
+	got := make([]byte, len(want))
+	if _, err := io.ReadFull(conn, got); err != nil {
+		t.Fatalf("replies not flushed: %v", err)
+	}
+	if string(got) != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+}
+
+func TestPipelineTenThousandCommands(t *testing.T) {
+	srv := startServerHandler(t, Config{}, func(req protocol.Request, out *protocol.Encoder) {
+		out.Bulk(req[1])
+	})
+	conn := dial(t, srv)
+
+	const n = 10000
+	var buf bytes.Buffer
+	for i := 0; i < n; i++ {
+		fmt.Fprintf(&buf, "*2\r\n$4\r\nECHO\r\n$5\r\n%05d\r\n", i)
+	}
+	if _, err := conn.Write(buf.Bytes()); err != nil {
+		t.Fatalf("write pipeline: %v", err)
+	}
+
+	br := bufio.NewReader(conn)
+	conn.SetReadDeadline(time.Now().Add(10 * time.Second))
+	for i := 0; i < n; i++ {
+		hdr, err := br.ReadString('\n')
+		if err != nil {
+			t.Fatalf("reply %d header: %v", i, err)
+		}
+		if hdr != "$5\r\n" {
+			t.Fatalf("reply %d header = %q, want $5", i, hdr)
+		}
+		payload := make([]byte, 7)
+		if _, err := io.ReadFull(br, payload); err != nil {
+			t.Fatalf("reply %d payload: %v", i, err)
+		}
+		if want := fmt.Sprintf("%05d\r\n", i); string(payload) != want {
+			t.Fatalf("reply %d = %q, want %q (order broken)", i, payload, want)
+		}
+	}
+	conn.SetReadDeadline(time.Now().Add(200 * time.Millisecond))
+	if b, err := br.ReadByte(); err == nil {
+		t.Fatalf("unexpected extra byte %q after %d replies", b, n)
+	} else if ne, ok := err.(net.Error); !ok || !ne.Timeout() {
+		t.Fatalf("post-pipeline read: %v, want timeout (idle, no extra replies)", err)
+	}
+}
+
+func TestProtocolErrorRepliesAndCloses(t *testing.T) {
+	srv := startServerHandler(t, Config{}, func(req protocol.Request, out *protocol.Encoder) {
+		out.Simple("PONG")
+	})
+	conn := dial(t, srv)
+	if _, err := conn.Write([]byte("*abc\r\n")); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	br := bufio.NewReader(conn)
+	line, err := br.ReadString('\n')
+	if err != nil {
+		t.Fatalf("read error reply: %v", err)
+	}
+	if want := "-ERR Protocol error: invalid multibulk length\r\n"; line != want {
+		t.Fatalf("got %q, want %q", line, want)
+	}
+	conn.SetReadDeadline(time.Time{})
+	expectClosed(t, conn)
 }

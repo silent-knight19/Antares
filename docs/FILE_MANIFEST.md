@@ -34,12 +34,12 @@
 
 | Path | What it is | Ownership |
 |---|---|---|
-| `cmd/antares/main.go` | Server entry point: flags (`-bind`, `-port`, `-max-conns`, `-idle-timeout`), slog logs, SIGINT/SIGTERM → graceful shutdown | scaffold |
+| `cmd/antares/main.go` | Server entry point: flags (`-bind`, `-port`, `-max-conns`, `-idle-timeout`), slog logs, SIGINT/SIGTERM → graceful shutdown; P1.4 stopgap handler (PING/ECHO) until the executor | scaffold |
 | `cmd/observatory/main.go` | Observatory bridge entry point; P0 stub → U2 | stub |
 
 ## Packages (`internal/`)
 
-Each package carries a `doc.go` charter referencing its ADR; real files land in their phases. `internal/server` received its listener at P1.1 and `internal/protocol` its parser at P1.2; critical-path packages are re-listed in "Hand-own commitments" below.
+Each package carries a `doc.go` charter referencing its ADR; real files land in their phases. `internal/server` received its listener at P1.1 and its parse → handle → flush loop at P1.4; `internal/protocol` its parser and encoder at P1.2–P1.3; critical-path packages are re-listed in "Hand-own commitments" below.
 
 | Path | What it will contain | Ownership |
 |---|---|---|
@@ -49,8 +49,8 @@ Each package carries a `doc.go` charter referencing its ADR; real files land in 
 | `internal/protocol/encode.go` | RESP2 reply encoder on pooled buffers: `+simple`, `-error`, `:int`, `$bulk`/`$-1`, `*array`/`*-1` (ADR-003) | **hand-own** — owner line-by-line review pending (PLAN §8) |
 | `internal/protocol/encode_test.go` | Byte-exact framing tests, parser round-trips, pool reuse | scaffold |
 | `internal/server/doc.go` | Package charter: listener, conn goroutines, executor loop (ADR-002) | scaffold |
-| `internal/server/server.go` | TCP listener: accept loop, conn registry, max-conns cap, idle-timeout deadlines, graceful `Shutdown(ctx)` (ADR-002) | scaffold (executor flips to hand-own at P2.2) |
-| `internal/server/server_test.go` | Listener unit tests: accept/close, max-conns, idle timeout, graceful/forced shutdown | scaffold |
+| `internal/server/server.go` | TCP listener: accept loop, conn registry, max-conns cap, graceful `Shutdown(ctx)`; per-conn loop parses RESP requests, dispatches in arrival order to the `Handler`, flushes replies pipeline-aware; idle deadline resets per underlying read (ADR-002) | scaffold (executor flips to hand-own at P2.2) |
+| `internal/server/server_test.go` | Listener + pipeline tests: accept/close, max-conns, idle timeout incl. reset-on-partial-activity, graceful/forced shutdown, 10k-command pipeline order/flush, protocol-error reply+close | scaffold |
 | `internal/store/doc.go` | Keyspace, value types, WRONGTYPE, empty-collection auto-delete | scaffold → hand-own |
 | `internal/persist/doc.go` | Framed AOF, group commit, recovery, rewrite (ADR-004/007/010) | scaffold → hand-own at P6 |
 | `internal/expire/doc.go` | Lazy + active expiry cycle (ADR-005) | scaffold → hand-own at P3 |
@@ -95,7 +95,7 @@ All entries below are `placeholder` `.gitkeep` files — directories reserved pe
 
 When these files exist, they carry the `hand-own` marker here and nothing is "done" on this path until the owner has reviewed every line and can defend it:
 
-- `internal/protocol/` — RESP parser (`parse.go`; owner implementation pending) + encoder (P1.3)
+- `internal/protocol/` — RESP parser (`parse.go`) + encoder (`encode.go`); owner line-by-line review pending
 - `internal/persist/` — frame format, writer, recovery, rewrite
 - `internal/expire/` — lazy + active cycle
 - `internal/evict/` — approximation, pool, policies
