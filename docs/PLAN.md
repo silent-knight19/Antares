@@ -367,4 +367,4 @@ antares/
 3. `make test` → confirm baseline green.
 4. Work the subphase. When exit criterion passes → phase-gate checklist (§8) → log → done.
 
-**Current position:** P0.1 — repo scaffold. Everything else follows.
+**Current position:** P0 complete (P0.1–P0.3; docs seeded, CI green, pinned reference Redis verified) — P0 phase-gate grill pending. Next: P1.1 (TCP listener).

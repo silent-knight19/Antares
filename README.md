@@ -45,7 +45,7 @@ Every claim the project makes is meant to be machine-verifiable — differential
 
 ## Project status
 
-> **Phase P0.1 — repository scaffold.** The project is under active construction.
+> **Phase P0.3 — tracking docs seeded; P1.1 (wire protocol) is next.** The project is under active construction.
 
 | Works today | Arrives later |
 |---|---|
@@ -108,7 +108,7 @@ antares/
 **Prerequisites**
 
 - [Go 1.27.1](https://go.dev) (per `go.mod`)
-- [Docker](https://www.docker.com) (for the pinned reference Redis; not needed for build or tests)
+- A Docker-compatible runtime — [colima](https://github.com/abiosoft/colima) recommended (MIT; matches the OSS-only tooling policy, ADR-020). Needed only for the pinned reference Redis, not for build or tests.
 
 **Clone, build, test**
 
@@ -133,6 +133,7 @@ make run-observatory  # run the observatory bridge (stub until U2)
 The repo pins real Redis 7.4.11 (by image digest) for development and differential verification:
 
 ```bash
+colima start           # once per boot, if using colima
 docker compose up -d   # Redis on 127.0.0.1:6379
 ```
 
@@ -179,6 +180,10 @@ From [`docs/PLAN.md`](docs/PLAN.md) §7 — roughly 20–22 weeks at 3 hours/day
 |---|---|
 | [`docs/PLAN.md`](docs/PLAN.md) | Master plan: objective, definition of done, architecture, phases, verification strategy, roadmap |
 | [`docs/DECISIONS.md`](docs/DECISIONS.md) | Decision log (ADRs): context, options, why chosen, why rejected, trade-offs, and proof for every non-trivial decision |
+| [`docs/PROJECT_LOG.md`](docs/PROJECT_LOG.md) | Session log: what was built, issues in symptom → diagnosis → fix → prevention form, exit evidence |
+| [`docs/FILE_MANIFEST.md`](docs/FILE_MANIFEST.md) | Every tracked file, its purpose, and the hand-own commitments for the critical path |
+| [`docs/INTERVIEW_QBANK.md`](docs/INTERVIEW_QBANK.md) | Rehearsal bank: narrative, decisions, verification, and boundary questions with evidence pointers |
+| [`docs/COMPATIBILITY.md`](docs/COMPATIBILITY.md) | Pinned versions, verification claims, and deliberate divergences from real Redis |
 
 ## License
 

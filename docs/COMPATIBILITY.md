@@ -1,0 +1,58 @@
+# Compatibility — Antares vs Redis 7.4
+
+> Purpose: the compatibility contract in one place — what is pinned, what is verified, what deliberately diverges, and how to reproduce each claim.
+> Status: stub — claims table stays empty until their verifying phases run; final pass at P10.2. Nothing in this file is a claim until it has a verification run behind it.
+
+---
+
+## Pinned versions
+
+| Component | Version | Where pinned |
+|---|---|---|
+| Reference Redis (test-time only, never shipped) | 7.4.11 — digest `sha256:4fa24486b8bcca8eec45ee0eb166edc674795e53a2b53d1a9ef263eecebaac85` | `docker-compose.yml` |
+| Go toolchain | 1.27.1 | `go.mod` (`ci.yml` reads it via `go-version-file`) |
+| Host redis-cli (client only — never the reference server) | 8.10.2 | local install |
+| Tcl test suite | vendored subset, pinned at P9.2 | `tests/tcl/` |
+
+Rationale for pinning strategy: ADR-020 (tooling policy, digest pinning) and PLAN §12 (version-drift risk).
+
+## Compatibility claims (empty until verified)
+
+| Claim | Verified by | Status |
+|---|---|---|
+| redis-cli works interactively and `redis-cli --stat` is clean | P5.3 + diff suite | pending |
+| go-redis differential: 0 mismatches across implemented commands | `make diff-test` (P2.6 → P9.1) | pending |
+| Official Tcl `unit/expire` and `unit/type/incr` fully pass | `make tcl` (P3.4, P9.2) | pending |
+| Crash test: zero acked-write loss with `fsync=always` (≤1s window `everysec`) | `make crash-test` (P6.4) | pending |
+| Replica dataset equality after full resync + `+CONTINUE` continuity | S1.3/S2.2 tests | pending |
+| Benchmarks ≥50–80% of real Redis on the same machine | `make bench` (P9.4) | pending |
+
+## Deliberate divergences (by design, each with a decision record)
+
+| Divergence | Observable behavior | Decision |
+|---|---|---|
+| WATCH semantics | Value-snapshot compare: a write followed by restoring identical bytes does **not** abort EXEC (real Redis aborts). All realistic patterns behave the same | ADR-008 |
+| RESP3 | Not implemented beyond a `HELLO` downgrade stub advertising `proto: 2`; RESP3-only client behaviors unavailable | ADR-003 |
+| Persistence file formats | Framed AOF and framed snapshot stream are **not** Redis-compatible files: Antares cannot load existing `.rdb`/`.aof`, and Redis cannot load ours | ADR-004, ADR-007 |
+| Value encodings | No listpack/intset/embstr encodings (non-goal); the exact `OBJECT ENCODING` surface will be decided at P2/P5 and documented here when it lands | ADR-012 |
+| Missing command families | Lua, cluster, Sentinel, Streams, pub/sub, GEO/HLL/Bitmaps, ACL — commands return the standard unknown-command error | ADR-012, ADR-019 |
+| Sharded/striped keyspace | Single executor, one keyspace — no slot model | ADR-002, ADR-012 |
+| Full-resync payload | Snapshot transferred as a framed command stream (reuses AOF rewrite format) — larger than RDB for big values | ADR-007 |
+
+## Open questions (decide at the phase noted)
+
+- What should `INFO server` report as `redis_version`? A 7.4-compatible string (some clients gate features on it) vs a suffixed identifier. Decide at P5.3 with go-redis behavior evidence.
+- Exact error strings for protocol errors and OOM must match Redis captures — P1.5, P7.2 (string-equality tests against real Redis).
+- SCAN cursor semantics (reverse-binary) — document observed ordering guarantees at P5.2.
+- `HELLO` reply shape vs client expectations (go-redis, Jedis) — P5.3 differential.
+
+## Licensing & safety note
+
+- Antares server code: MIT (`LICENSE`).
+- Reference Redis image: RSALv2/SSPLv1 (source-available, free to use) — used locally for development and differential testing **only**; never redistributed; no Redis code is linked or copied. See ADR-020.
+- Tooling policy: OSS or free-to-use only (ADR-020); container images digest-pinned; ports bound to `127.0.0.1` only.
+
+## How claims will be reproduced
+
+- `make verify` (umbrella, P9.4) runs diff + Tcl + crash + fuzz + bench and writes `claims.json` `{value, source command, timestamp, commit, variance}` (ADR-018).
+- Every number shown in the Observatory renders only from `claims.json` — a number without provenance does not render.
