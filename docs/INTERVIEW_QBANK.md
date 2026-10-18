@@ -92,3 +92,4 @@ Evidence: `COMPATIBILITY.md`; ADR-004, ADR-007, ADR-008.
 1. `claims.json` is the provenance store the Observatory renders from (ADR-018) — never describe it as scratch output.
 2. 10× bottlenecks: executor saturation first; group commit (`everysec`) decouples fsync from the executor, which stalls only under `fsync=always`; second-order: parser allocations / GC pressure.
 3. Digest-bump process: pull the new release → resolve the index digest → update `docker-compose.yml` + `COMPATIBILITY.md` → log the why (CVE/version) in PROJECT_LOG → re-run differential + Tcl suites before accepting.
+4. Protocol fidelity comes from capture, not memory: Redis 7.4 accepts multibulk counts up to INT_MAX, silently skips counts ≤ 0, blinds through the byte after a header `\r`, never validates bulk trailers, and takes bare-LF inline. Three of those overturned assumptions in P1.2 — verify against the reference binary, then pin it in tests.

@@ -71,3 +71,16 @@
 - QBank updated: none.
 - Exit evidence: 11 tests green under `make test-race` (accept/close, max-conns rejection, idle timeout close + reset-on-activity, graceful drain, forced shutdown, expired-context shutdown, idempotent shutdown, double-`Start` error, restart-after-shutdown refusal, accept-error classification); `gofmt -l .` and `go vet` clean; live smoke: `bin/antares -port 6380` → port open, SIGTERM → `shutting down` → `stopped`, exit 0.
 - Next session first task: P1.2 — RESP parser (hand-own begins): arrays of bulk strings + inline commands, edge-case corpus.
+
+---
+
+### 2026-10-18 — P1.2: RESP parser, captured against Redis 7.4.11
+
+- Built: `internal/protocol/parse.go` — RESP2 request reader: multibulk arrays + inline commands behind `ReadRequest(*bufio.Reader) (Request, error)`; `Request [][]byte` binary-safe args; `ProtocolError{Msg}` carries the raw Redis wording (P1.5 frames it as `-ERR Protocol error: …`); Redis string2ll-faithful count parsing; sdssplitargs-faithful inline tokenizer (quote grouping; `\xHH` `\n` `\r` `\t` `\b` `\a` `\\` `\"` escapes; `\'` in single quotes; close quote must be followed by a blank); limits: INT_MAX multibulk count, 512 MB bulk, 64 KB count/inline lines; streaming: incomplete input blocks, EOF surfaces as `io.ErrUnexpectedEOF` (clean boundary: `io.EOF`). `internal/protocol/parse_test.go` — 30-case edge corpus + 5 truncation inputs, every expectation captured live from the pinned reference Redis.
+- Files touched: `internal/protocol/parse.go`, `internal/protocol/parse_test.go`, `docs/PLAN.md` (§8 working-agreement amendment + current position), `docs/FILE_MANIFEST.md`, `docs/INTERVIEW_QBANK.md`, `docs/PROJECT_LOG.md`.
+- Issues: four Redis quirks contradicted the assumed source behavior and were captured before coding (the reason the corpus captures instead of trusting memory): (1) multibulk counts are accepted up to INT_MAX — `*1048577` waits for its args, the real bound is `*2147483648` → `invalid multibulk length`; (2) counts ≤ 0 (`*0`, `*-1`, `*-2`) are silently skipped, not errors; (3) the byte after a header `\r` is skipped blindly — `*1\rX…` and `$4\rX…` both execute; `expected '$', got 'X'` fires only on a wrong first byte (empty bulk header reports `got '\r'`); (4) bulk payload trailers are never validated (`$4` + `PINGXX` still executes `PING`) and inline commands accept a bare LF.
+- Working agreement update (PLAN §8, amended in place): harness writes all code; the critical path keeps a mandatory line-by-line owner review before it ships — the defensibility rule survives, authoring does not. Owner review of `parse.go` is the standing open item.
+- ADRs written: none.
+- QBank updated: §5 note 4 — protocol fidelity comes from capture, not memory, listing the Redis 7.4 quirks.
+- Exit evidence: `make test-race` green — protocol 30 corpus cases + 5 truncation inputs, server 11/11; `gofmt -l .` clean; vet/build green.
+- Next session first task: P1.3 — RESP writer (`+OK`, `-ERR`, integers, bulk, arrays; buffer pooling; parse↔encode round-trip tests).

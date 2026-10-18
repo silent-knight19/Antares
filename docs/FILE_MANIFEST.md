@@ -1,16 +1,16 @@
 # File Manifest — Antares + Observatory
 
-> Purpose: one-line truth for every tracked file — what it is, why it exists, and whether it is scaffold or a hand-owned critical-path file.
-> Answers the interview probes: "Explain this file." / "Which part did you write?"
+> Purpose: one-line truth for every tracked file — what it is, why it exists, and whether it is scaffold or a critical-path file awaiting owner review.
+> Answers the interview probes: "Explain this file." / "Which part did you review?"
 > Rule: updated whenever files are added or changed. Phase gates check that no orphan files exist — every tracked path appears here.
-> Hand-own rule (PLAN §8): RESP parser, AOF frames/recovery, expiry, eviction, transactions, and the replication handshake/backlog are written line-by-line by the owner — future files on that path are marked below and will carry a `hand-own` marker when created.
+> Defend-rule (PLAN §8): the critical path — RESP parser, AOF frames/recovery, expiry, eviction, transactions, and the replication handshake/backlog — carries a `hand-own` marker; the harness implements, then the owner reviews every line and must be able to defend it in a 10-minute grilling before it ships.
 
 ## Ownership legend
 
 - `scaffold` — generated scaffolding (P0), owner-reviewed; not on the critical path
 - `stub` — placeholder that fails loudly with a phase pointer
 - `placeholder` — `.gitkeep` so an empty directory can be tracked; removed when the directory gains real files
-- `hand-own` — critical path; every line defensible for 10 minutes (PLAN §8)
+- `hand-own` — critical path; owner review pending or done; every line defensible for 10 minutes (PLAN §8)
 
 ## Root
 
@@ -39,11 +39,13 @@
 
 ## Packages (`internal/`)
 
-Each package carries a `doc.go` charter referencing its ADR; real files land in their phases. `internal/server` received its listener at P1.1; critical-path packages are re-listed in "Hand-own commitments" below.
+Each package carries a `doc.go` charter referencing its ADR; real files land in their phases. `internal/server` received its listener at P1.1 and `internal/protocol` its parser at P1.2; critical-path packages are re-listed in "Hand-own commitments" below.
 
 | Path | What it will contain | Ownership |
 |---|---|---|
-| `internal/protocol/doc.go` | RESP2 parse/encode + fuzz corpus (ADR-003) | scaffold → hand-own at P1.2 |
+| `internal/protocol/doc.go` | Package charter: RESP2 parse/encode + fuzz corpus (ADR-003) | scaffold |
+| `internal/protocol/parse.go` | RESP2 request reader: multibulk arrays + inline commands, sdssplitargs quoting, string2ll counts; limits and error wording pinned by live capture (ADR-003) | **hand-own** — owner line-by-line review pending (PLAN §8) |
+| `internal/protocol/parse_test.go` | Edge corpus, expectations captured live from Redis 7.4.11: multibulk, inline quoting/escapes, length limits, skips, lax CRLF handling, truncation, pipelining | scaffold |
 | `internal/server/doc.go` | Package charter: listener, conn goroutines, executor loop (ADR-002) | scaffold |
 | `internal/server/server.go` | TCP listener: accept loop, conn registry, max-conns cap, idle-timeout deadlines, graceful `Shutdown(ctx)` (ADR-002) | scaffold (executor flips to hand-own at P2.2) |
 | `internal/server/server_test.go` | Listener unit tests: accept/close, max-conns, idle timeout, graceful/forced shutdown | scaffold |
@@ -89,9 +91,9 @@ All entries below are `placeholder` `.gitkeep` files — directories reserved pe
 
 ## Hand-own commitments (PLAN §8)
 
-When these files are created, they flip from scaffold to `hand-own` here, and nothing lands on this path without the owner being able to defend every line:
+When these files exist, they carry the `hand-own` marker here and nothing is "done" on this path until the owner has reviewed every line and can defend it:
 
-- `internal/protocol/` — RESP parser + encoder
+- `internal/protocol/` — RESP parser (`parse.go`; owner implementation pending) + encoder (P1.3)
 - `internal/persist/` — frame format, writer, recovery, rewrite
 - `internal/expire/` — lazy + active cycle
 - `internal/evict/` — approximation, pool, policies

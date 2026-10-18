@@ -268,7 +268,7 @@ Tentative dates (start 2026-10-19): W1 = Oct 19–25 → W22 ends ~Mar 21, 2027.
 
 ### Session protocol (10 / 100 / 30)
 - **Start (10 min):** re-read last PROJECT_LOG entry + today's subphase exit criterion. `make test` baseline green.
-- **Build (100 min):** AI harness allowed for boilerplate, tests scaffolding, CI, docs. **Hand-own (never ship code you can't defend 10 min):** RESP parser, WAL/frames + recovery, expiry, eviction, transactions, replication handshake/backlog.
+- **Build (100 min):** the harness writes all code (implementation, tests, CI, docs). **Defend-rule (never ship code you can't defend 10 min):** the critical path — RESP parser, WAL/frames + recovery, expiry, eviction, transactions, replication handshake/backlog — gets a mandatory line-by-line owner review before it ships; the owner may also write any file directly.
 - **Close (30 min):** run exit tests; append PROJECT_LOG (what built, files touched, bugs: symptom→diagnosis→fix→prevention, ADRs written); update FILE_MANIFEST; refresh QBank from the session's decisions and corrections; write tomorrow's first task.
 
 ### Phase gate (mandatory before advancing)
@@ -366,4 +366,4 @@ antares/
 3. `make test` → confirm baseline green.
 4. Work the subphase. When exit criterion passes → phase-gate checklist (§8) → log → done.
 
-**Current position:** P0 complete (P0.1–P0.3; docs seeded, CI green, pinned reference Redis verified). Next: P1.1 (TCP listener).
+**Current position:** P0 complete; P1.1 complete (listener + review hardening, 11 tests green). P1.2 complete — RESP parser implemented, 30-case Redis-7.4.11-captured corpus green under race (owner line-by-line review pending per the §8 defend-rule). Next: P1.3 (RESP writer).
