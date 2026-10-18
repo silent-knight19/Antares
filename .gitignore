@@ -26,6 +26,11 @@ ehthumbs.db
 *~
 *.bak
 
+# OpenCode & Agent IDE config
+opencode.json
+opencode.local.json
+.opencode/
+
 # ==============================================================================
 # Go Build, Binary & Profiling Artifacts
 # ==============================================================================

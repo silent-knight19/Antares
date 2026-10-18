@@ -12,7 +12,8 @@ const (
 	DefaultAddr     = "127.0.0.1:6380"
 	DefaultMaxConns = 10000
 
-	readBufferSize = 16 * 1024
+	readBufferSize   = 4 * 1024
+	acceptRetryDelay = 100 * time.Millisecond
 )
 
 type Config struct {
@@ -27,7 +28,6 @@ type Server struct {
 	mu      sync.Mutex
 	ln      net.Listener
 	conns   map[net.Conn]struct{}
-	started bool
 	stopped bool
 
 	wg       sync.WaitGroup
@@ -49,9 +49,9 @@ func New(cfg Config) *Server {
 
 func (s *Server) Start() error {
 	s.mu.Lock()
-	if s.started {
+	if s.ln != nil || s.stopped {
 		s.mu.Unlock()
-		return errors.New("server: already started")
+		return errors.New("server: already started or stopped")
 	}
 	ln, err := net.Listen("tcp", s.cfg.Addr)
 	if err != nil {
@@ -59,7 +59,6 @@ func (s *Server) Start() error {
 		return err
 	}
 	s.ln = ln
-	s.started = true
 	s.mu.Unlock()
 
 	s.wg.Add(1)
@@ -103,7 +102,10 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	case <-drained:
 		return nil
 	case <-ctx.Done():
-		s.closeAllConns()
+		if !s.forceCloseConns() {
+			<-drained
+			return nil
+		}
 		<-drained
 		return ctx.Err()
 	}
@@ -114,7 +116,11 @@ func (s *Server) acceptLoop() {
 	for {
 		conn, err := s.ln.Accept()
 		if err != nil {
-			return
+			if !retryAccept(err) {
+				return
+			}
+			time.Sleep(acceptRetryDelay)
+			continue
 		}
 
 		s.mu.Lock()
@@ -151,7 +157,7 @@ func (s *Server) serveConn(conn net.Conn) {
 	}
 }
 
-func (s *Server) closeAllConns() {
+func (s *Server) forceCloseConns() bool {
 	s.mu.Lock()
 	conns := make([]net.Conn, 0, len(s.conns))
 	for conn := range s.conns {
@@ -162,4 +168,9 @@ func (s *Server) closeAllConns() {
 	for _, conn := range conns {
 		conn.Close()
 	}
+	return len(conns) > 0
+}
+
+func retryAccept(err error) bool {
+	return !errors.Is(err, net.ErrClosed)
 }

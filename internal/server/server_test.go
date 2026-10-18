@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"testing"
 	"time"
@@ -61,6 +62,23 @@ func expectClosed(t *testing.T, conn net.Conn) {
 	}
 }
 
+func TestRetryAccept(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"closed listener stops the loop", net.ErrClosed, false},
+		{"wrapped closed listener stops the loop", fmt.Errorf("accept tcp: %w", net.ErrClosed), false},
+		{"transient error is retried", errors.New("too many open files"), true},
+	}
+	for _, tt := range tests {
+		if got := retryAccept(tt.err); got != tt.want {
+			t.Errorf("%s: retryAccept(%v) = %v, want %v", tt.name, tt.err, got, tt.want)
+		}
+	}
+}
+
 func TestAcceptAndClose(t *testing.T) {
 	srv := startServer(t, Config{})
 	conn := dial(t, srv)
@@ -88,6 +106,23 @@ func TestIdleTimeoutClosesConn(t *testing.T) {
 	waitFor(t, "connection tracked", func() bool { return srv.Conns() == 1 })
 	expectClosed(t, conn)
 	waitFor(t, "connection released", func() bool { return srv.Conns() == 0 })
+}
+
+func TestIdleTimeoutResetsOnActivity(t *testing.T) {
+	srv := startServer(t, Config{IdleTimeout: 500 * time.Millisecond})
+	conn := dial(t, srv)
+	waitFor(t, "connection tracked", func() bool { return srv.Conns() == 1 })
+
+	for i := 0; i < 8; i++ {
+		if _, err := conn.Write([]byte{'x'}); err != nil {
+			t.Fatalf("write %d: %v", i, err)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if got := srv.Conns(); got != 1 {
+		t.Fatalf("connection closed while active: Conns() = %d, want 1", got)
+	}
+	expectClosed(t, conn)
 }
 
 func TestGracefulShutdownDrainsClients(t *testing.T) {
@@ -141,9 +176,28 @@ func TestShutdownIdempotent(t *testing.T) {
 	}
 }
 
+func TestShutdownExpiredContextReturnsNil(t *testing.T) {
+	srv := startServer(t, Config{})
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := srv.Shutdown(ctx); err != nil {
+		t.Fatalf("Shutdown: %v, want nil (nothing was force-closed)", err)
+	}
+}
+
 func TestStartTwiceFails(t *testing.T) {
 	srv := startServer(t, Config{})
 	if err := srv.Start(); err == nil {
 		t.Fatal("second Start succeeded; want error")
+	}
+}
+
+func TestStartAfterShutdownFails(t *testing.T) {
+	srv := startServer(t, Config{})
+	if err := srv.Shutdown(context.Background()); err != nil {
+		t.Fatalf("Shutdown: %v", err)
+	}
+	if err := srv.Start(); err == nil {
+		t.Fatal("Start after Shutdown succeeded; want error")
 	}
 }

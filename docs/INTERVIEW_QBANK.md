@@ -1,8 +1,8 @@
 # Interview Q-Bank — Antares + Observatory
 
 > Purpose: the rehearsal bank. Every probe a real interviewer might ask, with a spoken-answer outline and the artifact that proves it.
-> Rules: seeded at each phase gate; a new entry whenever a probe surfaces in conversation or practice; every answer points at evidence (ADR / test / doc) — no hand-waving.
-> Sections: Narrative · Decisions · Verification · Boundaries · Weak spots to revisit.
+> Rules: maintained by the AI harness whenever a decision lands or a correction surfaces; every answer points at evidence (ADR / test / doc) — no hand-waving.
+> Sections: Narrative · Decisions · Verification · Boundaries · Answer notes.
 
 ---
 
@@ -87,9 +87,8 @@ Evidence: `COMPATIBILITY.md`; ADR-004, ADR-007, ADR-008.
 
 ---
 
-## 5. Weak spots to revisit (filled by the daily quiz)
+## 5. Answer notes (folded into answers as they stabilize)
 
-- **P0 grill, 2026-10-18 — 8/10 (narrow pass).** Drill in the daily quiz until clean:
-  1. `claims.json` is the provenance store the Observatory renders from (ADR-018) — never describe it as scratch output.
-  2. 10× bottlenecks: group commit (`everysec`) decouples fsync from the executor; executor stalls on fsync only under `fsync=always`. Second-order: parser allocations / GC pressure.
-  3. Digest-bump process: also log the why (CVE/version) as its own PROJECT_LOG entry, and require a clean CI run before accepting the new digest.
+1. `claims.json` is the provenance store the Observatory renders from (ADR-018) — never describe it as scratch output.
+2. 10× bottlenecks: executor saturation first; group commit (`everysec`) decouples fsync from the executor, which stalls only under `fsync=always`; second-order: parser allocations / GC pressure.
+3. Digest-bump process: pull the new release → resolve the index digest → update `docker-compose.yml` + `COMPATIBILITY.md` → log the why (CVE/version) in PROJECT_LOG → re-run differential + Tcl suites before accepting.

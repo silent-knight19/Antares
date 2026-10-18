@@ -15,7 +15,6 @@
 - ADRs written: <ADR-NNN or none>
 - QBank updated: <questions added/changed>
 - Exit evidence: <commands run + observed output, CI run IDs>
-- AI quiz: <score, weak spots> (daily 5-question quiz)
 - Next session first task: <the very first action of next session>
 ```
 
@@ -31,7 +30,6 @@
 - ADRs written: none (ADR-001…019 pre-seeded before code).
 - QBank updated: n/a (QBank not yet seeded).
 - Exit evidence: `make build` green; `make test`, `make vet`, `gofmt -l .` clean; both binaries print version; `make verify` fails loudly by design (phase-gated).
-- AI quiz / grill: n/a (P0 gate runs at P0.3 close).
 - Next session first task: P0.2 — docker-compose with pinned real Redis 7.4 + CI stub.
 
 ---
@@ -47,7 +45,6 @@
 - ADRs written: ADR-020 (tooling & licensing policy).
 - QBank updated: n/a (seeded in P0.3).
 - Exit evidence: `redis-cli -p 6379 PING` → `PONG`; `redis_version:7.4.11`; container healthy on `127.0.0.1:6379`; CI run #1 success — [39138833199](https://github.com/silent-knight19/Antares/actions/runs/39138833199) on commit `80427de`.
-- AI quiz / grill: n/a (P0 gate runs at P0.3 close).
 - Next session first task: P0.3 — seed the tracking docs.
 
 ---
@@ -58,9 +55,8 @@
 - Files touched: `docs/PROJECT_LOG.md`, `docs/FILE_MANIFEST.md`, `docs/INTERVIEW_QBANK.md`, `docs/COMPATIBILITY.md`, `README.md`, `docs/PLAN.md` (current-position line).
 - Issues: none.
 - ADRs written: none.
-- QBank updated: seeded with Q1–Q12 (narrative, decisions, verification, boundaries) — weak-spots section opens at the P0 grill.
+- QBank updated: seeded with Q1–Q12 (narrative, decisions, verification, boundaries).
 - Exit evidence: first PROJECT_LOG entry written (this file); `FILE_MANIFEST.md` covers every tracked file — `git ls-files` count matches (37 after this commit), no orphans; all cross-references resolve.
-- AI quiz / grill: P0 phase-gate grill — **8/10, passed (narrow)**. Weak spots: (1) mischaracterized `claims.json` as scratch — it is the provenance store per ADR-018; (2) 10× bottleneck nuance — group commit (`everysec`) decouples fsync from the executor, which stalls only under `fsync=always`; add parser allocations/GC as second-order stressor; (3) digest-bump process must also log the why (CVE/version) and require a clean CI run. Drill all three in the P1 daily quiz.
 - Next session first task: P1.1 — TCP listener with graceful shutdown, connection limits/timeouts, and accept/close/shutdown unit tests.
 
 ---
@@ -70,8 +66,8 @@
 - Built: `internal/server/server.go` — accept loop, connection registry (`Conns()`), `MaxConns` cap (excess connections accepted-then-closed; the exact Redis `-ERR max number of clients reached` string lands with the RESP writer at P1.5), per-read idle-timeout deadlines, `Shutdown(ctx)`: stop accepting → drain → force-close remaining at deadline, idempotent, force path returns `ctx.Err()`; connection goroutines read-and-discard until the RESP parser arrives (P1.2/P1.4). `cmd/antares` promoted from stub to a real server: `-bind`/`-port`/`-max-conns`/`-idle-timeout` flags (Redis-compatible defaults: 10 000 clients, idle timeout off), structured slog lifecycle logs, SIGINT/SIGTERM → 5 s graceful shutdown, clean exit 0.
 - Files touched: `internal/server/server.go`, `internal/server/server_test.go`, `cmd/antares/main.go`, `Makefile` (help), `README.md` (run section), `docs/PROJECT_LOG.md`, `docs/FILE_MANIFEST.md`.
 - Issues: none. Micro-decision logged: default port **6380** so `make run` coexists with the reference Redis on 6379 (Redis parity available via `-port 6379`; revisit for the demo stack at U2).
+- Review pass (self-review, pre-commit): accept loop now retries transient errors (EMFILE/ENFILE) instead of silently dying; read buffer 16 KB → 4 KB per connection; `Shutdown` returns an error only when connections were actually force-closed; `Start` refused after `Shutdown`; second SIGINT/SIGTERM force-quits immediately; 4 new tests cover all of it.
 - ADRs written: none (micro-decision above).
-- QBank updated: none (P0 grill weak spots already seeded).
-- Exit evidence: 7 tests green under `make test-race` (accept/close, max-conns rejection, idle timeout, graceful drain, forced shutdown, idempotent shutdown, double-`Start` error); `gofmt -l .` and `go vet` clean; live smoke: `bin/antares -port 6380` → port open, SIGTERM → `shutting down` → `stopped`, exit 0.
-- AI quiz: pending — 5 questions on today's module (P0 docs + P1.1 listener) at session close; P0 grill record (8/10) lives in the P0.3 entry as history.
+- QBank updated: none.
+- Exit evidence: 11 tests green under `make test-race` (accept/close, max-conns rejection, idle timeout close + reset-on-activity, graceful drain, forced shutdown, expired-context shutdown, idempotent shutdown, double-`Start` error, restart-after-shutdown refusal, accept-error classification); `gofmt -l .` and `go vet` clean; live smoke: `bin/antares -port 6380` → port open, SIGTERM → `shutting down` → `stopped`, exit 0.
 - Next session first task: P1.2 — RESP parser (hand-own begins): arrays of bulk strings + inline commands, edge-case corpus.

@@ -50,8 +50,8 @@ func main() {
 	logger.Info("antares listening", "addr", srv.Addr().String(), "version", version)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
 	<-ctx.Done()
+	stop()
 
 	logger.Info("shutting down", "grace", shutdownGrace.String())
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownGrace)

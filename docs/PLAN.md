@@ -264,12 +264,12 @@ Tentative dates (start 2026-10-19): W1 = Oct 19–25 → W22 ends ~Mar 21, 2027.
 | `DECISIONS.md` (ADR log) | "Why X over Y? What did you reject?" | Whenever a decision is made (same session) |
 | `PROJECT_LOG.md` | "Hardest bug? What did you do last month?" (STAR source) | Every session close |
 | `FILE_MANIFEST.md` | "Explain this file. Which part did you write?" | When files are added/changed |
-| `INTERVIEW_QBANK.md` | Rehearsal + boundary-of-knowledge | Every phase gate + when a probe surfaces |
+| `INTERVIEW_QBANK.md` | Rehearsal + boundary-of-knowledge | Whenever a decision lands or a correction surfaces (harness-maintained) |
 
 ### Session protocol (10 / 100 / 30)
 - **Start (10 min):** re-read last PROJECT_LOG entry + today's subphase exit criterion. `make test` baseline green.
 - **Build (100 min):** AI harness allowed for boilerplate, tests scaffolding, CI, docs. **Hand-own (never ship code you can't defend 10 min):** RESP parser, WAL/frames + recovery, expiry, eviction, transactions, replication handshake/backlog.
-- **Close (30 min):** run exit tests; append PROJECT_LOG (what built, files touched, bugs: symptom→diagnosis→fix→prevention, ADRs written); update FILE_MANIFEST; add QBank entries; write tomorrow's first task; **AI quiz:** "Ask me 5 questions on today's module, grade my answers, list weak spots." Weak spots → tomorrow's warm-up.
+- **Close (30 min):** run exit tests; append PROJECT_LOG (what built, files touched, bugs: symptom→diagnosis→fix→prevention, ADRs written); update FILE_MANIFEST; refresh QBank from the session's decisions and corrections; write tomorrow's first task.
 
 ### Phase gate (mandatory before advancing)
 1. Exit criteria green (command evidence logged).
