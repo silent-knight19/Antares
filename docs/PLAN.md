@@ -116,7 +116,7 @@ Legend: **Session = 3h block.** Every subphase: objective exit criterion + ≥1 
 | P3.1 | expires dict; SET EX/PX; TTL/PTTL/PERSIST; EXPIRE/PEXPIRE/EXPIREAT/PEXPIREAT (+NX/XX/GT/LT) | Differential green (TTL family) | 1 |
 | P3.2 | Lazy expiry on every read path; delete-on-access semantics; DBSIZE consistency | Unit + differential green | 1 |
 | P3.3 | Active expiry cycle: hz=10, sample 20, >25% → repeat, per-cycle time budget; CONFIG SET hz | Cycle unit tests with fake clock | 1 |
-| P3.4 | Virtual clock wired everywhere (ADR-009); Tcl unit/expire runner | `make tcl-expire` passes | 1 |
+| P3.4 | Virtual clock wired everywhere (ADR-009); selected Tcl unit/expire runner | `make tcl-expire` passes (39 selected tests) | 1 |
 
 ### P4 — Collections (5 sessions)
 | ID | Deliverable | Exit criterion | Sess |
@@ -130,9 +130,9 @@ Legend: **Session = 3h block.** Every subphase: objective exit criterion + ≥1 
 ### P5 — Keyspace & Introspection (3 sessions)
 | ID | Deliverable | Exit criterion | Sess |
 |---|---|---|---|
-| P5.1 | KEYS (glob matcher), RENAME/RENAMENX, RANDOMKEY, DBSIZE, FLUSHDB/FLUSHALL | Differential green (keys) | 1 |
+| P5.1 | KEYS (glob matcher), RENAME/RENAMENX, RANDOMKEY, FLUSHDB/FLUSHALL (DBSIZE landed at P3.2) | Differential green (keys) | 1 |
 | P5.2 | SCAN with reverse-binary cursor semantics; termination + duplicate guarantees documented | SCAN invariants tests (grow/shrink while scanning) | 1 |
-| P5.3 | INFO sections, CONFIG GET/SET allowlist, CLIENT stubs | `redis-cli --stat` clean; INFO diff on key fields | 1 |
+| P5.3 | INFO sections, CONFIG GET/SET allowlist (hz landed at P3.3), CLIENT stubs | `redis-cli --stat` clean; INFO diff on key fields | 1 |
 
 > **M1 insertion point → build dev console here (see §6).** Use it daily during P6–P10.
 
@@ -166,7 +166,7 @@ Legend: **Session = 3h block.** Every subphase: objective exit criterion + ≥1 
 | ID | Deliverable | Exit criterion | Sess |
 |---|---|---|---|
 | P9.1 | Differential full: generator across families, edge corpus, canonicalization rules, CI service container | CI diff job green on all commands | 1 |
-| P9.2 | Tcl suite wiring: vendored subset runner, per-command pass report | `make tcl` green for target suites | 1 |
+| P9.2 | Tcl suite wiring: downloaded pinned subset runner (no vendored Redis code), per-command pass report | `make tcl` green for target suites | 1 |
 | P9.3 | Fuzz soak: parser + frame recovery, regression corpus, nightly CI | 1h fuzz clean; corpus committed | 1 |
 | P9.4 | Benchmarks: script, P=1/P=16, 3 runs, `BENCHMARKS.md`, `make verify` umbrella | `make verify` green end-to-end | 1 |
 
@@ -368,4 +368,4 @@ antares/
 3. `make test` → confirm baseline green.
 4. Work the subphase. When exit criterion passes → phase-gate checklist (§8) → log → done.
 
-**Current position:** P3.1 complete — TTL state now lives in a separate expires dict owned by the store, and TTL/PTTL/PERSIST plus EXPIRE/PEXPIRE/EXPIREAT/PEXPIREAT (NX/XX/GT/LT) match Redis 7.4.11, including nearest-second TTL rounding, option-before-integer validation order, non-volatile GT/LT semantics, and unit-specific overflow rules. The committed harness is green with 198 string/TTL corpus steps plus an expiry scenario (199 subtests), and P2.5's 1056 one-off checks remain clean. Next: P3.2 — audit lazy expiry on every read path, pin delete-on-access semantics, and reconcile DBSIZE consistency.
+**Current position:** P4.5 complete — differential coverage now includes 198 string/TTL, 91 list, 71 hash, 99 set, 171 cross-type, and 240 generated collection-sequence steps, plus the selected official Tcl `unit/expire` (39) and `unit/type/incr` (26) subsets. The store covers strings, lists, hashes, and sets with cross-type/empty-deletion parity; domain time still comes from the single injected clock, and only network I/O deadlines stay real. Next: P5.1 — KEYS (glob matcher), RENAME/RENAMENX, RANDOMKEY, FLUSHDB/FLUSHALL.

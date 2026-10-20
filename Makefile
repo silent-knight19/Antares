@@ -15,7 +15,7 @@ FUZZTIME ?= 30s
 REF_ADDR ?= 127.0.0.1:6379
 
 .PHONY: help build test test-race vet fmt tidy run run-observatory clean fuzz \
-	verify diff-test crash-test bench tcl showcase showcase-e2e ui-dev
+	verify diff-test clock-check tcl-expire tcl-incr crash-test bench tcl showcase showcase-e2e ui-dev
 
 help:
 	@echo "Antares targets:"
@@ -29,7 +29,10 @@ help:
 	@echo "  run-observatory  run the observatory bridge (stub until U2)"
 	@echo "  clean            remove build artifacts"
 	@echo "  fuzz             run the RESP fuzzer for FUZZTIME (default 30s, e.g. FUZZTIME=15m)"
-	@echo "  diff-test        run the string differential harness against reference Redis (REF_ADDR=$(REF_ADDR))"
+	@echo "  diff-test        run the command differential harness against reference Redis (REF_ADDR=$(REF_ADDR))"
+	@echo "  clock-check      enforce the ADR-009 rule: no direct wall-clock reads outside clock/server I/O"
+	@echo "  tcl-expire       run the selected official Redis unit/expire tests (downloads pinned 7.4.11 tests)"
+	@echo "  tcl-incr         run the selected official Redis unit/type/incr tests"
 	@echo "  phase-gated:     verify crash-test bench tcl showcase showcase-e2e ui-dev"
 
 build:
@@ -45,6 +48,10 @@ test-race:
 
 vet:
 	$(GO) vet ./...
+
+clock-check:
+	@matches=$$(grep -rn --include='*.go' -E 'time\.(Now|Since)\(' internal cmd | grep -v '^internal/clock/clock.go:' | grep -v '^internal/server/server.go:' | grep -v '_test.go:' || true); \
+	if [ -n "$$matches" ]; then echo "$$matches"; echo "use internal/clock instead of direct wall-clock reads"; exit 1; fi
 
 fmt:
 	gofmt -l -w .
@@ -67,6 +74,12 @@ fuzz:
 diff-test:
 	docker compose up -d --wait redis-ref
 	REDIS_REF_ADDR=$(REF_ADDR) $(GO) test -count=1 -run 'TestDiff' ./tests/differential/
+
+tcl-expire:
+	@tests/tcl/run-expire.sh expire
+
+tcl-incr:
+	@tests/tcl/run-incr.sh
 
 verify crash-test bench tcl showcase showcase-e2e ui-dev:
 	@echo "make $@: not implemented yet — arrives at the phase marked in docs/PLAN.md §5–§7 (DoD: §2)"

@@ -20,7 +20,8 @@ const (
 
 	// errMaxClients is Redis's refusal, captured from redis 7.4.11: an
 	// over-cap connection gets this reply, then the connection closes.
-	errMaxClients = "-ERR max number of clients reached\r\n"
+	errMaxClients   = "-ERR max number of clients reached\r\n"
+	refusalDeadline = 5 * time.Second
 )
 
 // Handler executes one parsed request and writes its reply to out. The
@@ -37,13 +38,18 @@ type Server struct {
 	cfg     Config
 	handler Handler
 
-	mu      sync.Mutex
-	ln      net.Listener
-	conns   map[net.Conn]struct{}
-	stopped bool
+	mu          sync.Mutex
+	ln          net.Listener
+	conns       map[net.Conn]struct{}
+	stopped     bool
+	forced      bool
+	shutdownErr error
 
-	wg       sync.WaitGroup
-	stopOnce sync.Once
+	wg        sync.WaitGroup
+	stopOnce  sync.Once
+	drainOnce sync.Once
+	drained   chan struct{}
+	forcedCh  chan struct{}
 }
 
 // New builds a server. A nil handler drops every request (tests); the real
@@ -56,9 +62,11 @@ func New(cfg Config, handler Handler) *Server {
 		cfg.MaxConns = DefaultMaxConns
 	}
 	return &Server{
-		cfg:     cfg,
-		handler: handler,
-		conns:   make(map[net.Conn]struct{}),
+		cfg:      cfg,
+		handler:  handler,
+		conns:    make(map[net.Conn]struct{}),
+		drained:  make(chan struct{}),
+		forcedCh: make(chan struct{}),
 	}
 }
 
@@ -97,6 +105,14 @@ func (s *Server) Conns() int {
 }
 
 func (s *Server) Shutdown(ctx context.Context) error {
+	s.mu.Lock()
+	if s.forced {
+		err := s.shutdownErr
+		s.mu.Unlock()
+		return err
+	}
+	s.mu.Unlock()
+
 	s.stopOnce.Do(func() {
 		s.mu.Lock()
 		s.stopped = true
@@ -106,24 +122,42 @@ func (s *Server) Shutdown(ctx context.Context) error {
 			ln.Close()
 		}
 	})
-
-	drained := make(chan struct{})
-	go func() {
-		s.wg.Wait()
-		close(drained)
-	}()
+	s.drainOnce.Do(func() {
+		go func() {
+			s.wg.Wait()
+			close(s.drained)
+		}()
+	})
 
 	select {
-	case <-drained:
+	case <-s.drained:
 		return nil
+	case <-s.forcedCh:
+		return s.forceError()
 	case <-ctx.Done():
 		if !s.forceCloseConns() {
-			<-drained
+			<-s.drained
 			return nil
 		}
-		<-drained
-		return ctx.Err()
+		return s.forceShutdown(ctx.Err())
 	}
+}
+
+func (s *Server) forceShutdown(err error) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.forced {
+		s.forced = true
+		s.shutdownErr = err
+		close(s.forcedCh)
+	}
+	return s.shutdownErr
+}
+
+func (s *Server) forceError() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.shutdownErr
 }
 
 func (s *Server) acceptLoop() {
@@ -143,6 +177,7 @@ func (s *Server) acceptLoop() {
 			stopped := s.stopped
 			s.mu.Unlock()
 			if !stopped {
+				conn.SetWriteDeadline(time.Now().Add(refusalDeadline))
 				conn.Write([]byte(errMaxClients))
 			}
 			conn.Close()

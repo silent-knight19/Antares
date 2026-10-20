@@ -1,37 +1,94 @@
 package store
 
-import "time"
+import "github.com/silent-knight19/antares/internal/clock"
 
 // Store is the keyspace owned by the executor goroutine. It has no locks:
 // ADR-002 makes that goroutine the only accessor. Expiries live in a separate
 // dict, as in Redis, so the active cycle can sample only volatile keys.
-type Store struct {
-	data    map[string][]byte
-	expires map[string]int64
+type Kind string
+
+const (
+	KindString Kind = "string"
+	KindList   Kind = "list"
+	KindHash   Kind = "hash"
+	KindSet    Kind = "set"
+)
+
+// Value is a typed keyspace entry. String values use Str; list values use
+// List in head-to-tail order. HashIndex/SetIndex map field/member bytes to
+// their slice position so bulk mutations do not rescan the whole collection.
+type Value struct {
+	Kind      Kind
+	Str       []byte
+	List      [][]byte
+	Hash      []HashEntry
+	HashIndex map[string]int
+	Set       [][]byte
+	SetIndex  map[string]int
 }
 
-func New() *Store {
+// HashEntry preserves Redis's small-hash insertion order.
+type HashEntry struct {
+	Field []byte
+	Value []byte
+}
+
+type Store struct {
+	data    map[string]Value
+	expires map[string]int64
+	clock   clock.Clock
+}
+
+func New() *Store { return NewWithClock(clock.Real{}) }
+
+func NewWithClock(c clock.Clock) *Store {
+	if c == nil {
+		c = clock.Real{}
+	}
 	return &Store{
-		data:    make(map[string][]byte),
+		data:    make(map[string]Value),
 		expires: make(map[string]int64),
+		clock:   c,
 	}
 }
 
-// Get returns the stored bytes and whether the key is live. An expired key is
-// deleted on access (lazy expiry).
-func (s *Store) Get(key string) ([]byte, bool) {
+// NowMs returns the current time from the store's injected clock.
+func (s *Store) NowMs() int64 { return s.clock.Now().UnixMilli() }
+
+// Lookup returns the typed value and whether the key is live. An expired key
+// is deleted on access (lazy expiry).
+func (s *Store) Lookup(key string) (Value, bool) {
 	return s.live(key)
+}
+
+// Get returns a live string value. Missing and non-string keys return false;
+// commands that must distinguish WRONGTYPE use Lookup.
+func (s *Store) Get(key string) ([]byte, bool) {
+	v, ok := s.live(key)
+	if !ok || v.Kind != KindString {
+		return nil, false
+	}
+	return v.Str, true
+}
+
+// Type returns the Redis type name for a live key, or "none".
+func (s *Store) Type(key string) string {
+	v, ok := s.live(key)
+	if !ok {
+		return "none"
+	}
+	return string(v.Kind)
 }
 
 // Set stores value under key and clears any previous expiry.
 func (s *Store) Set(key string, value []byte) {
-	s.data[key] = value
+	s.data[key] = Value{Kind: KindString, Str: value}
 	delete(s.expires, key)
 }
 
 // SetWithTTL stores value under key with an absolute Unix-millisecond expiry.
 func (s *Store) SetWithTTL(key string, value []byte, expiresAtMs int64) {
-	s.data[key] = value
+	s.data[key] = Value{Kind: KindString, Str: value}
 	s.expires[key] = expiresAtMs
 }
 
@@ -41,7 +98,81 @@ func (s *Store) SetKeepTTL(key string, value []byte) {
 		s.Set(key, value)
 		return
 	}
+	s.data[key] = Value{Kind: KindString, Str: value}
+}
+
+// SetList stores a list and clears any previous expiry.
+func (s *Store) SetList(key string, list [][]byte) {
+	s.data[key] = Value{Kind: KindList, List: list}
+	delete(s.expires, key)
+}
+
+// SetListKeepTTL stores a list while preserving an existing live expiry.
+func (s *Store) SetListKeepTTL(key string, list [][]byte) {
+	if _, ok := s.live(key); !ok {
+		s.SetList(key, list)
+		return
+	}
+	s.data[key] = Value{Kind: KindList, List: list}
+}
+
+// SetHash stores a hash and clears any previous expiry.
+func (s *Store) SetHash(key string, hash []HashEntry) {
+	s.data[key] = Value{Kind: KindHash, Hash: hash, HashIndex: buildHashIndex(hash)}
+	delete(s.expires, key)
+}
+
+// SetHashKeepTTL stores a hash while preserving an existing live expiry.
+func (s *Store) SetHashKeepTTL(key string, hash []HashEntry) {
+	if _, ok := s.live(key); !ok {
+		s.SetHash(key, hash)
+		return
+	}
+	s.data[key] = Value{Kind: KindHash, Hash: hash, HashIndex: buildHashIndex(hash)}
+}
+
+// SetMembers stores a set and clears any previous expiry.
+func (s *Store) SetMembers(key string, members [][]byte) {
+	s.data[key] = Value{Kind: KindSet, Set: members, SetIndex: buildSetIndex(members)}
+	delete(s.expires, key)
+}
+
+// SetMembersKeepTTL stores a set while preserving an existing live expiry.
+func (s *Store) SetMembersKeepTTL(key string, members [][]byte) {
+	if _, ok := s.live(key); !ok {
+		s.SetMembers(key, members)
+		return
+	}
+	s.data[key] = Value{Kind: KindSet, Set: members, SetIndex: buildSetIndex(members)}
+}
+
+// SetPreservingTTL overwrites key without changing its expiry. Callers must
+// have observed the key at command start; this deliberately skips the live
+// check so a key expiring mid-command cannot be resurrected without a TTL.
+func (s *Store) SetPreservingTTL(key string, value Value) {
+	if value.Kind == KindHash && value.HashIndex == nil {
+		value.HashIndex = buildHashIndex(value.Hash)
+	}
+	if value.Kind == KindSet && value.SetIndex == nil {
+		value.SetIndex = buildSetIndex(value.Set)
+	}
 	s.data[key] = value
+}
+
+func buildHashIndex(hash []HashEntry) map[string]int {
+	index := make(map[string]int, len(hash))
+	for i, entry := range hash {
+		index[string(entry.Field)] = i
+	}
+	return index
+}
+
+func buildSetIndex(members [][]byte) map[string]int {
+	index := make(map[string]int, len(members))
+	for i, member := range members {
+		index[string(member)] = i
+	}
+	return index
 }
 
 // Delete removes key and reports whether a live key was removed.
@@ -59,15 +190,30 @@ func (s *Store) Exists(key string) bool {
 	return ok
 }
 
-// Len counts live keys, dropping expired ones it encounters.
+// Len returns the physical key count, including expired keys not yet removed
+// by lazy access or the active cycle. This is Redis's DBSIZE semantics.
 func (s *Store) Len() int {
-	n := 0
-	for key := range s.data {
-		if _, ok := s.live(key); ok {
-			n++
+	return len(s.data)
+}
+
+// ExpireSample samples up to limit volatile keys and deletes those whose
+// deadline is before nowMs. It returns the sampled and expired counts.
+func (s *Store) ExpireSample(nowMs int64, limit int) (expired, sampled int) {
+	if limit <= 0 {
+		return 0, 0
+	}
+	for key, at := range s.expires {
+		if sampled == limit {
+			break
+		}
+		sampled++
+		if nowMs > at {
+			delete(s.data, key)
+			delete(s.expires, key)
+			expired++
 		}
 	}
-	return n
+	return expired, sampled
 }
 
 // ExpiresAt returns the absolute expiry of a live key and whether the key
@@ -89,7 +235,7 @@ func (s *Store) TTLms(key string) (int64, bool) {
 	if at == 0 {
 		return -1, true
 	}
-	ttl := at - nowMs()
+	ttl := at - s.NowMs()
 	if ttl < 0 {
 		ttl = 0
 	}
@@ -99,7 +245,7 @@ func (s *Store) TTLms(key string) (int64, bool) {
 // SetExpire sets the absolute expiry of an existing key, deleting it when the
 // deadline is already past.
 func (s *Store) SetExpire(key string, atMs int64) {
-	if atMs <= nowMs() {
+	if atMs <= s.NowMs() {
 		s.Delete(key)
 		return
 	}
@@ -118,17 +264,15 @@ func (s *Store) Persist(key string) bool {
 	return true
 }
 
-func (s *Store) live(key string) ([]byte, bool) {
+func (s *Store) live(key string) (Value, bool) {
 	value, ok := s.data[key]
 	if !ok {
-		return nil, false
+		return Value{}, false
 	}
-	if at, ok := s.expires[key]; ok && nowMs() > at {
+	if at, ok := s.expires[key]; ok && s.NowMs() > at {
 		delete(s.data, key)
 		delete(s.expires, key)
-		return nil, false
+		return Value{}, false
 	}
 	return value, true
 }
-
-func nowMs() int64 { return time.Now().UnixMilli() }

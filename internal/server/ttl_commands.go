@@ -3,7 +3,6 @@ package server
 import (
 	"math"
 	"strings"
-	"time"
 
 	"github.com/silent-knight19/antares/internal/protocol"
 	"github.com/silent-knight19/antares/internal/store"
@@ -40,6 +39,9 @@ func registerTTLCommands(reg *Registry, st *store.Store) {
 	reg.Register(Command{Name: "pexpireat", Arity: -3, Flags: FlagWrite, Handler: func(args [][]byte, out *protocol.Encoder) {
 		expireCommand(st, args, out, "pexpireat", false, false)
 	}})
+	reg.Register(Command{Name: "dbsize", Arity: 1, Handler: func(_ [][]byte, out *protocol.Encoder) {
+		out.Int(int64(st.Len()))
+	}})
 }
 
 func ttlCommand(st *store.Store, args [][]byte, out *protocol.Encoder, milliseconds bool) {
@@ -73,7 +75,7 @@ func expireCommand(st *store.Store, args [][]byte, out *protocol.Encoder, name s
 		out.Error(protocol.NotInteger)
 		return
 	}
-	when, ok := expireTimestamp(n, relative, seconds)
+	when, ok := expireTimestamp(st.NowMs(), n, relative, seconds)
 	if !ok {
 		out.Error(protocol.InvalidExpireTime(name))
 		return
@@ -133,16 +135,15 @@ func parseExpireFlags(args [][]byte) (expireFlags, string) {
 	return flags, ""
 }
 
-func expireTimestamp(n int64, relative, seconds bool) (int64, bool) {
+func expireTimestamp(base int64, n int64, relative, seconds bool) (int64, bool) {
 	if seconds {
 		if n > math.MaxInt64/1000 || n < math.MinInt64/1000 {
 			return 0, false
 		}
 		n *= 1000
 	}
-	var base int64
-	if relative {
-		base = time.Now().UnixMilli()
+	if !relative {
+		base = 0
 	}
 	if n > math.MaxInt64-base {
 		return 0, false

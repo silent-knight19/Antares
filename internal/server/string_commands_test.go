@@ -5,12 +5,18 @@ import (
 	"testing"
 	"time"
 
+	"github.com/silent-knight19/antares/internal/clock"
 	"github.com/silent-knight19/antares/internal/protocol"
 )
 
 func newStringExec(t *testing.T) *Executor {
 	t.Helper()
-	exec := NewExecutor(nil, nil)
+	return newStringExecWithClock(t, clock.Real{})
+}
+
+func newStringExecWithClock(t *testing.T, c clock.Clock) *Executor {
+	t.Helper()
+	exec := NewExecutorWithClock(nil, nil, c)
 	t.Cleanup(exec.Close)
 	return exec
 }
@@ -145,7 +151,8 @@ func TestSetGetReturnsEmptyValue(t *testing.T) {
 }
 
 func TestKeepttlAndExpiry(t *testing.T) {
-	exec := newStringExec(t)
+	clk := clock.NewFake(time.UnixMilli(1_000_000))
+	exec := newStringExecWithClock(t, clk)
 
 	if got := runStrings(exec, "SET", "k", "v", "PX", "200"); got != "+OK\r\n" {
 		t.Fatalf("SET PX = %q", got)
@@ -153,7 +160,7 @@ func TestKeepttlAndExpiry(t *testing.T) {
 	if got := runStrings(exec, "SET", "k", "kept", "KEEPTTL"); got != "+OK\r\n" {
 		t.Fatalf("SET KEEPTTL = %q", got)
 	}
-	time.Sleep(350 * time.Millisecond)
+	clk.Advance(250 * time.Millisecond)
 	if got := runStrings(exec, "GET", "k"); got != "$-1\r\n" {
 		t.Fatalf("KEEPTTL did not preserve expiry: GET = %q", got)
 	}
@@ -164,18 +171,19 @@ func TestKeepttlAndExpiry(t *testing.T) {
 	if got := runStrings(exec, "SET", "k", "plain"); got != "+OK\r\n" {
 		t.Fatalf("SET plain = %q", got)
 	}
-	time.Sleep(350 * time.Millisecond)
+	clk.Advance(250 * time.Millisecond)
 	if got := runStrings(exec, "GET", "k"); got != "$5\r\nplain\r\n" {
 		t.Fatalf("plain SET did not clear TTL: GET = %q", got)
 	}
 }
 
 func TestExpiredKeysAreInvisible(t *testing.T) {
-	exec := newStringExec(t)
+	clk := clock.NewFake(time.UnixMilli(1_000_000))
+	exec := newStringExecWithClock(t, clk)
 	if got := runStrings(exec, "SET", "k", "v", "PX", "100"); got != "+OK\r\n" {
 		t.Fatalf("SET PX = %q", got)
 	}
-	time.Sleep(200 * time.Millisecond)
+	clk.Advance(150 * time.Millisecond)
 	for _, tc := range []struct {
 		args []string
 		want string
@@ -346,6 +354,18 @@ func TestIncrByFloat(t *testing.T) {
 		{[]string{"INCRBYFLOAT", "isf", "1"}, floatRes},
 		{[]string{"SET", "isf", "1.189731495357231765e4932"}, "+OK\r\n"},
 		{[]string{"INCRBYFLOAT", "isf", "1.189731495357231765e4932"}, floatRes},
+		{[]string{"SET", "crash", "inf"}, "+OK\r\n"},
+		{[]string{"INCRBYFLOAT", "crash", "-inf"}, floatRes},
+		{[]string{"GET", "crash"}, "$3\r\ninf\r\n"},
+		{[]string{"SET", "crash", "-inf"}, "+OK\r\n"},
+		{[]string{"INCRBYFLOAT", "crash", "inf"}, floatRes},
+		{[]string{"INCRBYFLOAT", "under", "1e-999999999"}, notFloat},
+		{[]string{"INCRBYFLOAT", "underhex", "0x1p-999999999"}, notFloat},
+		{[]string{"INCRBYFLOAT", "zeroexp", "0e-999999999"}, "$1\r\n0\r\n"},
+		{[]string{"INCRBYFLOAT", "zerohex", "0x0p-999999999"}, "$1\r\n0\r\n"},
+		{[]string{"SET", "storedunder", "1e-999999999"}, "+OK\r\n"},
+		{[]string{"INCRBYFLOAT", "storedunder", "0"}, notFloat},
+		{[]string{"GET", "storedunder"}, "$12\r\n1e-999999999\r\n"},
 		{[]string{"SET", "storedbad", "abc"}, "+OK\r\n"},
 		{[]string{"INCRBYFLOAT", "storedbad", "1"}, notFloat},
 		{[]string{"GET", "storedbad"}, "$3\r\nabc\r\n"},
@@ -411,7 +431,8 @@ func TestAppendStrlenGetsetSetnx(t *testing.T) {
 }
 
 func TestStringTTLBehavior(t *testing.T) {
-	exec := newStringExec(t)
+	clk := clock.NewFake(time.UnixMilli(1_000_000))
+	exec := newStringExecWithClock(t, clk)
 	for _, args := range [][]string{
 		{"SET", "incr", "1", "PX", "300"},
 		{"SET", "append", "x", "PX", "300"},
@@ -436,7 +457,7 @@ func TestStringTTLBehavior(t *testing.T) {
 			t.Fatalf("%v = %q", args, got)
 		}
 	}
-	time.Sleep(500 * time.Millisecond)
+	clk.Advance(400 * time.Millisecond)
 	for _, key := range []string{"incr", "append", "float", "setnx"} {
 		if got := runStrings(exec, "GET", key); got != "$-1\r\n" {
 			t.Fatalf("GET %s after TTL = %q, want nil", key, got)

@@ -1,3 +1,4 @@
-// Package expire implements lazy expiry on access plus the active sampling
-// cycle (hz=10, sample 20 keys, repeat while >25% expired) (ADR-005).
+// Package expire implements Redis-style active expiration: sample 20 volatile
+// keys, repeat while more than 25% are expired, bounded by a per-cycle time
+// budget (ADR-005). Lazy expiry lives in the store.
 package expire

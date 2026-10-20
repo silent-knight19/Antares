@@ -1,8 +1,8 @@
 // Command antares is the Redis-compatible server (docs/PLAN.md §3.1).
 //
-// P2.2: the single executor goroutine owns the keyspace and dispatches the
-// P2.1 command registry; PING, ECHO, and the COMMAND stub are the commands
-// available until the string set lands at P2.3.
+// P3.4: the single executor goroutine owns the keyspace, runs the active
+// expiry cycle from the injected clock, and dispatches the command registry
+// (PING/ECHO/COMMAND plus string, TTL, DBSIZE, and CONFIG hz).
 package main
 
 import (
@@ -17,6 +17,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/silent-knight19/antares/internal/clock"
 	"github.com/silent-knight19/antares/internal/server"
 	"github.com/silent-knight19/antares/internal/store"
 )
@@ -29,7 +30,7 @@ func main() {
 	showVersion := flag.Bool("version", false, "print version and exit")
 	bind := flag.String("bind", "127.0.0.1", "address to bind (localhost only by default, ADR-020)")
 	port := flag.Int("port", 6380, "port to listen on (reference Redis uses 6379)")
-	maxConns := flag.Int("max-conns", server.DefaultMaxConns, "maximum concurrent connections (negative = unlimited)")
+	maxConns := flag.Int("max-conns", server.DefaultMaxConns, "maximum concurrent connections (0 = default 10000, negative = unlimited)")
 	idleTimeout := flag.Duration("idle-timeout", 0, "close connections idle longer than this (0 = never)")
 	flag.Parse()
 
@@ -40,8 +41,8 @@ func main() {
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
 	addr := net.JoinHostPort(*bind, strconv.Itoa(*port))
-	exec := server.NewExecutor(store.New(), nil)
-	defer exec.Close()
+	clk := clock.Real{}
+	exec := server.NewExecutorWithClock(store.NewWithClock(clk), nil, clk)
 	srv := server.New(server.Config{
 		Addr:        addr,
 		MaxConns:    *maxConns,
@@ -49,6 +50,7 @@ func main() {
 	}, exec.Handle)
 	if err := srv.Start(); err != nil {
 		logger.Error("listen failed", "addr", addr, "err", err)
+		exec.Close()
 		os.Exit(1)
 	}
 	logger.Info("antares listening", "addr", srv.Addr().String(), "version", version)
@@ -62,6 +64,9 @@ func main() {
 	defer cancel()
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		logger.Warn("grace period expired; forced remaining connections closed", "err", err)
+	}
+	if err := exec.CloseContext(shutdownCtx); err != nil {
+		logger.Warn("executor shutdown deadline expired", "err", err)
 	}
 	logger.Info("stopped")
 }

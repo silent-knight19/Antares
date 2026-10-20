@@ -5,6 +5,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/silent-knight19/antares/internal/clock"
+	"github.com/silent-knight19/antares/internal/store"
 )
 
 func intReply(t *testing.T, got string) int64 {
@@ -73,7 +76,8 @@ func TestTTLRounding(t *testing.T) {
 }
 
 func TestExpireDeletesAndLazyExpiry(t *testing.T) {
-	exec := newStringExec(t)
+	clk := clock.NewFake(time.UnixMilli(1_000_000))
+	exec := newStringExecWithClock(t, clk)
 	for _, tc := range []struct {
 		args []string
 		want string
@@ -96,7 +100,7 @@ func TestExpireDeletesAndLazyExpiry(t *testing.T) {
 	if got := runStrings(exec, "SET", "dead", "v", "PX", "20"); got != "+OK\r\n" {
 		t.Fatalf("SET dead = %q", got)
 	}
-	time.Sleep(30 * time.Millisecond)
+	clk.Advance(21 * time.Millisecond)
 	for _, tc := range []struct {
 		args []string
 		want string
@@ -195,6 +199,127 @@ func TestExpireConditions(t *testing.T) {
 		if got := runStrings(exec, tc.args...); got != tc.want {
 			t.Fatalf("%v = %q, want %q", tc.args, got, tc.want)
 		}
+	}
+}
+
+func TestExpireConditionsEquality(t *testing.T) {
+	st := store.New()
+	exec := newExecutor(st, nil, false, clock.Real{})
+	t.Cleanup(exec.Close)
+	st.Set("key", []byte("value"))
+	at := time.Now().Add(time.Minute).UnixMilli()
+	st.SetExpire("key", at)
+	when := strconv.FormatInt(at, 10)
+
+	for _, cond := range []string{"GT", "LT"} {
+		if got := runStrings(exec, "PEXPIREAT", "key", when, cond); got != ":0\r\n" {
+			t.Fatalf("PEXPIREAT equal %s = %q, want :0", cond, got)
+		}
+	}
+}
+
+func TestLazyExpiryOnReadPaths(t *testing.T) {
+	past := time.Now().Add(-time.Second).UnixMilli()
+	cases := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{"get", []string{"GET", "dead"}, "$-1\r\n"},
+		{"mget", []string{"MGET", "dead"}, "*1\r\n$-1\r\n"},
+		{"strlen", []string{"STRLEN", "dead"}, ":0\r\n"},
+		{"exists", []string{"EXISTS", "dead"}, ":0\r\n"},
+		{"type", []string{"TYPE", "dead"}, "+none\r\n"},
+		{"ttl", []string{"TTL", "dead"}, ":-2\r\n"},
+		{"pttl", []string{"PTTL", "dead"}, ":-2\r\n"},
+		{"del", []string{"DEL", "dead"}, ":0\r\n"},
+		{"persist", []string{"PERSIST", "dead"}, ":0\r\n"},
+		{"expire", []string{"EXPIRE", "dead", "10"}, ":0\r\n"},
+		{"pexpire", []string{"PEXPIRE", "dead", "10000"}, ":0\r\n"},
+		{"expireat", []string{"EXPIREAT", "dead", "9999999999"}, ":0\r\n"},
+		{"pexpireat", []string{"PEXPIREAT", "dead", "9999999999999"}, ":0\r\n"},
+		{"set xx", []string{"SET", "dead", "new", "XX"}, "$-1\r\n"},
+		{"set xx get", []string{"SET", "dead", "new", "XX", "GET"}, "$-1\r\n"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			st := store.New()
+			exec := newExecutor(st, nil, false, clock.Real{})
+			t.Cleanup(exec.Close)
+			st.SetWithTTL("dead", []byte("old"), past)
+
+			if got := runStrings(exec, tc.args...); got != tc.want {
+				t.Fatalf("%v = %q, want %q", tc.args, got, tc.want)
+			}
+			if got := runStrings(exec, "DBSIZE"); got != ":0\r\n" {
+				t.Fatalf("DBSIZE after %v = %q, want 0 (lazy delete)", tc.args, got)
+			}
+		})
+	}
+}
+
+func TestLazyExpiryOnReadModifyWritePaths(t *testing.T) {
+	past := time.Now().Add(-time.Second).UnixMilli()
+	cases := []struct {
+		name string
+		args []string
+		want string
+		val  string
+	}{
+		{"set nx", []string{"SET", "dead", "new", "NX"}, "+OK\r\n", "new"},
+		{"set nx get", []string{"SET", "dead", "new", "NX", "GET"}, "$-1\r\n", "new"},
+		{"set get", []string{"SET", "dead", "new", "GET"}, "$-1\r\n", "new"},
+		{"set keepttl", []string{"SET", "dead", "new", "KEEPTTL"}, "+OK\r\n", "new"},
+		{"setnx", []string{"SETNX", "dead", "new"}, ":1\r\n", "new"},
+		{"getset", []string{"GETSET", "dead", "new"}, "$-1\r\n", "new"},
+		{"incr", []string{"INCR", "dead"}, ":1\r\n", "1"},
+		{"incrbyfloat", []string{"INCRBYFLOAT", "dead", "1.5"}, "$3\r\n1.5\r\n", "1.5"},
+		{"append", []string{"APPEND", "dead", "x"}, ":1\r\n", "x"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			st := store.New()
+			exec := newExecutor(st, nil, false, clock.Real{})
+			t.Cleanup(exec.Close)
+			st.SetWithTTL("dead", []byte("old"), past)
+
+			if got := runStrings(exec, tc.args...); got != tc.want {
+				t.Fatalf("%v = %q, want %q", tc.args, got, tc.want)
+			}
+			if got := runStrings(exec, "GET", "dead"); got != "$"+strconv.Itoa(len(tc.val))+"\r\n"+tc.val+"\r\n" {
+				t.Fatalf("GET dead after %v = %q, want %q", tc.args, got, tc.val)
+			}
+			if got := runStrings(exec, "TTL", "dead"); got != ":-1\r\n" {
+				t.Fatalf("TTL dead after %v = %q, want no expiry", tc.args, got)
+			}
+			if got := runStrings(exec, "DBSIZE"); got != ":1\r\n" {
+				t.Fatalf("DBSIZE after %v = %q, want 1", tc.args, got)
+			}
+		})
+	}
+}
+
+func TestDBSizeCountsPhysicalKeys(t *testing.T) {
+	st := store.New()
+	exec := newExecutor(st, nil, false, clock.Real{})
+	t.Cleanup(exec.Close)
+	st.Set("live", []byte("value"))
+	st.SetWithTTL("dead", []byte("value"), time.Now().Add(-time.Second).UnixMilli())
+
+	if got := runStrings(exec, "DBSIZE"); got != ":2\r\n" {
+		t.Fatalf("DBSIZE before access = %q, want 2 (Redis counts physical keys)", got)
+	}
+	if got := runStrings(exec, "GET", "dead"); got != "$-1\r\n" {
+		t.Fatalf("GET dead = %q, want nil", got)
+	}
+	if got := runStrings(exec, "DBSIZE"); got != ":1\r\n" {
+		t.Fatalf("DBSIZE after lazy delete = %q, want 1", got)
+	}
+	if got := runStrings(exec, "DEL", "live"); got != ":1\r\n" {
+		t.Fatalf("DEL live = %q, want 1", got)
+	}
+	if got := runStrings(exec, "DBSIZE"); got != ":0\r\n" {
+		t.Fatalf("DBSIZE after DEL = %q, want 0", got)
 	}
 }
 

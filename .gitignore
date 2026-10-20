@@ -116,3 +116,4 @@ tests/tcl/tmp/
 .env
 .env.local
 .env.*.local
+tests/tcl/.cache/

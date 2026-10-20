@@ -40,6 +40,23 @@ const StringTooLong = "ERR string exceeds maximum allowed size (proto-max-bulk-l
 // WrongType is Redis's reply when a command meets a key of another kind.
 const WrongType = "WRONGTYPE Operation against a key holding the wrong kind of value"
 
+// List pop count errors. Redis parses LPOP/RPOP counts with a positive-only
+// helper, while LREM accepts negatives but rejects the int64 minimum.
+const (
+	CountPositive = "ERR value is out of range, must be positive"
+	CountRange    = "ERR value is out of range, value must between -9223372036854775807 and 9223372036854775807"
+)
+
+// RandomCountTooLarge is used when HRANDFIELD/SRANDMEMBER would build more
+// than the server's bounded random-reply size.
+const RandomCountTooLarge = "ERR count is out of range"
+
+// List LSET replies.
+const (
+	NoSuchKey       = "ERR no such key"
+	IndexOutOfRange = "ERR index out of range"
+)
+
 // InvalidExpireTime returns Redis's per-command expiry rejection, e.g.
 // "ERR invalid expire time in 'set' command".
 func InvalidExpireTime(command string) string {

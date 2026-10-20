@@ -184,6 +184,50 @@ func TestShutdownForcesRemainingConns(t *testing.T) {
 	expectClosed(t, conn)
 }
 
+func TestShutdownDoesNotWaitForStuckHandler(t *testing.T) {
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	defer close(release)
+	srv := startServerHandler(t, Config{}, func(_ protocol.Request, out *protocol.Encoder) {
+		close(entered)
+		<-release
+		out.Simple("OK")
+	})
+	conn := dial(t, srv)
+	if _, err := conn.Write([]byte("PING\r\n")); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	select {
+	case <-entered:
+	case <-time.After(time.Second):
+		t.Fatal("handler did not start")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	shutdownErr := make(chan error, 1)
+	go func() { shutdownErr <- srv.Shutdown(ctx) }()
+	select {
+	case err := <-shutdownErr:
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("Shutdown = %v, want context.DeadlineExceeded", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Shutdown waited for a handler that ignored its deadline")
+	}
+
+	second := make(chan error, 1)
+	go func() { second <- srv.Shutdown(context.Background()) }()
+	select {
+	case err := <-second:
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("second Shutdown = %v, want context.DeadlineExceeded", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("second Shutdown blocked after forced shutdown")
+	}
+}
+
 func TestShutdownIdempotent(t *testing.T) {
 	srv := startServer(t, Config{})
 	ctx := context.Background()

@@ -1,0 +1,26 @@
+INCR against non existing key
+INCR against key created by incr itself
+DECR against key created by incr
+DECR against key is not exist and incr
+INCR against key originally set with SET
+INCR over 32bit value
+INCRBY over 32bit value with over 32bit increment
+INCR fails against key with spaces (left)
+INCR fails against key with spaces (right)
+INCR fails against key with spaces (both)
+DECRBY negation overflow
+INCR fails against a key holding a list
+DECRBY over 32bit value with over 32bit increment, negative res
+DECRBY against key is not exist
+INCRBYFLOAT against non existing key
+INCRBYFLOAT against key originally set with SET
+INCRBYFLOAT over 32bit value
+INCRBYFLOAT over 32bit value with over 32bit increment
+INCRBYFLOAT fails against key with spaces (left)
+INCRBYFLOAT fails against key with spaces (right)
+INCRBYFLOAT fails against key with spaces (both)
+INCRBYFLOAT fails against a key holding a list
+INCRBYFLOAT does not allow NaN or Infinity
+INCRBYFLOAT decrement
+No negative zero
+INCRBY INCRBYFLOAT DECRBY against unhappy path

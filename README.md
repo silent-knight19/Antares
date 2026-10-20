@@ -2,7 +2,7 @@
 
 # Antares
 
-**A Redis-compatible server, built from scratch in Go — and the Observatory that watches it work.**
+**A Redis-compatible server, built from scratch in Go — with an Observatory on the way.**
 
 *α Scorpii — the red star called "the rival of Mars": a red rival to Redis, built to be observed through its Observatory.*
 
@@ -29,9 +29,9 @@
 
 ## What is Antares?
 
-Antares is a Redis-compatible server written from scratch in Go: the RESP protocol, ~40 commands, TTL expiry, persistence, eviction, transactions, and replication. It ships with the **Antares Observatory** — a separate showcase and tooling service plus web UI that visualizes the server's internals and proves its claims live.
+Antares is a Redis-compatible server written from scratch in Go: the RESP2 protocol, 55 commands covering strings, lists, hashes, sets, TTL, DBSIZE, CONFIG hz, and PING/ECHO/COMMAND, plus lazy and active expiry. Persistence, eviction, transactions, and replication are planned, not yet implemented. The **Antares Observatory** — a separate showcase and tooling service plus web UI — is being built alongside it; its bridge currently ships as a stub.
 
-In practice:
+Target shape:
 
 ```text
 redis-cli / clients ──RESP──▶ Antares ──▶ event tap (JSONL, opt-in)
@@ -39,31 +39,33 @@ go-redis (verify)   ──RESP──▶ Antares + real Redis (differential)
 Observatory ──own client + INFO + event tap + claims──▶ SPA (SSE + REST)
 ```
 
+The event tap and Observatory UI are planned; the server currently exposes no tap.
+
 Every claim the project makes is meant to be machine-verifiable — differential tests against real Redis, crash tests, benchmarks, and CI-verified numbers displayed in the Observatory UI.
 
 > **Why the name?** Antares — α Scorpii — is the red star called "the rival of Mars": a red rival to Redis.
 
 ## Project status
 
-> **P1–P2 complete; P3.1 complete — the wire path is done and fuzz-tested (15-min fuzz clean, 166M executions), commands run through a single keyspace-owning executor, and the edge-hardened string surface is live: SET/GET/DEL/EXISTS/TYPE, MSET/MGET, the INCR family including a bit-exact INCRBYFLOAT, APPEND/STRLEN/GETSET/SETNX, lazy expiry, and exact wrong-type/overflow/limit errors.** TTL state now sits in a separate expires dict, with TTL/PTTL/PERSIST and the full EXPIRE/PEXPIRE/EXPIREAT/PEXPIREAT family (NX/XX/GT/LT). A committed differential harness (`make diff-test`) runs 198 string/TTL steps plus an expiry scenario against the pinned Redis 7.4.11 with zero mismatches; 1056 one-off checks also passed, and PING/ECHO plus the `COMMAND` stub work. The project is under active construction.
+> **P1–P3 and P4.1–P4.5 complete — the wire path is done and fuzz-tested (15-min fuzz clean, 166M executions), commands run through a single keyspace-owning executor, and the edge-hardened string, list, hash, and set surfaces are live: SET/GET/DEL/EXISTS/TYPE, MSET/MGET, the INCR family including a bit-exact INCRBYFLOAT, APPEND/STRLEN/GETSET/SETNX, LPUSH/RPUSH/LPOP/RPOP/LRANGE/LLEN/LINDEX/LSET/LREM/LTRIM, HSET/HGET/HMGET/HDEL/HLEN/HGETALL/HKEYS/HVALS/HEXISTS/HRANDFIELD, SADD/SREM/SMEMBERS/SISMEMBER/SCARD/SPOP/SRANDMEMBER, lazy and active expiry, DBSIZE, CONFIG hz, and exact wrong-type/overflow/limit errors.** TTL state sits in a separate expires dict, with TTL/PTTL/PERSIST and the full EXPIRE/PEXPIRE/EXPIREAT/PEXPIREAT family (NX/XX/GT/LT). Domain time now comes from one injected clock (ADR-009), so expiry tests advance time instead of sleeping. A committed differential harness (`make diff-test`) runs 198 string/TTL steps, 91 list steps, 71 hash steps, 99 set steps, a 171-case cross-type matrix, and 240 generated collection-sequence steps plus expiry/lazy-read scenarios against the pinned Redis 7.4.11 with zero mismatches; 1056 one-off checks also passed. The selected official Tcl subsets are green via `make tcl-expire` (39 `unit/expire` tests) and `make tcl-incr` (26 `unit/type/incr` tests), which download the pinned 7.4.11 test source at run time. PING/ECHO plus the `COMMAND` stub work. The project is under active construction.
 
 | Works today | Arrives later |
 |---|---|
-| `make build` (both binaries), `make test`, `make test-race`, `make vet`, `make fmt`, `make tidy`, `make fuzz`, `make diff-test` (strings + TTL) | Collections (P4), active expiry cycle (P3.3–P3.4), persistence, eviction, transactions, replication |
+| `make build` (both binaries), `make test`, `make test-race`, `make vet`, `make fmt`, `make tidy`, `make fuzz`, `make diff-test` (strings + lists + hashes + sets + TTL), `make tcl-expire` + `make tcl-incr` (selected official expiry/incr tests) | Full Tcl suite wiring (P9.2), persistence, eviction, transactions, replication |
 | TCP server speaking RESP2 — parser with a 31-case corpus captured from real Redis + fuzz harness, pooled reply writer, capture-exact error strings, pipeline-aware flushing; PING/ECHO/COMMAND answered through the registry and single keyspace-owning executor (case-insensitive lookup, Redis arity checks, `COMMAND` stub for redis-cli) | `make verify`, `make crash-test`, `make tcl`, `make bench`, `make showcase` |
-| Edge-hardened string core — SET (EX/PX/NX/XX/GET/KEEPTTL), GET, DEL, EXISTS, TYPE, MSET/MGET, INCR/DECR/INCRBY/DECRBY/INCRBYFLOAT, APPEND, STRLEN, GETSET, SETNX; separate expires dict with lazy delete-on-access, TTL/PTTL/PERSIST, EXPIRE/PEXPIRE/EXPIREAT/PEXPIREAT incl. NX/XX/GT/LT; empty/binary/1 MiB values, wide batches, overflow parity, 512 MiB guard, pinned WRONGTYPE body; `make diff-test` green (198 steps + expiry) and 1056 one-off live checks clean | Lazy-expiry audit and DBSIZE consistency (P3.2); active expiry cycle and virtual clock (P3.3–P3.4); cross-type WRONGTYPE matrix (P4.4) |
-| CI: gofmt check + `vet` + `build` + race-tested test run | Observatory bridge and web UI (U2 onward) |
+| Edge-hardened string core — SET (EX/PX/NX/XX/GET/KEEPTTL), GET, DEL, EXISTS, TYPE, MSET/MGET, INCR/DECR/INCRBY/DECRBY/INCRBYFLOAT, APPEND, STRLEN, GETSET, SETNX; lists — LPUSH/RPUSH/LPOP/RPOP (with counts), LRANGE, LLEN, LINDEX, LSET, LREM, LTRIM, negative ranges, error-order parity, TTL preservation, auto-delete; hashes — HSET/HGET/HMGET/HDEL/HLEN/HGETALL/HKEYS/HVALS/HEXISTS/HRANDFIELD with insertion-order iteration; sets — SADD/SREM/SMEMBERS/SISMEMBER/SCARD/SPOP/SRANDMEMBER with unordered iteration and random pop/rand semantics; separate expires dict with lazy delete-on-access, TTL/PTTL/PERSIST, EXPIRE/PEXPIRE/EXPIREAT/PEXPIREAT incl. NX/XX/GT/LT, physical DBSIZE, active expiry (hz=10), CONFIG GET/SET hz; empty/binary/1 MiB values, wide batches, overflow parity, 512 MiB guard, pinned WRONGTYPE body; `make diff-test` green (198 string/TTL + 91 list + 71 hash + 99 set + 171 cross-type + 240 sequence steps + expiry + lazy reads), 1056 one-off live checks clean, and 65 selected official Tcl expiry/incr tests green | Keyspace commands (P5.1); full Tcl suite at P9.2 |
+| CI: gofmt check + `vet` + `build` + race-tested tests + differential harness | Observatory bridge and web UI (U2 onward) |
 | `docker compose up` — pinned reference Redis 7.4.11 | |
 
 The Observatory bridge (`cmd/observatory`) still ships as a version-printing stub and fails loudly with a pointer to its phase; `cmd/antares` is the real server.
 
 ## Architecture
 
-**Server** (from `docs/PLAN.md` §3.1):
+**Server** (from `docs/PLAN.md` §3.1). Only the wire path, strings, lists, hashes, sets, TTL, and PING/ECHO/COMMAND exist today; the rest is the target design:
 
 - **Concurrency** — goroutine per connection for I/O → command channel → a single executor goroutine owning the keyspace, reproducing Redis-like sequential semantics with race-detector-clean guarantees.
-- **Protocol** — RESP2 (inline, bulk strings, arrays, integers) plus a `HELLO` downgrade stub so modern redis-cli and clients work.
-- **Expiration** — lazy on access + active sampling cycle (hz=10, sample 20 keys, repeat while >25% expired).
+- **Protocol** — RESP2 (inline, bulk strings, arrays, integers); `HELLO`/RESP3 is not implemented yet (planned P5.3).
+- **Expiration** — lazy on access plus active sampling (hz=10, sample 20 keys, repeat while >25% expired, per-cycle budget); `CONFIG SET hz` adjusts the cycle rate.
 - **Persistence** — append-only AOF with framed records `[u32 len][u32 CRC32][RESP payload]`, group commit, fsync policies `always` / `everysec` / `no`; recovery replays the valid prefix and truncates at the first bad frame.
 - **Eviction** — approximated LRU under `maxmemory`: 24-bit access clock, sample 5, eviction pool; policies `noeviction` (default), `allkeys-lru`, `volatile-lru`.
 - **Transactions** — `MULTI` / `EXEC` / `DISCARD` with dirty + `EXECABORT` semantics; `WATCH` via value-snapshot compare (a documented divergence).
@@ -85,9 +87,10 @@ antares/
 │   ├── antares/        Redis-compatible server entry point
 │   └── observatory/    Observatory bridge: REST + SSE + SPA
 ├── internal/
+│   ├── clock/          injected time source + fake clock (ADR-009)
 │   ├── protocol/       RESP2 parsing/encoding, fuzz corpus
 │   ├── server/         listener, connection goroutines, executor loop
-│   ├── store/          keyspace, data types, WRONGTYPE
+│   ├── store/          keyspace, string/list/hash/set values, WRONGTYPE
 │   ├── persist/        AOF frames, writer, recovery, rewrite
 │   ├── expire/         lazy + active expiration cycle
 │   ├── evict/          approximated LRU, eviction pool, policies
@@ -111,6 +114,7 @@ antares/
 
 - [Go 1.27.1](https://go.dev) (per `go.mod`)
 - A Docker-compatible runtime — [colima](https://github.com/abiosoft/colima) recommended (MIT; matches the OSS-only tooling policy, ADR-020). Needed only for the pinned reference Redis, not for build or tests.
+- `tclsh` 8.5+ and `curl` only for `make tcl-expire`/`make tcl-incr`; the pinned Redis test source is downloaded into a git-ignored cache, never vendored.
 
 **Clone, build, test**
 
@@ -152,13 +156,16 @@ docker compose up -d   # Redis on 127.0.0.1:6379
 | `make fmt` | Format the tree with gofmt |
 | `make tidy` | Run `go mod tidy` |
 | `make fuzz` | Run the RESP parser fuzzer for `FUZZTIME` (default 30s) |
-| `make diff-test` | Start the pinned Redis and run the string/TTL differential harness |
+| `make diff-test` | Start the pinned Redis and run the command differential harness |
+| `make clock-check` | Enforce ADR-009: no direct wall-clock reads outside clock/server I/O |
+| `make tcl-expire` | Download the pinned Redis 7.4.11 tests and run the selected official expiry subset |
+| `make tcl-incr` | Run the selected official `unit/type/incr` subset |
 | `make run` | Run the Antares server |
 | `make run-observatory` | Run the Observatory bridge |
 | `make clean` | Remove build artifacts |
 | `make help` | List all targets |
 
-Phase-gated targets — `verify`, `crash-test`, `bench`, `tcl`, `showcase`, `showcase-e2e`, `ui-dev` — fail loudly with a pointer until the phase that implements them arrives.
+Phase-gated targets — `verify`, `crash-test`, `bench`, `tcl`, `showcase`, `showcase-e2e`, `ui-dev` — fail loudly with a pointer until the phase that implements them arrives. `make tcl-expire` and `make tcl-incr` are already live; `make tcl` remains the full-suite P9.2 target.
 
 ## Roadmap
 
@@ -176,7 +183,7 @@ From [`docs/PLAN.md`](docs/PLAN.md) §7 — roughly 20–22 weeks at 3 hours/day
 
 ## Scope and non-goals
 
-**In scope:** v1 core (RESP2, ~35+ commands, TTL + expiry), v2 differentiators (framed AOF, approximated LRU eviction, transactions, differential/Tcl/chaos/fuzz verification), v3 replication (full + partial resync), and the Observatory (bridge + SPA, demo stories, claims pipeline).
+**In scope:** v1 core (RESP2, ~55 commands, TTL + expiry), v2 differentiators (framed AOF, approximated LRU eviction, transactions, differential/Tcl/chaos/fuzz verification), v3 replication (full + partial resync), and the Observatory (bridge + SPA, demo stories, claims pipeline).
 
 **Explicit non-goals** — each with a recorded reason in [`docs/DECISIONS.md`](docs/DECISIONS.md): Lua scripting, cluster/slots, Sentinel, Streams, RESP3 beyond the `HELLO` downgrade, modules, listpack/intset encodings, keyspace notifications, pub/sub, GEO/HLL/Bitmaps, a sharded keyspace, and auth/ACL.
 

@@ -1,0 +1,38 @@
+EXPIRE - set timeouts multiple times
+EXPIRE - It should be still possible to read 'x'
+EXPIRE - After 2.1 seconds the key should no longer be here
+EXPIRE - write on expire should work
+EXPIREAT - Check for EXPIRE alike behavior
+PERSIST can undo an EXPIRE
+PERSIST returns 0 against non existing or non volatile keys
+PEXPIRE can set sub-second expires
+EXPIRE with empty string as TTL should report an error
+SET with EX with big integer should report an error
+SET with EX with smallest integer should report an error
+EXPIRE with big integer overflows when converted to milliseconds
+PEXPIRE with big integer overflow when basetime is added
+EXPIRE with big negative integer
+PEXPIREAT with big integer works
+PEXPIREAT with big negative integer works
+SET command will remove expire
+SET - use KEEPTTL option, TTL should not be removed
+EXPIRE with NX option on a key with ttl
+EXPIRE with NX option on a key without ttl
+EXPIRE with XX option on a key with ttl
+EXPIRE with XX option on a key without ttl
+EXPIRE with GT option on a key with lower ttl
+EXPIRE with GT option on a key with higher ttl
+EXPIRE with GT option on a key without ttl
+EXPIRE with LT option on a key with higher ttl
+EXPIRE with LT option on a key with lower ttl
+EXPIRE with LT option on a key without ttl
+EXPIRE with LT and XX option on a key with ttl
+EXPIRE with LT and XX option on a key without ttl
+EXPIRE with conflicting options: LT GT
+EXPIRE with conflicting options: NX GT
+EXPIRE with conflicting options: NX LT
+EXPIRE with conflicting options: NX XX
+EXPIRE with unsupported options
+EXPIRE with negative expiry
+EXPIRE with negative expiry on a non-valitale key
+EXPIRE with non-existed key

@@ -64,6 +64,19 @@ func registerStringCommands(reg *Registry, st *store.Store) {
 
 const maxStringLen = 512 << 20
 
+// stringValue returns a live string value. The final string is a ready-to-send
+// error body when the key exists with another type.
+func stringValue(st *store.Store, key string) ([]byte, bool, string) {
+	v, ok := st.Lookup(key)
+	if !ok {
+		return nil, false, ""
+	}
+	if v.Kind != store.KindString {
+		return nil, true, protocol.WrongType
+	}
+	return v.Str, true, ""
+}
+
 type setOptions struct {
 	nx, xx, get, keepTTL bool
 	expireArgs           []byte
@@ -85,7 +98,7 @@ func setCommand(st *store.Store, args [][]byte, out *protocol.Encoder) {
 			out.Error(protocol.NotInteger)
 			return
 		}
-		expiresAt, ok = setExpiry(time.Now().UnixMilli(), seconds, opts.expireUnit)
+		expiresAt, ok = setExpiry(st.NowMs(), seconds, opts.expireUnit)
 		if !ok {
 			out.Error(protocol.InvalidExpireTime("set"))
 			return
@@ -93,7 +106,18 @@ func setCommand(st *store.Store, args [][]byte, out *protocol.Encoder) {
 	}
 
 	key := string(args[0])
-	old, exists := st.Get(key)
+	var old []byte
+	var exists bool
+	if opts.get {
+		var errMsg string
+		old, exists, errMsg = stringValue(st, key)
+		if errMsg != "" {
+			out.Error(errMsg)
+			return
+		}
+	} else {
+		exists = st.Exists(key)
+	}
 	if (opts.nx && exists) || (opts.xx && !exists) {
 		if opts.get {
 			out.Bulk(old)
@@ -105,7 +129,7 @@ func setCommand(st *store.Store, args [][]byte, out *protocol.Encoder) {
 
 	switch {
 	case opts.keepTTL:
-		st.SetKeepTTL(key, args[1])
+		st.SetPreservingTTL(key, store.Value{Kind: store.KindString, Str: args[1]})
 	case opts.hasExpire:
 		st.SetWithTTL(key, args[1], expiresAt)
 	default:
@@ -177,7 +201,11 @@ func setExpiry(nowMs, n int64, unit time.Duration) (int64, bool) {
 }
 
 func getCommand(st *store.Store, args [][]byte, out *protocol.Encoder) {
-	value, ok := st.Get(string(args[0]))
+	value, ok, errMsg := stringValue(st, string(args[0]))
+	if errMsg != "" {
+		out.Error(errMsg)
+		return
+	}
 	if !ok {
 		out.Null()
 		return
@@ -206,11 +234,7 @@ func existsCommand(st *store.Store, args [][]byte, out *protocol.Encoder) {
 }
 
 func typeCommand(st *store.Store, args [][]byte, out *protocol.Encoder) {
-	if st.Exists(string(args[0])) {
-		out.Simple("string")
-		return
-	}
-	out.Simple("none")
+	out.Simple(st.Type(string(args[0])))
 }
 
 func msetCommand(st *store.Store, args [][]byte, out *protocol.Encoder) {
@@ -227,19 +251,23 @@ func msetCommand(st *store.Store, args [][]byte, out *protocol.Encoder) {
 func mgetCommand(st *store.Store, args [][]byte, out *protocol.Encoder) {
 	out.ArrayHeader(len(args))
 	for _, key := range args {
-		value, ok := st.Get(string(key))
-		if !ok {
+		v, ok := st.Lookup(string(key))
+		if !ok || v.Kind != store.KindString {
 			out.Null()
 			continue
 		}
-		out.Bulk(value)
+		out.Bulk(v.Str)
 	}
 }
 
 func incrDecrCommand(st *store.Store, keyBytes []byte, incr int64, out *protocol.Encoder) {
 	key := string(keyBytes)
 	current := int64(0)
-	value, exists := st.Get(key)
+	value, exists, errMsg := stringValue(st, key)
+	if errMsg != "" {
+		out.Error(errMsg)
+		return
+	}
 	if exists {
 		n, ok := protocol.ParseInt(value)
 		if !ok {
@@ -255,7 +283,7 @@ func incrDecrCommand(st *store.Store, keyBytes []byte, incr int64, out *protocol
 	current += incr
 	newValue := strconv.AppendInt(nil, current, 10)
 	if exists {
-		st.SetKeepTTL(key, newValue)
+		st.SetPreservingTTL(key, store.Value{Kind: store.KindString, Str: newValue})
 	} else {
 		st.Set(key, newValue)
 	}
@@ -332,10 +360,49 @@ func parseLongDouble(b []byte) (*big.Float, bool) {
 		}
 	}
 	f, _, err := big.ParseFloat(s, base, longDoublePrec, big.ToNearestEven)
-	if err != nil || !inLongDoubleRange(f) {
+	if err != nil {
+		return nil, false
+	}
+	// big.ParseFloat silently underflows huge negative exponents to zero;
+	// string2ld reports the same input as out of range.
+	if f.Sign() == 0 && hasNonzeroSignificand(s) {
+		return nil, false
+	}
+	if !inLongDoubleRange(f) {
 		return nil, false
 	}
 	return f, true
+}
+
+// hasNonzeroSignificand reports whether a numeric literal has a nonzero digit
+// before its exponent. It separates a real zero (0e10) from underflow (1e-999).
+func hasNonzeroSignificand(s string) bool {
+	if len(s) > 0 && (s[0] == '+' || s[0] == '-') {
+		s = s[1:]
+	}
+	hex := strings.HasPrefix(s, "0x") || strings.HasPrefix(s, "0X")
+	if hex {
+		s = s[2:]
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if hex {
+			if c == 'p' || c == 'P' {
+				return false
+			}
+			if (c >= '1' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F') {
+				return true
+			}
+			continue
+		}
+		if c == 'e' || c == 'E' {
+			return false
+		}
+		if c >= '1' && c <= '9' {
+			return true
+		}
+	}
+	return false
 }
 
 func inLongDoubleRange(f *big.Float) bool {
@@ -377,13 +444,23 @@ func incrByFloatCommand(st *store.Store, args [][]byte, out *protocol.Encoder) {
 	}
 	key := string(args[0])
 	current := new(big.Float).SetPrec(longDoublePrec)
-	value, exists := st.Get(key)
+	value, exists, errMsg := stringValue(st, key)
+	if errMsg != "" {
+		out.Error(errMsg)
+		return
+	}
 	if exists {
 		current, ok = parseLongDouble(value)
 		if !ok {
 			out.Error(protocol.NotFloat)
 			return
 		}
+	}
+	// big.Float.Add panics on opposite infinities; Redis returns an error for
+	// any infinite operand before it computes a result.
+	if current.IsInf() || incr.IsInf() {
+		out.Error(protocol.FloatResult)
+		return
 	}
 	result := new(big.Float).SetPrec(longDoublePrec).Add(current, incr)
 	if longDoubleOverflows(result) {
@@ -392,7 +469,7 @@ func incrByFloatCommand(st *store.Store, args [][]byte, out *protocol.Encoder) {
 	}
 	encoded := []byte(formatLongDouble(result))
 	if exists {
-		st.SetKeepTTL(key, encoded)
+		st.SetPreservingTTL(key, store.Value{Kind: store.KindString, Str: encoded})
 	} else {
 		st.Set(key, encoded)
 	}
@@ -401,14 +478,18 @@ func incrByFloatCommand(st *store.Store, args [][]byte, out *protocol.Encoder) {
 
 func appendCommand(st *store.Store, args [][]byte, out *protocol.Encoder) {
 	key := string(args[0])
-	value, exists := st.Get(key)
+	value, exists, errMsg := stringValue(st, key)
+	if errMsg != "" {
+		out.Error(errMsg)
+		return
+	}
 	joined, ok := joinAppend(value, args[1], maxStringLen)
 	if !ok {
 		out.Error(protocol.StringTooLong)
 		return
 	}
 	if exists {
-		st.SetKeepTTL(key, joined)
+		st.SetPreservingTTL(key, store.Value{Kind: store.KindString, Str: joined})
 	} else {
 		st.Set(key, joined)
 	}
@@ -427,7 +508,11 @@ func joinAppend(old, add []byte, limit int) ([]byte, bool) {
 }
 
 func strlenCommand(st *store.Store, args [][]byte, out *protocol.Encoder) {
-	value, ok := st.Get(string(args[0]))
+	value, ok, errMsg := stringValue(st, string(args[0]))
+	if errMsg != "" {
+		out.Error(errMsg)
+		return
+	}
 	if !ok {
 		out.Int(0)
 		return
@@ -437,14 +522,18 @@ func strlenCommand(st *store.Store, args [][]byte, out *protocol.Encoder) {
 
 func getsetCommand(st *store.Store, args [][]byte, out *protocol.Encoder) {
 	key := string(args[0])
-	old, _ := st.Get(key)
+	old, _, errMsg := stringValue(st, key)
+	if errMsg != "" {
+		out.Error(errMsg)
+		return
+	}
 	st.Set(key, args[1])
 	out.Bulk(old)
 }
 
 func setnxCommand(st *store.Store, args [][]byte, out *protocol.Encoder) {
 	key := string(args[0])
-	if _, ok := st.Get(key); ok {
+	if st.Exists(key) {
 		out.Int(0)
 		return
 	}

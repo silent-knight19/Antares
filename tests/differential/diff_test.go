@@ -32,6 +32,18 @@ func TestDiffStrings(t *testing.T) {
 
 	prefix := fmt.Sprintf("antares:diff:%d:", time.Now().UnixNano())
 	k := func(s string) string { return prefix + s }
+	t.Cleanup(func() {
+		keys, err := ref.Keys(ctx, prefix+"*").Result()
+		if err != nil {
+			t.Logf("cleanup scan: %v", err)
+			return
+		}
+		if len(keys) > 0 {
+			if err := ref.Del(ctx, keys...).Err(); err != nil {
+				t.Logf("cleanup delete: %v", err)
+			}
+		}
+	})
 
 	big := strings.Repeat("x", 1<<20)
 	farSec := strconv.FormatInt(time.Now().Add(24*time.Hour).Unix(), 10)
@@ -266,6 +278,10 @@ func TestDiffStrings(t *testing.T) {
 	t.Run("expiry and ttl interactions", func(t *testing.T) {
 		expiring := []string{k("exp"), k("ttl:int"), k("ttl:app"), k("ttl:float"), k("ttl:setnx")}
 		persistent := []string{k("ttl:getset"), k("ttl:mset")}
+		lazy := []string{
+			k("lazy:strlen"), k("lazy:exists"), k("lazy:type"), k("lazy:ttl"),
+			k("lazy:pttl"), k("lazy:persist"), k("lazy:expire"), k("lazy:setxx"),
+		}
 		setup := [][]any{
 			{"SET", expiring[0], "v", "PX", "300"},
 			{"SET", expiring[1], "1", "PX", "300"},
@@ -274,6 +290,9 @@ func TestDiffStrings(t *testing.T) {
 			{"SET", expiring[4], "v", "PX", "300"},
 			{"SET", persistent[0], "old", "PX", "300"},
 			{"SET", persistent[1], "old", "PX", "300"},
+		}
+		for _, key := range lazy {
+			setup = append(setup, []any{"SET", key, "v", "PX", "300"})
 		}
 		mutations := [][]any{
 			{"INCR", expiring[1]},
@@ -311,6 +330,14 @@ func TestDiffStrings(t *testing.T) {
 			{"EXISTS", expiring[0], expiring[1]},
 			{"DEL", expiring[0], expiring[1]},
 			{"MGET", expiring[0], expiring[2], expiring[3]},
+			{"STRLEN", lazy[0]},
+			{"EXISTS", lazy[1]},
+			{"TYPE", lazy[2]},
+			{"TTL", lazy[3]},
+			{"PTTL", lazy[4]},
+			{"PERSIST", lazy[5]},
+			{"EXPIRE", lazy[6], "10"},
+			{"SET", lazy[7], "x", "XX"},
 		} {
 			want := outcome(ctx, ref, args...)
 			got := outcome(ctx, ant, args...)
