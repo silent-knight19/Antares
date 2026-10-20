@@ -157,3 +157,27 @@
 - QBank updated: Q11 (count + late captures).
 - Exit evidence: race suite green; live byte checks against the pinned reference Redis — `PING\r\nECH` → `+PONG` (was withheld), 200-byte name → 181-byte reply identical, `*1\r\n\xff\r\n` → raw `\377` identical, `-max-conns 2` refusal identical; `make fuzz FUZZTIME=60s` clean.
 - Next session first task: P2.1 — command registry (name → handler, arity, flags) with the `COMMAND` stub for redis-cli.
+
+---
+
+### 2026-10-20 — P2.1: command registry + COMMAND stub
+
+- Built: `internal/server/registry.go` — `Command{Name, Arity, Flags, Handler}` table with case-insensitive lookup; Redis arity rules (positive = exact argc including the command name, negative = minimum); dispatch replies with the captured `WrongArity`/`UnknownCommand` wording. P2.1 built-ins: PING (arity -1, message form still answered as a bulk), ECHO (arity 2), COMMAND (arity -1). Every COMMAND form (`COMMAND`, `COMMAND DOCS`, `COMMAND INFO …`) returns an empty array — enough for redis-cli 8.10.2's interactive `COMMAND DOCS` hint request. `FlagWrite` is the first command flag, ready for SET at P2.3. `stopgap.go` is now a one-line registry delegate; `stopgap_test.go` was replaced by `registry_test.go` (captured replies + lookup/flags + positive/negative arity).
+- Files touched: `internal/server/registry.go`, `internal/server/registry_test.go`, `internal/server/stopgap.go`, removed `internal/server/stopgap_test.go`, `docs/{PLAN,COMPATIBILITY,FILE_MANIFEST,PROJECT_LOG}.md`, `README.md`.
+- Issues: none. Micro-decision logged: COMMAND introspection is deliberately a stub (empty array), not full Redis metadata; redis-cli interactive mode was captured sending `COMMAND DOCS` on startup, and an empty array is accepted without breaking the prompt or hints path.
+- ADRs written: none.
+- QBank updated: none.
+- Exit evidence: `go test ./...`, `go test -race ./...`, `go vet ./...`, `gofmt -l .` all clean; live byte comparison against the pinned Redis 7.4.11 — `PING`, `ECHO hi`, `PING a b`, `ECHO`, `FOO bar baz` identical; interactive redis-cli against a fresh `go build` of `cmd/antares` on port 6381 printed `PONG`, `"hi"`, and the exact unknown-command error after its startup `COMMAND DOCS`.
+- Next session first task: P2.2 — executor goroutine + request/response channels + `internal/store`; replace `StopgapHandler` and delete `stopgap.go`.
+
+---
+
+### 2026-10-20 — P2.2: single executor goroutine + keyspace store
+
+- Built: `internal/server/executor.go` — one executor goroutine owns the keyspace; connection goroutines queue `{request, encoder}` over a bounded (1024) channel and wait for a per-request done signal; the executor dispatches through the P2.1 registry, writes the reply into the connection's encoder, then signals. `Close()` is idempotent and is called only after the server has drained connections, so no request can be stranded. Blocking sends are the backpressure policy: under load a connection waits instead of having its command rejected, preserving Redis-like semantics. `internal/store/store.go` — keyspace map with `Get/Set/Delete/Exists/Len`, deliberately lock-free because access is single-goroutine by construction. `cmd/antares` now creates the store + executor and wires `executor.Handle`; `stopgap.go` is deleted. Differential smoke and binaries run through the real executor.
+- Files touched: `internal/server/executor.go`, `internal/server/executor_test.go`, `internal/store/store.go`, `internal/store/store_test.go`, `cmd/antares/main.go`, `tests/differential/smoke_test.go`, removed `internal/server/stopgap.go`, `docs/{PLAN,DECISIONS,FILE_MANIFEST,PROJECT_LOG}.md`, `README.md`.
+- Issues: none. Micro-decision logged: the ADR-002 backpressure note now says bounded queue + blocking sends (no rejection policy), because rejecting a parsed command would break Redis semantics; memory is bounded by 1024 queued requests plus one blocked connection goroutine per connection. Also avoided a subtle shutdown deadlock: the executor stays alive while connections drain, and is closed only after `Server.Shutdown` returns.
+- ADRs written: none (ADR-002 trade-off line updated to the implemented policy).
+- QBank updated: none.
+- Exit evidence: `go test ./...`, `go test -race ./...`, `go vet ./...`, `gofmt -l .` all clean; serialization test runs 200 concurrent callers against an unguarded counter and store, observes exactly 1..200 with no race; live `bin/antares -port 6381` served PING/ECHO/arity/unknown/`COMMAND DOCS` and shut down cleanly on SIGTERM.
+- Next session first task: P2.3 — SET (EX/PX/NX/XX/GET/KEEPTTL), GET, DEL, EXISTS, TYPE; differential batch 1 green.

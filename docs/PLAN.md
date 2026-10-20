@@ -368,4 +368,4 @@ antares/
 3. `make test` → confirm baseline green.
 4. Work the subphase. When exit criterion passes → phase-gate checklist (§8) → log → done.
 
-**Current position:** P1 complete — the wire path is capture-exact and machine-verified (parser + encoder + error strings; 10k pipeline test; live differential battery byte-identical; 15-min fuzz clean: 166M execs; go-redis smoke green), including all P1.6 review fixes and the P1 audit fixes (flush-before-block, 128-byte name truncation, raw-byte protocol error, max-conns refusal, write timeout) re-fuzzed. Next: P2.1 — command registry, then the executor and string commands.
+**Current position:** P2.1 and P2.2 complete — commands dispatch through the capture-exact registry into a single executor goroutine that owns the keyspace (`internal/server/executor.go`, `internal/store`), with a bounded request queue and blocking backpressure; `cmd/antares` and the differential smoke now run through it. The serialization test increments an unguarded counter from 200 concurrent callers and stays race-clean. Next: P2.3 — SET/GET/DEL/EXISTS/TYPE with differential batch 1.

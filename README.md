@@ -45,12 +45,12 @@ Every claim the project makes is meant to be machine-verifiable — differential
 
 ## Project status
 
-> **Phase P1 complete — the wire path is done and fuzz-tested: TCP listener, capture-exact RESP2 parser/writer/error strings, pipelining, 15-minute fuzz clean (166M executions), go-redis differential smoke green.** The binary answers PING/ECHO over RESP2; the command executor arrives at P2. The project is under active construction.
+> **P1 complete; P2.1–P2.2 complete — the wire path is done and fuzz-tested: TCP listener, capture-exact RESP2 parser/writer/error strings, pipelining, 15-minute fuzz clean (166M executions), go-redis differential smoke green; commands now enter a single executor goroutine that owns the keyspace, with a bounded request queue and a race-clean serialization test.** PING/ECHO and the `COMMAND` stub work through the registry; the string command set arrives at P2.3. The project is under active construction.
 
 | Works today | Arrives later |
 |---|---|
 | `make build` (both binaries), `make test`, `make test-race`, `make vet`, `make fmt`, `make tidy`, `make fuzz` | Command set (P2 onward), expiry, persistence, eviction, transactions, replication |
-| TCP server speaking RESP2 — parser with a 31-case corpus captured from real Redis + fuzz harness, pooled reply writer, capture-exact error strings, pipeline-aware flushing; PING/ECHO answered until the executor lands | `make verify`, `make diff-test`, `make crash-test`, `make tcl`, `make bench`, `make showcase` |
+| TCP server speaking RESP2 — parser with a 31-case corpus captured from real Redis + fuzz harness, pooled reply writer, capture-exact error strings, pipeline-aware flushing; PING/ECHO/COMMAND answered through the registry and single keyspace-owning executor (case-insensitive lookup, Redis arity checks, `COMMAND` stub for redis-cli) | `make verify`, `make diff-test`, `make crash-test`, `make tcl`, `make bench`, `make showcase` |
 | CI: gofmt check + `vet` + `build` + race-tested test run | Observatory bridge and web UI (U2 onward) |
 | `docker compose up` — pinned reference Redis 7.4.11 | |
 

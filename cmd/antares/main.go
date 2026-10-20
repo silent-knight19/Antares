@@ -1,8 +1,8 @@
 // Command antares is the Redis-compatible server (docs/PLAN.md §3.1).
 //
-// P1.5: error strings are capture-exact (unknown command, arity, protocol
-// errors). The handler wired here is server.StopgapHandler: PING and ECHO
-// until the real executor lands at P2.2.
+// P2.2: the single executor goroutine owns the keyspace and dispatches the
+// P2.1 command registry; PING, ECHO, and the COMMAND stub are the commands
+// available until the string set lands at P2.3.
 package main
 
 import (
@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/silent-knight19/antares/internal/server"
+	"github.com/silent-knight19/antares/internal/store"
 )
 
 var version = "dev"
@@ -39,11 +40,13 @@ func main() {
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
 	addr := net.JoinHostPort(*bind, strconv.Itoa(*port))
+	exec := server.NewExecutor(store.New(), nil)
+	defer exec.Close()
 	srv := server.New(server.Config{
 		Addr:        addr,
 		MaxConns:    *maxConns,
 		IdleTimeout: *idleTimeout,
-	}, server.StopgapHandler)
+	}, exec.Handle)
 	if err := srv.Start(); err != nil {
 		logger.Error("listen failed", "addr", addr, "err", err)
 		os.Exit(1)

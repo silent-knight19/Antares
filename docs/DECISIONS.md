@@ -68,7 +68,7 @@
   - A: workable but lock discipline across 35+ commands invites subtle bugs; transaction atomicity and expiry-vs-command interleavings get hairy; no natural event ordering hook.
   - C: per-key locks cannot express multi-key atomicity and reintroduce deadlock analysis; complexity without observable benefit.
   - D: enormous complexity; no observable advantage over a serialized executor for our targets.
-- Trade-offs accepted: command execution bounded by one core (~Redis-level throughput; matches benchmark targets); executor backpressure needs a bounded queue + rejection policy (designed in P2.2).
+- Trade-offs accepted: command execution bounded by one core (~Redis-level throughput; matches benchmark targets); executor backpressure is a bounded request queue (1024) with blocking sends — connections wait rather than having commands rejected, preserving semantics under load.
 - Revisit if: benchmarks show executor saturation and sharding becomes desirable — explicitly a non-goal (ADR-012).
 - Interview Q&A:
   - "Redis is single-threaded — how did you model that in Go?" → one executor goroutine owns the keyspace; connection goroutines only parse/forward; atomicity and ordering for free; race detector proves it.

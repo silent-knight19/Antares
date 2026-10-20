@@ -14,9 +14,11 @@ import (
 )
 
 // TestPingEchoSmoke drives a real client against an in-process Antares
-// (StopgapHandler until the P2.2 executor) to prove the wire path end to end.
+// (executor + P2.1 registry) to prove the wire path end to end.
 func TestPingEchoSmoke(t *testing.T) {
-	srv := server.New(server.Config{Addr: "127.0.0.1:0"}, server.StopgapHandler)
+	exec := server.NewExecutor(nil, nil)
+	t.Cleanup(exec.Close)
+	srv := server.New(server.Config{Addr: "127.0.0.1:0"}, exec.Handle)
 	if err := srv.Start(); err != nil {
 		t.Fatalf("start: %v", err)
 	}

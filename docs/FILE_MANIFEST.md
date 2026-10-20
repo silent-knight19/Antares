@@ -34,12 +34,12 @@
 
 | Path | What it is | Ownership |
 |---|---|---|
-| `cmd/antares/main.go` | Server entry point: flags (`-bind`, `-port`, `-max-conns`, `-idle-timeout`), slog logs, SIGINT/SIGTERM → graceful shutdown; wires `server.StopgapHandler` until the executor | scaffold |
+| `cmd/antares/main.go` | Server entry point: flags (`-bind`, `-port`, `-max-conns`, `-idle-timeout`), slog logs, SIGINT/SIGTERM → graceful shutdown; creates the store + executor and wires `executor.Handle`, closing the executor after the server drains | scaffold |
 | `cmd/observatory/main.go` | Observatory bridge entry point; P0 stub → U2 | stub |
 
 ## Packages (`internal/`)
 
-Each package carries a `doc.go` charter referencing its ADR; real files land in their phases. `internal/server` received its listener at P1.1 and its parse → handle → flush loop at P1.4; `internal/protocol` its parser, encoder, and error strings at P1.2–P1.5; critical-path packages are re-listed in "Hand-own commitments" below.
+Each package carries a `doc.go` charter referencing its ADR; real files land in their phases. `internal/server` received its listener at P1.1, its parse → handle → flush loop at P1.4, and the single executor at P2.2; `internal/protocol` its parser, encoder, and error strings at P1.2–P1.5; `internal/store` its keyspace map at P2.2; critical-path packages are re-listed in "Hand-own commitments" below.
 
 | Path | What it will contain | Ownership |
 |---|---|---|
@@ -52,10 +52,14 @@ Each package carries a `doc.go` charter referencing its ADR; real files land in 
 | `internal/protocol/errors.go` | Error bodies in captured Redis wording: `ProtocolErrorReply`, `WrongArity`, `UnknownCommand` (128-byte name/args truncation) | **hand-own** — owner line-by-line review pending (PLAN §8) |
 | `internal/protocol/errors_test.go` | String-equality table vs Redis 7.4.11 captures + CRLF sanitization | scaffold |
 | `internal/server/doc.go` | Package charter: listener, conn goroutines, executor loop (ADR-002) | scaffold |
-| `internal/server/server.go` | TCP listener: accept loop, conn registry, max-conns cap (over-cap connections get the captured refusal error), graceful `Shutdown(ctx)`; per-conn loop parses RESP requests, dispatches in arrival order to the `Handler`; `connIO` flushes replies before the parser blocks and resets the idle deadline per underlying read (writes bounded when the timeout is set) (ADR-002) | scaffold (executor flips to hand-own at P2.2) |
+| `internal/server/server.go` | TCP listener: accept loop, conn registry, max-conns cap (over-cap connections get the captured refusal error), graceful `Shutdown(ctx)`; per-conn loop parses RESP requests, dispatches in arrival order to the `Handler`; `connIO` flushes replies before the parser blocks and resets the idle deadline per underlying read (writes bounded when the timeout is set) (ADR-002) | scaffold |
 | `internal/server/server_test.go` | Listener + pipeline tests: accept/close, max-conns, idle timeout incl. reset-on-partial-activity, graceful/forced shutdown, 10k-command pipeline order/flush, protocol-error reply+close | scaffold |
-| `internal/server/stopgap.go` | P1.6 stopgap handler: capture-exact PING/ECHO replies; lives here so tests and the differential harness can start a full in-process server; deleted when the P2.2 executor lands | scaffold |
-| `internal/server/stopgap_test.go` | Stopgap replies pinned byte-for-byte to Redis 7.4.11 captures | scaffold |
+| `internal/server/executor.go` | Single executor goroutine owning the keyspace: bounded request queue (1024, blocking backpressure), per-request reply signal into the connection's encoder, idempotent `Close()` after connection drain (ADR-002) | **hand-own** — owner line-by-line review pending (PLAN §8) |
+| `internal/server/executor_test.go` | Serialization test (200 concurrent callers, unguarded counter + store writes, race-clean), executor dispatch/arity/unknown replies | scaffold |
+| `internal/server/registry.go` | Command registry: case-insensitive name → `Command{Name, Arity, Flags, Handler}`; Redis arity rules (positive exact, negative minimum); dispatch replies with captured unknown-command/arity wording; P2.1 built-ins PING/ECHO/COMMAND (the COMMAND forms return an empty array for redis-cli hints); `FlagWrite` marker for P2.3 onward | scaffold |
+| `internal/server/registry_test.go` | Registry tests: captured wire replies, case-insensitive lookup + flags, positive/negative arity, COMMAND stub forms | scaffold |
+| `internal/store/store.go` | Keyspace map owned by the executor (no locks by construction): `Get/Set/Delete/Exists/Len`; value representation grows with the P2.3 string commands | scaffold (hand-own as value types land) |
+| `internal/store/store_test.go` | Basic keyspace operations incl. overwrite/delete/len | scaffold |
 | `internal/store/doc.go` | Keyspace, value types, WRONGTYPE, empty-collection auto-delete | scaffold → hand-own |
 | `internal/persist/doc.go` | Framed AOF, group commit, recovery, rewrite (ADR-004/007/010) | scaffold → hand-own at P6 |
 | `internal/expire/doc.go` | Lazy + active expiry cycle (ADR-005) | scaffold → hand-own at P3 |
@@ -104,5 +108,5 @@ When these files exist, they carry the `hand-own` marker here and nothing is "do
 - `internal/persist/` — frame format, writer, recovery, rewrite
 - `internal/expire/` — lazy + active cycle
 - `internal/evict/` — approximation, pool, policies
-- `internal/server/` — executor + transaction semantics
+- `internal/server/` — executor (`executor.go`; owner line-by-line review pending) + transaction semantics
 - `internal/repl/` — handshake, backlog, offsets, replica apply
