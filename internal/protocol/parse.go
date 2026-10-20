@@ -228,6 +228,10 @@ func parseCount(b []byte) (int64, bool) {
 	return int64(v), true
 }
 
+// ParseInt decodes a Redis string2ll integer: no sign other than a leading
+// '-', no leading zeros, no spaces, no suffixes.
+func ParseInt(b []byte) (int64, bool) { return parseCount(b) }
+
 func unexpectedEOF(err error) error {
 	if err == io.EOF {
 		return io.ErrUnexpectedEOF

@@ -68,8 +68,13 @@ Evidence: PLAN §9; ADR-017; ADR-018.
 
 ### Q11. What's the strongest verified evidence in the repo right now?
 
-Honest answer: early but real — the wire path is machine-verified end to end. Evidence: the RESP parser's 31-case edge corpus (30 live captures plus a generated 200 KiB size case) with expectations captured live from the digest-pinned Redis 7.4.11 (several captures overturned assumed Redis behavior); error strings additionally verified by a 12-case live differential battery byte-identical to reference Redis, extended at the P1 audit with two late captures (128-byte command-name truncation, raw non-ASCII byte in the `expected '$'` error) and the over-cap refusal wording; a 15-minute parser fuzz clean (165.8M executions, zero failures) with a parse→encode→re-parse invariant; a 10 000-command single-write pipeline test asserting reply order; a go-redis (independent client, ADR-017) smoke against an in-process server covering PING/ECHO/pipeline/unknown-command error equality; and CI (gofmt + vet + build + race tests) green on every push (run #1, commit `80427de`). Redis itself is the oracle for every protocol claim.
-Evidence: `PROJECT_LOG.md` P1.2–P1.6 entries; GitHub Actions run [39138833199](https://github.com/silent-knight19/Antares/actions/runs/39138833199).
+Honest answer: the wire path and the string core are machine-verified against real Redis. Evidence: the RESP parser's 31-case edge corpus (30 live captures plus a generated 200 KiB size case) with expectations captured live from the digest-pinned Redis 7.4.11 (several captures overturned assumed Redis behavior); error strings additionally verified by a live differential battery byte-identical to reference Redis, extended at the P1 audit with two late captures (128-byte command-name truncation, raw non-ASCII byte in the `expected '$'` error) and the over-cap refusal wording; a 15-minute parser fuzz clean (165.8M executions, zero failures) with a parse→encode→re-parse invariant; a 10 000-command single-write pipeline test asserting reply order; a go-redis (independent client, ADR-017) smoke; and the P2.3–P2.5 string surface at 1056 live differential checks (SET options, MSET/MGET, empty/binary/1 MiB values, 2000-key batches, integer overflow, expiry-edge interactions, APPEND/STRLEN/GETSET/SETNX, TTL/PERSIST and the full EXPIRE family with NX/XX/GT/LT, and 756 randomized INCRBYFLOAT cases) with zero mismatches, now repeatable through the committed `make diff-test` harness (198 string/TTL steps plus an expiry scenario against the pinned container). CI (gofmt + vet + build + race tests) is green on every push. Redis itself is the oracle for every protocol and command claim.
+Evidence: `PROJECT_LOG.md` P1.2–P2.4 entries; GitHub Actions run [39138833199](https://github.com/silent-knight19/Antares/actions/runs/39138833199).
+
+### Q14. How do you make INCRBYFLOAT bit-exact?
+
+Redis uses C `long double` — binary128 on the pinned aarch64 reference — and prints `%.17Lf` with trailing zeros trimmed. Go's float64 has only a 53-bit mantissa, so it drifts within those 17 digits. I implemented parsing, addition, range checks, and formatting with `math/big.Float` at 113 bits, matched Redis's 5119-byte input cap, hex floats without `p`, `inf`/`infinity` handling, `nan` rejection, binary128 overflow and subnormal boundaries, and `-0` normalization. 756 randomized differential checks plus edge cases produced zero mismatches. The architecture dependency is documented as a deliberate divergence.
+Evidence: ADR-021; `internal/server/string_commands.go`; COMPATIBILITY precision row.
 
 ---
 
@@ -82,7 +87,7 @@ Evidence: ADR-012, ADR-019 (Observatory non-goals).
 
 ### Q13. Where is Antares weaker than real Redis?
 
-Known, documented divergences: WATCH uses value-snapshot comparison (a write-then-restore-identical-value does not abort EXEC, while Redis aborts); persistence formats are intentionally not RDB/AOF-file-compatible; no compact encodings (listpack/intset); snapshot transfer for full resync is a framed command stream, larger than RDB for big values.
+Known, documented divergences: WATCH uses value-snapshot comparison (a write-then-restore-identical-value does not abort EXEC, while Redis aborts); persistence formats are intentionally not RDB/AOF-file-compatible; no compact encodings (listpack/intset); snapshot transfer for full resync is a framed command stream, larger than RDB for big values; INCRBYFLOAT always uses binary128, while Redis follows the host C `long double` (80-bit on x86-64); `proto-max-bulk-len` is fixed at 512 MiB until CONFIG support lands at P5.3.
 Evidence: `COMPATIBILITY.md`; ADR-004, ADR-007, ADR-008.
 
 ---

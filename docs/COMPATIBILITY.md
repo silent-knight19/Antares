@@ -16,12 +16,12 @@
 
 Rationale for pinning strategy: ADR-020 (tooling policy, digest pinning) and PLAN §12 (version-drift risk).
 
-## Compatibility claims (empty until verified)
+## Compatibility claims (verified rows expand by phase)
 
 | Claim | Verified by | Status |
 |---|---|---|
 | redis-cli works interactively and `redis-cli --stat` is clean | P5.3 + diff suite | pending |
-| go-redis differential: 0 mismatches across implemented commands | `make diff-test` (P2.6 → P9.1) | pending |
+| go-redis differential: 0 mismatches across implemented commands | `make diff-test` (P2.6 → P9.1) | verified for the string and TTL surface (P3.1, 198 steps + expiry); expands each phase |
 | Official Tcl `unit/expire` and `unit/type/incr` fully pass | `make tcl` (P3.4, P9.2) | pending |
 | Crash test: zero acked-write loss with `fsync=always` (≤1s window `everysec`) | `make crash-test` (P6.4) | pending |
 | Replica dataset equality after full resync + `+CONTINUE` continuity | S1.3/S2.2 tests | pending |
@@ -34,6 +34,9 @@ Rationale for pinning strategy: ADR-020 (tooling policy, digest pinning) and PLA
 | WATCH semantics | Value-snapshot compare: a write followed by restoring identical bytes does **not** abort EXEC (real Redis aborts). All realistic patterns behave the same | ADR-008 |
 | RESP3 | Not implemented beyond a `HELLO` downgrade stub advertising `proto: 2`; RESP3-only client behaviors unavailable | ADR-003 |
 | COMMAND introspection | `COMMAND`, `COMMAND DOCS`, and `COMMAND INFO` return an empty array; redis-cli connects and runs interactively, but command hints/completion are empty | P2.1 stub (PLAN §5); full metadata is out of scope |
+| SET EXAT/PXAT | Redis accepts the absolute-expiry SET options; Antares returns `ERR syntax error` because P2.3 scope is EX/PX | PLAN §5 P2.3; revisit alongside the P3 absolute-expiry commands |
+| INCRBYFLOAT precision | Antares always computes with IEEE binary128 (113-bit mantissa), matching C `long double` on the pinned aarch64 reference. On x86-64 Redis uses 80-bit `long double`, so its last printed digits can differ from this build | ADR-021; required for bit-exact parity with the pinned oracle |
+| Runtime bulk limit | `proto-max-bulk-len` is fixed at 512 MiB in both the parser and APPEND; `CONFIG SET proto-max-bulk-len` is unavailable until the P5.3 CONFIG allowlist | PLAN §5 P5.3; revisit with CONFIG support |
 | Persistence file formats | Framed AOF and framed snapshot stream are **not** Redis-compatible files: Antares cannot load existing `.rdb`/`.aof`, and Redis cannot load ours | ADR-004, ADR-007 |
 | Value encodings | No listpack/intset/embstr encodings (non-goal); the exact `OBJECT ENCODING` surface will be decided at P2/P5 and documented here when it lands | ADR-012 |
 | Missing command families | Lua, cluster, Sentinel, Streams, pub/sub, GEO/HLL/Bitmaps, ACL — commands return the standard unknown-command error | ADR-012, ADR-019 |

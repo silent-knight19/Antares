@@ -6,34 +6,12 @@ package differential
 import (
 	"context"
 	"testing"
-	"time"
-
-	"github.com/redis/go-redis/v9"
-
-	"github.com/silent-knight19/antares/internal/server"
 )
 
 // TestPingEchoSmoke drives a real client against an in-process Antares
 // (executor + P2.1 registry) to prove the wire path end to end.
 func TestPingEchoSmoke(t *testing.T) {
-	exec := server.NewExecutor(nil, nil)
-	t.Cleanup(exec.Close)
-	srv := server.New(server.Config{Addr: "127.0.0.1:0"}, exec.Handle)
-	if err := srv.Start(); err != nil {
-		t.Fatalf("start: %v", err)
-	}
-	t.Cleanup(func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		_ = srv.Shutdown(ctx)
-	})
-
-	rdb := redis.NewClient(&redis.Options{
-		Addr:            srv.Addr().String(),
-		Protocol:        2,
-		DisableIdentity: true,
-	})
-	t.Cleanup(func() { _ = rdb.Close() })
+	rdb := newClient(t, startAntares(t))
 	ctx := context.Background()
 
 	if got := rdb.Ping(ctx).Val(); got != "PONG" {

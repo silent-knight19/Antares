@@ -181,3 +181,72 @@
 - QBank updated: none.
 - Exit evidence: `go test ./...`, `go test -race ./...`, `go vet ./...`, `gofmt -l .` all clean; serialization test runs 200 concurrent callers against an unguarded counter and store, observes exactly 1..200 with no race; live `bin/antares -port 6381` served PING/ECHO/arity/unknown/`COMMAND DOCS` and shut down cleanly on SIGTERM.
 - Next session first task: P2.3 — SET (EX/PX/NX/XX/GET/KEEPTTL), GET, DEL, EXISTS, TYPE; differential batch 1 green.
+
+---
+
+### 2026-10-20 — P2.3: string core (SET/GET/DEL/EXISTS/TYPE)
+
+- Built: `internal/server/string_commands.go` — SET with EX/PX/NX/XX/GET/KEEPTTL (options case-insensitive; duplicate NX/XX/GET/KEEPTTL and same-unit EX/PX allowed; NX+XX, KEEPTTL+expiry, and EX↔PX conflicts are `ERR syntax error`; expiry values use Redis string2ll semantics, so `+10`/`010`/`1.5` are `ERR value is not an integer or out of range`, and non-positive/overflowing times are `ERR invalid expire time in 'set' command`). SET validates expiry before the NX/XX condition, returns the old value for GET (nil when absent), and preserves TTL only for KEEPTTL. GET, DEL (duplicates count once), EXISTS (duplicates count each time), and TYPE. `internal/store/store.go` now holds absolute Unix-millisecond expiries with lazy delete-on-access, `Set` clearing TTL, `SetWithTTL`, and `SetKeepTTL`; `Len` skips expired keys. `protocol.ParseInt` exposes the existing string2ll-faithful parser; `protocol.SyntaxError`, `protocol.NotInteger`, and `InvalidExpireTime` pin the captured error bodies.
+- Files touched: `internal/server/string_commands.go`, `internal/server/string_commands_test.go`, `internal/server/executor.go` (register string commands by default), `internal/store/store.go`, `internal/store/store_test.go`, `internal/protocol/parse.go`, `internal/protocol/errors.go`, `docs/{PLAN,COMPATIBILITY,FILE_MANIFEST,PROJECT_LOG}.md`, `README.md`.
+- Issues: none. Design trap avoided: expiries are stored as int64 Unix milliseconds, not `time.Time`/`time.Duration` — Redis accepts PX values beyond Go's ~292-year `time.Duration` range (captured: `PX 99999999999999999` is valid), so duration arithmetic would have wrapped. Redis option-validation order also differs from the obvious implementation: NX+XX and KEEPTTL+expiry conflicts are rejected before the expire value is parsed, which is why `EX abc NX XX` is a syntax error rather than an integer error; the parser now follows that order. Lazy expiry landed here (rather than P3.2) because SET EX/PX is otherwise observably wrong; the active cycle and clock injection remain P3.
+- ADRs written: none.
+- QBank updated: none.
+- Exit evidence: `go test ./...`, `go test -race ./...`, `go vet ./...`, `gofmt -l .` all clean; live differential battery against digest-pinned Redis 7.4.11 — 67 command/expiry checks plus 30 option/edge checks, **0 mismatches** (only SET EXAT/PXAT differ by design: out of the EX/PX plan scope, returns `ERR syntax error`).
+- Next session first task: P2.4 — MSET/MGET (atomic), INCR/DECR/INCRBY/DECRBY/INCRBYFLOAT (+ errors), APPEND, STRLEN, GETSET, SETNX; differential batch 2 green.
+
+---
+
+### 2026-10-20 — P2.4: string mutations and INCR family
+
+- Built: MSET/MGET; INCR/DECR/INCRBY/DECRBY with Redis's string2ll semantics, overflow wording (`ERR increment or decrement would overflow`), and the special `DECRBY ... -9223372036854775808` rejection (`ERR decrement would overflow`); INCRBYFLOAT; APPEND/STRLEN; GETSET; SETNX. In-place writes preserve TTL via `Store.SetKeepTTL`; MSET and GETSET clear it. MSET validates pair parity before writing, so an odd argument list is a wrong-arity error and no partial write happens. APPEND enforces the 512 MiB `proto-max-bulk-len` ceiling (`ERR string exceeds maximum allowed size (proto-max-bulk-len)`) before allocating; a missing key appended with an empty value still creates a live empty string (encoded as `$0`, never `$-1`). `internal/protocol/errors.go` pins the five new error bodies; `internal/server/string_commands.go` holds the handlers.
+- INCRBYFLOAT fidelity: Redis formats with C `long double` and `%.17Lf`, trimming zeros; the pinned container is aarch64, where `long double` is IEEE binary128 (113-bit mantissa), so Go float64 drifts in the 17th decimal. Implemented with `math/big.Float` at 113 bits: correctly rounded decimal/hex parsing, binary128 overflow and half-min-subnormal bounds, explicit `inf`/`infinity` handling, `nan` rejection, Redis's 5119-byte value cap, `.17f` output trimming, and `-0` normalization. Capture also showed Redis accepts hex floats without `p` (`0x1.8`), so the parser appends `p0`.
+- Files touched: `internal/server/string_commands.go`, `internal/server/string_commands_test.go`, `internal/protocol/errors.go`, `docs/{PLAN,DECISIONS,COMPATIBILITY,FILE_MANIFEST,INTERVIEW_QBANK,PROJECT_LOG}.md`, `README.md`.
+- Issues: none. Two traps caught by capture rather than assumption: `DECRBY k -9223372036854775808` is not an overflow of the value but of the negation, and it is checked before the stored value is parsed; INCRBYFLOAT on `1e-4950` succeeds and prints `0` (subnormal, no ERANGE) whereas `1e-4966` is `ERR value is not a valid float`; APPEND allows exactly 512 MiB and rejects only the next byte. `INCRBYFLOAT` result range checks enforce overflow but deliberately allow arithmetic underflow to print `0`, matching Redis.
+- ADRs written: ADR-021 — INCRBYFLOAT uses binary128 to match the pinned aarch64 oracle; the platform dependency is recorded in COMPATIBILITY.
+- QBank updated: Q11 evidence now includes the 934-check string differential; new Q14 covers bit-exact INCRBYFLOAT; Q13 lists the precision divergence.
+- Exit evidence: `go test ./...`, `go test -race ./...`, `go vet ./...`, `gofmt -l .` all clean; live `bin/antares -port 6381` vs pinned Redis 7.4.11 — 178 structured P2.4 checks and 756 randomized INCRBYFLOAT checks (including 5119-byte values, hex floats, subnormals, and overflow boundaries), **0 mismatches**; TTL-preservation covered by unit tests with expiry waits; clean SIGTERM shutdown.
+- Next session first task: P2.5 — WRONGTYPE path (needs the minimal type tag before collections), empty-value edge differential, large-payload guard (536MB proto limit), numeric overflow edges; then P2.6 differential harness v0.
+
+---
+
+### 2026-10-20 — P2.5: string edge-hardening (empty values, limits, overflow, WRONGTYPE contract)
+
+- Built: edge tests for empty key names and empty values across every string command; binary values containing NUL/CRLF through SET/GET/APPEND/MGET; case-insensitive command/option spelling; 1 MiB values and 2000-key MSET/MGET/DEL/EXISTS batches; integer boundaries (`INCRBY -9223372036854775808` on 0/-1, `DECRBY 9223372036854775807` twice, `DECRBY -9223372036854775808` precedence over a non-integer stored value, unchanged values after failed mutations); float error precedence and overflow; expired-key interactions for GET/TYPE/EXISTS/DEL/MGET/INCR/APPEND/GETSET/SETNX/MSET/SET NX/XX/KEEPTTL; TTL preservation for INCR/APPEND/INCRBYFLOAT/failed SETNX/failed INCRBY, and TTL clearing for GETSET/MSET.
+- Limits: verified the protocol parser's `$536870913` rejection from P1 already covers the wire ceiling; added `joinAppend(old, add, limit)` so the APPEND 512 MiB branch is unit-tested without allocating 512 MiB (at-limit accepted, one byte over rejected, empty append stays non-nil); pinned `protocol.StringTooLong`. The runtime limit is fixed until P5.3 (`CONFIG SET`), now recorded in COMPATIBILITY.
+- WRONGTYPE: captured the exact body from a list-valued key (`WRONGTYPE Operation against a key holding the wrong kind of value`) and pinned it as `protocol.WrongType`. The live matrix is deliberately deferred to P4.4: with only a string type in the store there is no reachable wrong-type path, and adding a speculative kind/union now would be replaced by P4.1's real value model.
+- Files touched: `internal/server/string_commands.go` (append helper), `internal/server/string_commands_test.go`, `internal/protocol/errors.go`, `internal/protocol/errors_test.go`, `docs/{PLAN,COMPATIBILITY,FILE_MANIFEST,INTERVIEW_QBANK,PROJECT_LOG}.md`, `README.md`.
+- Issues: none. Deliberate scope deviation logged: P2.5's WRONGTYPE item is contract-only; P4.4 owns the cross-type matrix. A full 512 MiB APPEND runtime test remains skipped (memory/CI cost, and the reference boundary was captured at a reduced `proto-max-bulk-len`); the branch is covered by the limit-parameterized unit test.
+- ADRs written: none.
+- QBank updated: Q11 evidence now includes 1056 checks; Q13 adds the fixed runtime bulk limit.
+- Exit evidence: `go test ./...`, `go test -race ./...`, `go vet ./...`, `gofmt -l .` all clean; live `bin/antares -port 6381` vs pinned Redis 7.4.11 — 122 edge checks including expiry waits and 1 MiB/2000-argument batches, **0 mismatches**; combined string differential stands at 1056 checks, zero mismatches; clean SIGTERM shutdown.
+- Next session first task: P2.6 — differential harness v0: spawn the pinned reference, encode a reusable string command corpus, canonicalize replies, and wire `make diff-test` to run it against Antares with zero mismatches.
+
+---
+
+### 2026-10-20 — P2.6: differential harness v0
+
+- Built: `tests/differential/harness_test.go` starts an in-process Antares on an ephemeral port and builds RESP2 go-redis clients with identity commands disabled; `tests/differential/diff_test.go` runs a 93-step string corpus (SET options, MSET/MGET, INCR family, INCRBYFLOAT edges, APPEND/STRLEN/GETSET/SETNX, empty/binary/1 MiB values, 1000-key batches, syntax/arity/unknown errors) plus an expiry/TTL scenario, comparing every reply after canonicalization (nil, error string, scalar, array). `outcome` maps go-redis's `redis.Nil` to nil, and errors compare by exact server message. The suite skips unless `REDIS_REF_ADDR` is set, so `make test` stays Docker-free; `make diff-test` starts the pinned compose service and sets the address. The P1 smoke now shares the harness helpers. Corpus keys are namespaced with a nanosecond prefix so repeated runs cannot collide with manual reference data.
+- Files touched: `tests/differential/{harness_test,diff_test,smoke_test}.go`, `Makefile`, `docs/{PLAN,COMPATIBILITY,FILE_MANIFEST,INTERVIEW_QBANK,PROJECT_LOG}.md`, `README.md`.
+- Bug: the first harness run failed the expiry scenario with `GET = <nil>, redis: nil`. Diagnosis: `Cmd.Result()` surfaces a null bulk as `redis.Nil`, and the assertion treated any error as failure, unlike the canonicalizer. Fix: route those checks through the same `outcome` helper. Prevention: all corpus and scenario comparisons now use one canonical path; raw `Do(...).Result()` is no longer interpreted inline.
+- ADRs written: none (implements ADR-017; no new trade-off).
+- QBank updated: Q11 now cites the repeatable harness.
+- Exit evidence: `make diff-test` green — 94 subtests (93 corpus steps + expiry/TTL), zero mismatches; `go test ./...`, `go test -race ./...`, `go vet ./...`, `gofmt -l .` clean; reference container already healthy and idempotently reused.
+- Next session first task: P3.1 — implement the expires dictionary and TTL/PTTL/PERSIST, EXPIRE/PEXPIRE/EXPIREAT/PEXPIREAT with NX/XX/GT/LT; extend the differential harness with the TTL batch.
+
+---
+
+### 2026-10-20 — P3.1: expires dict and the TTL family
+
+- Built: refactored the store from an inline `entry{value, expiresAt}` to separate `data` and `expires` dicts, matching Redis and letting the P3.3 active cycle sample only volatile keys. Added `ExpiresAt`, `TTLms`, `SetExpire`, and `Persist`; lazy expiry now deletes from both dicts. Added `internal/server/ttl_commands.go`: TTL/PTTL (`-2` missing, `-1` persistent, nearest-second rounding `(ms+500)/1000`), PERSIST, and the four EXPIRE variants with NX/XX/GT/LT, including Redis's non-volatile-is-infinite rules and delete-on-past-deadline behaviour. Registered them from the default executor.
+- Capture findings that changed the implementation:
+  - Redis validates options before the TTL integer, and reports the first unsupported option immediately; option conflicts are checked only after the full option list, and both fire before the missing-key lookup. `EXPIRE missing abc FOO` is `ERR Unsupported option FOO`, not an integer error.
+  - TTL rounds to the nearest second, not floor/ceil: PX 400 → TTL 0, PX 1400 → 1, PX 1600 → 2.
+  - Expiry is strict: a key is dead only when `now > deadline`, so a deadline equal to the current millisecond still yields PTTL 0 rather than a missing key. The lazy check was changed from `>=` to `>`.
+  - GT on a non-volatile key always fails; LT always succeeds, even with a past deadline (which deletes the key). XX requires an existing TTL; NX requires none; repeated options are allowed; XX may combine with GT/LT.
+  - Overflow is unit- and base-specific: EXPIRE/EXPIREAT reject seconds that would overflow `seconds*1000` (so EXPIREAT MinInt64 is invalid), relative millisecond commands reject only upper addition overflow (PEXPIRE MaxInt64 invalid), PEXPIRE MinInt64 deletes immediately, and PEXPIREAT MaxInt64 is a valid far-future deadline.
+- Files touched: `internal/store/{store.go,store_test.go}`, `internal/server/{executor.go,ttl_commands.go,ttl_commands_test.go}`, `tests/differential/diff_test.go`, `docs/{PLAN,COMPATIBILITY,FILE_MANIFEST,INTERVIEW_QBANK,PROJECT_LOG}.md`, `README.md`.
+- Issues: the first TTL corpus draft exercised PEXPIRE on a missing key and lowercase XX on a persistent key, so both compared `0` instead of the success path; added the missing setup steps before claiming coverage. No product bug.
+- ADRs written: none (implements ADR-005/ADR-009 groundwork).
+- QBank updated: Q11 cites the 199-subtest harness and TTL family.
+- Exit evidence: `make diff-test` green — 199 subtests (198 corpus steps + expiry scenario), zero mismatches; new unit tests cover rounding, lazy expiry, relative/absolute variants, the condition matrix, and every captured error; `go test ./...`, `go test -race ./...`, `go vet ./...`, `gofmt -l .` clean.
+- Next session first task: P3.2 — audit every read path for lazy expiry, pin delete-on-access semantics, and add DBSIZE consistency coverage where it lands.

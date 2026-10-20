@@ -18,7 +18,7 @@
 |---|---|---|
 | `.gitignore` | Ignore rules: build artifacts, runtime data (aof/rdb/tap), node_modules, env files | scaffold |
 | `LICENSE` | MIT, © 2026 Sachin Kumar Singh | scaffold |
-| `Makefile` | Canonical commands (`build test test-race vet fmt tidy run clean`, `fuzz` with `FUZZTIME`); gated targets (`verify`, `crash-test`, `showcase`, …) exist now and fail loudly until their phase; CI calls these same targets | scaffold |
+| `Makefile` | Canonical commands (`build test test-race vet fmt tidy run clean`, `fuzz` with `FUZZTIME`); `diff-test` starts the pinned reference and runs the string differential harness; remaining gated targets (`verify`, `crash-test`, `showcase`, …) fail loudly until their phase; CI calls these same targets | scaffold |
 | `README.md` | Public landing page: what/why, status, architecture, layout, getting started, roadmap, non-goals | scaffold |
 | `go.mod` | Module `github.com/silent-knight19/antares`; Go 1.27.1 pin; single direct dependency: go-redis v9 (test-only differential client, ADR-017) | scaffold |
 | `go.sum` | Module checksums for go-redis and its indirect deps | scaffold |
@@ -39,27 +39,31 @@
 
 ## Packages (`internal/`)
 
-Each package carries a `doc.go` charter referencing its ADR; real files land in their phases. `internal/server` received its listener at P1.1, its parse → handle → flush loop at P1.4, and the single executor at P2.2; `internal/protocol` its parser, encoder, and error strings at P1.2–P1.5; `internal/store` its keyspace map at P2.2; critical-path packages are re-listed in "Hand-own commitments" below.
+Each package carries a `doc.go` charter referencing its ADR; real files land in their phases. `internal/server` received its listener at P1.1, its parse → handle → flush loop at P1.4, and the single executor at P2.2; `internal/protocol` its parser, encoder, and error strings at P1.2–P1.5; `internal/store` its keyspace map at P2.2 and the separate expires dict at P3.1; critical-path packages are re-listed in "Hand-own commitments" below.
 
 | Path | What it will contain | Ownership |
 |---|---|---|
 | `internal/protocol/doc.go` | Package charter: RESP2 parse/encode + fuzz corpus (ADR-003) | scaffold |
-| `internal/protocol/parse.go` | RESP2 request reader: multibulk arrays + inline commands, sdssplitargs quoting, string2ll counts; limits and error wording pinned by live capture; one exact allocation for payloads ≤ 64 KiB, larger ones grow with received bytes clamped to the declared size (a declared 512 MB length can never force the allocation) (ADR-003) | **hand-own** — owner line-by-line review pending (PLAN §8) |
+| `internal/protocol/parse.go` | RESP2 request reader: multibulk arrays + inline commands, sdssplitargs quoting, string2ll counts (also exported as `ParseInt` for command arguments); limits and error wording pinned by live capture; one exact allocation for payloads ≤ 64 KiB, larger ones grow with received bytes clamped to the declared size (a declared 512 MB length can never force the allocation) (ADR-003) | **hand-own** — owner line-by-line review pending (PLAN §8) |
 | `internal/protocol/parse_test.go` | Edge corpus from live Redis 7.4.11 captures: multibulk, inline quoting/escapes, length limits, skips, lax CRLF handling, truncation, pipelining; plus a generated 200 KiB size-path case | scaffold |
 | `internal/protocol/fuzz_test.go` | `FuzzReadRequest` — capture-shaped seeds + round-trip invariant (parse → encode → parse byte-identical); no-crash/no-hang on arbitrary bytes; huge-declared-length regression | scaffold |
 | `internal/protocol/encode.go` | RESP2 reply encoder on pooled buffers: `+simple`, `-error`, `:int`, `$bulk`/`$-1`, `*array`/`*-1` (ADR-003) | **hand-own** — owner line-by-line review pending (PLAN §8) |
 | `internal/protocol/encode_test.go` | Byte-exact framing tests, parser round-trips, pool reuse | scaffold |
-| `internal/protocol/errors.go` | Error bodies in captured Redis wording: `ProtocolErrorReply`, `WrongArity`, `UnknownCommand` (128-byte name/args truncation) | **hand-own** — owner line-by-line review pending (PLAN §8) |
-| `internal/protocol/errors_test.go` | String-equality table vs Redis 7.4.11 captures + CRLF sanitization | scaffold |
+| `internal/protocol/errors.go` | Error bodies in captured Redis wording: `ProtocolErrorReply`, `WrongArity`, `UnknownCommand` (128-byte name/args truncation), `SyntaxError`, `NotInteger`, `InvalidExpireTime`, `NotFloat`, `IncrementOverflow`, `DecrementOverflow`, `FloatResult`, `StringTooLong`, `WrongType` | **hand-own** — owner line-by-line review pending (PLAN §8) |
+| `internal/protocol/errors_test.go` | String-equality table vs Redis 7.4.11 captures (incl. WRONGTYPE and string-too-long) + CRLF sanitization | scaffold |
 | `internal/server/doc.go` | Package charter: listener, conn goroutines, executor loop (ADR-002) | scaffold |
 | `internal/server/server.go` | TCP listener: accept loop, conn registry, max-conns cap (over-cap connections get the captured refusal error), graceful `Shutdown(ctx)`; per-conn loop parses RESP requests, dispatches in arrival order to the `Handler`; `connIO` flushes replies before the parser blocks and resets the idle deadline per underlying read (writes bounded when the timeout is set) (ADR-002) | scaffold |
 | `internal/server/server_test.go` | Listener + pipeline tests: accept/close, max-conns, idle timeout incl. reset-on-partial-activity, graceful/forced shutdown, 10k-command pipeline order/flush, protocol-error reply+close | scaffold |
-| `internal/server/executor.go` | Single executor goroutine owning the keyspace: bounded request queue (1024, blocking backpressure), per-request reply signal into the connection's encoder, idempotent `Close()` after connection drain (ADR-002) | **hand-own** — owner line-by-line review pending (PLAN §8) |
+| `internal/server/executor.go` | Single executor goroutine owning the keyspace: bounded request queue (1024, blocking backpressure), per-request reply signal into the connection's encoder, registers string + TTL commands on the default registry, idempotent `Close()` after connection drain (ADR-002) | **hand-own** — owner line-by-line review pending (PLAN §8) |
 | `internal/server/executor_test.go` | Serialization test (200 concurrent callers, unguarded counter + store writes, race-clean), executor dispatch/arity/unknown replies | scaffold |
 | `internal/server/registry.go` | Command registry: case-insensitive name → `Command{Name, Arity, Flags, Handler}`; Redis arity rules (positive exact, negative minimum); dispatch replies with captured unknown-command/arity wording; P2.1 built-ins PING/ECHO/COMMAND (the COMMAND forms return an empty array for redis-cli hints); `FlagWrite` marker for P2.3 onward | scaffold |
 | `internal/server/registry_test.go` | Registry tests: captured wire replies, case-insensitive lookup + flags, positive/negative arity, COMMAND stub forms | scaffold |
-| `internal/store/store.go` | Keyspace map owned by the executor (no locks by construction): `Get/Set/Delete/Exists/Len`; value representation grows with the P2.3 string commands | scaffold (hand-own as value types land) |
-| `internal/store/store_test.go` | Basic keyspace operations incl. overwrite/delete/len | scaffold |
+| `internal/server/string_commands.go` | String commands P2.3–P2.4: SET (EX/PX/NX/XX/GET/KEEPTTL with Redis validation order), GET, DEL, EXISTS, TYPE, MSET/MGET, INCR/DECR/INCRBY/DECRBY, INCRBYFLOAT (binary128 via `math/big`), APPEND/STRLEN/GETSET/SETNX; absolute-ms deadlines via `setExpiry`; TTL-preserving in-place writes; APPEND ceiling via a limit-parameterized join helper | scaffold |
+| `internal/server/string_commands_test.go` | Captured string behaviour: SET options/errors, MSET/MGET, integer overflow and DECRBY negation, INCRBYFLOAT parsing/formatting/bounds, APPEND empty-key creation and limit guard, STRLEN/GETSET/SETNX, TTL preservation/clearing, empty-key and binary values, wide argument batches, arity | scaffold |
+| `internal/server/ttl_commands.go` | TTL/PTTL (nearest-second rounding), PERSIST, and EXPIRE/PEXPIRE/EXPIREAT/PEXPIREAT: option parsing order, NX/XX/GT/LT conditions, non-volatile infinite-TTL rules, second/millisecond and relative/absolute overflow boundaries, delete-on-past deadline | scaffold |
+| `internal/server/ttl_commands_test.go` | Captured TTL behaviour: -2/-1 replies, rounding buckets, lazy expiry after PX, relative/absolute variants, condition matrix incl. past deadlines, option conflicts and precedence over malformed integers, overflow per command, KEEPTTL/SET interplay | scaffold |
+| `internal/store/store.go` | Keyspace owned by the executor (no locks by construction): separate `data` and `expires` dicts, `Get/Set/SetWithTTL/SetKeepTTL/Delete/Exists/Len`, `ExpiresAt/TTLms/SetExpire/Persist`; strict `now > deadline` lazy expiry; value representation grows with the collection commands | scaffold (hand-own as value types land) |
+| `internal/store/store_test.go` | Keyspace operations incl. overwrite/delete/len; expires-dict preservation, lazy expiry, KEEPTTL, and TTL clearing on overwrite | scaffold |
 | `internal/store/doc.go` | Keyspace, value types, WRONGTYPE, empty-collection auto-delete | scaffold → hand-own |
 | `internal/persist/doc.go` | Framed AOF, group commit, recovery, rewrite (ADR-004/007/010) | scaffold → hand-own at P6 |
 | `internal/expire/doc.go` | Lazy + active expiry cycle (ADR-005) | scaffold → hand-own at P3 |
@@ -84,12 +88,14 @@ Planned docs from `PLAN.md` §13, arriving at their phases: `UI-DESIGN.md` (U0),
 
 ## Tests, benchmarks, UI, deploy
 
-All entries below except the differential smoke are `placeholder` `.gitkeep` files — directories reserved per `PLAN.md` §13, populated at the phase noted.
+Entries below are populated at the phase noted; directories without files remain `placeholder` `.gitkeep` reservations per `PLAN.md` §13.
 
 | Path | Arrives |
 |---|---|
 | `tests/unit/.gitkeep` | reserved for cross-package suites; unit tests are colocated with their package (Go convention) |
-| `tests/differential/smoke_test.go` | P1.6 (go-redis PING/ECHO/pipeline/unknown-command against in-process server); grows into harness v0 at P2.6, full at P9.1 |
+| `tests/differential/harness_test.go` | Shared test harness: starts an in-process Antares on an ephemeral port and builds RESP2 go-redis clients (identity disabled) (P2.6) |
+| `tests/differential/smoke_test.go` | P1.6 go-redis PING/ECHO/pipeline/unknown-command smoke against the in-process server, now using the shared harness helpers |
+| `tests/differential/diff_test.go` | Differential harness v0: 198-step string/TTL corpus + expiry scenario against the pinned reference, canonicalized reply comparison, namespaced keys; skips unless `REDIS_REF_ADDR` is set (`make diff-test`); full report at P9.1 |
 | `tests/chaos/.gitkeep` | P6.4 (crash), S2.4 (replica chaos) |
 | `tests/fuzz/.gitkeep` | P9.3 (soak + committed regression corpus; the P1.6 harness itself is `internal/protocol/fuzz_test.go`) |
 | `tests/tcl/.gitkeep` | P3.4, P9.2 (vendored Tcl subset) |

@@ -45,12 +45,13 @@ Every claim the project makes is meant to be machine-verifiable — differential
 
 ## Project status
 
-> **P1 complete; P2.1–P2.2 complete — the wire path is done and fuzz-tested: TCP listener, capture-exact RESP2 parser/writer/error strings, pipelining, 15-minute fuzz clean (166M executions), go-redis differential smoke green; commands now enter a single executor goroutine that owns the keyspace, with a bounded request queue and a race-clean serialization test.** PING/ECHO and the `COMMAND` stub work through the registry; the string command set arrives at P2.3. The project is under active construction.
+> **P1–P2 complete; P3.1 complete — the wire path is done and fuzz-tested (15-min fuzz clean, 166M executions), commands run through a single keyspace-owning executor, and the edge-hardened string surface is live: SET/GET/DEL/EXISTS/TYPE, MSET/MGET, the INCR family including a bit-exact INCRBYFLOAT, APPEND/STRLEN/GETSET/SETNX, lazy expiry, and exact wrong-type/overflow/limit errors.** TTL state now sits in a separate expires dict, with TTL/PTTL/PERSIST and the full EXPIRE/PEXPIRE/EXPIREAT/PEXPIREAT family (NX/XX/GT/LT). A committed differential harness (`make diff-test`) runs 198 string/TTL steps plus an expiry scenario against the pinned Redis 7.4.11 with zero mismatches; 1056 one-off checks also passed, and PING/ECHO plus the `COMMAND` stub work. The project is under active construction.
 
 | Works today | Arrives later |
 |---|---|
-| `make build` (both binaries), `make test`, `make test-race`, `make vet`, `make fmt`, `make tidy`, `make fuzz` | Command set (P2 onward), expiry, persistence, eviction, transactions, replication |
-| TCP server speaking RESP2 — parser with a 31-case corpus captured from real Redis + fuzz harness, pooled reply writer, capture-exact error strings, pipeline-aware flushing; PING/ECHO/COMMAND answered through the registry and single keyspace-owning executor (case-insensitive lookup, Redis arity checks, `COMMAND` stub for redis-cli) | `make verify`, `make diff-test`, `make crash-test`, `make tcl`, `make bench`, `make showcase` |
+| `make build` (both binaries), `make test`, `make test-race`, `make vet`, `make fmt`, `make tidy`, `make fuzz`, `make diff-test` (strings + TTL) | Collections (P4), active expiry cycle (P3.3–P3.4), persistence, eviction, transactions, replication |
+| TCP server speaking RESP2 — parser with a 31-case corpus captured from real Redis + fuzz harness, pooled reply writer, capture-exact error strings, pipeline-aware flushing; PING/ECHO/COMMAND answered through the registry and single keyspace-owning executor (case-insensitive lookup, Redis arity checks, `COMMAND` stub for redis-cli) | `make verify`, `make crash-test`, `make tcl`, `make bench`, `make showcase` |
+| Edge-hardened string core — SET (EX/PX/NX/XX/GET/KEEPTTL), GET, DEL, EXISTS, TYPE, MSET/MGET, INCR/DECR/INCRBY/DECRBY/INCRBYFLOAT, APPEND, STRLEN, GETSET, SETNX; separate expires dict with lazy delete-on-access, TTL/PTTL/PERSIST, EXPIRE/PEXPIRE/EXPIREAT/PEXPIREAT incl. NX/XX/GT/LT; empty/binary/1 MiB values, wide batches, overflow parity, 512 MiB guard, pinned WRONGTYPE body; `make diff-test` green (198 steps + expiry) and 1056 one-off live checks clean | Lazy-expiry audit and DBSIZE consistency (P3.2); active expiry cycle and virtual clock (P3.3–P3.4); cross-type WRONGTYPE matrix (P4.4) |
 | CI: gofmt check + `vet` + `build` + race-tested test run | Observatory bridge and web UI (U2 onward) |
 | `docker compose up` — pinned reference Redis 7.4.11 | |
 
@@ -150,12 +151,14 @@ docker compose up -d   # Redis on 127.0.0.1:6379
 | `make vet` | Run `go vet ./...` |
 | `make fmt` | Format the tree with gofmt |
 | `make tidy` | Run `go mod tidy` |
+| `make fuzz` | Run the RESP parser fuzzer for `FUZZTIME` (default 30s) |
+| `make diff-test` | Start the pinned Redis and run the string/TTL differential harness |
 | `make run` | Run the Antares server |
 | `make run-observatory` | Run the Observatory bridge |
 | `make clean` | Remove build artifacts |
 | `make help` | List all targets |
 
-Phase-gated targets — `verify`, `diff-test`, `crash-test`, `fuzz`, `bench`, `tcl`, `showcase`, `showcase-e2e`, `ui-dev` — fail loudly with a pointer until the phase that implements them arrives.
+Phase-gated targets — `verify`, `crash-test`, `bench`, `tcl`, `showcase`, `showcase-e2e`, `ui-dev` — fail loudly with a pointer until the phase that implements them arrives.
 
 ## Roadmap
 

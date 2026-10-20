@@ -12,6 +12,7 @@ ANTARES_BIN := $(BIN)/antares
 OBSERVATORY_BIN := $(BIN)/observatory
 
 FUZZTIME ?= 30s
+REF_ADDR ?= 127.0.0.1:6379
 
 .PHONY: help build test test-race vet fmt tidy run run-observatory clean fuzz \
 	verify diff-test crash-test bench tcl showcase showcase-e2e ui-dev
@@ -28,7 +29,8 @@ help:
 	@echo "  run-observatory  run the observatory bridge (stub until U2)"
 	@echo "  clean            remove build artifacts"
 	@echo "  fuzz             run the RESP fuzzer for FUZZTIME (default 30s, e.g. FUZZTIME=15m)"
-	@echo "  phase-gated:     verify diff-test crash-test bench tcl showcase showcase-e2e ui-dev"
+	@echo "  diff-test        run the string differential harness against reference Redis (REF_ADDR=$(REF_ADDR))"
+	@echo "  phase-gated:     verify crash-test bench tcl showcase showcase-e2e ui-dev"
 
 build:
 	@mkdir -p $(BIN)
@@ -62,6 +64,10 @@ clean:
 fuzz:
 	$(GO) test -run='^$$' -fuzz=FuzzReadRequest -fuzztime=$(FUZZTIME) ./internal/protocol/
 
-verify diff-test crash-test bench tcl showcase showcase-e2e ui-dev:
+diff-test:
+	docker compose up -d --wait redis-ref
+	REDIS_REF_ADDR=$(REF_ADDR) $(GO) test -count=1 -run 'TestDiff' ./tests/differential/
+
+verify crash-test bench tcl showcase showcase-e2e ui-dev:
 	@echo "make $@: not implemented yet — arrives at the phase marked in docs/PLAN.md §5–§7 (DoD: §2)"
 	@exit 1

@@ -503,3 +503,26 @@
   - "Why not Docker Desktop?" → licensing + auditability; colima is MIT, same CLI, and the swap was a config-only change — logged, with the one necessary exception (Redis reference) recorded.
   - "How do you keep the dependency surface safe?" → OSS-only policy, digest-pinned images, localhost binds, pinned versions everywhere.
 - Proof: this ADR; `docker-compose.yml` (digest pin + 127.0.0.1 binding); P0.2 verification `redis-cli -p 6379 PING → PONG` on colima stack (redis 7.4.11); COMPATIBILITY.md license note arrives in P0.3.
+
+---
+
+## ADR-021 — INCRBYFLOAT uses IEEE binary128 to match the pinned aarch64 oracle
+- Date: 2026-10-20 · Phase: P2.4 · Status: Accepted
+- Context: Redis implements INCRBYFLOAT with C `long double` parsing (`strtold`), addition, and `%.17Lf` output with trailing-zero trimming. C `long double` is platform-dependent: 80-bit extended on x86-64, but IEEE binary128 (113-bit mantissa) on the pinned Linux/aarch64 reference container. Go's native `float64` has a 53-bit mantissa and diverges from Redis within the 17 digits it prints.
+- Options:
+  - A. `float64` arithmetic and `strconv.FormatFloat`.
+  - B. `math/big.Float` with 113-bit precision, binary128 range checks, and Redis's formatting.
+  - C. Detect the reference architecture and switch between 64- and 113-bit precision.
+- Decision: B — binary128, always.
+- Why chosen:
+  - The differential oracle is the digest-pinned aarch64 container; its observed outputs (including the exact 4933-digit expansion of `1e4932`) are reproduced byte-for-byte.
+  - A deterministic implementation is easier to test and reason about than one that changes with the host CPU.
+  - 756 randomized differential checks plus edge cases (hex floats, subnormals, overflow, 5119-byte inputs) produced zero mismatches.
+- Why rejected:
+  - A: fails parity at the 17th decimal on values the reference prints exactly.
+  - C: adds architecture-detection complexity for no benefit while the oracle is pinned; Redis itself is the platform-dependent side.
+- Trade-offs accepted: if the reference image moves to x86-64, Antares's last printed digits may differ from that Redis; the divergence is documented in COMPATIBILITY and the ADR must be revisited with the digest bump.
+- Revisit if: the reference architecture changes, or compatibility is claimed against a non-aarch64 Redis.
+- Interview Q&A:
+  - "Why not just use float64?" → Redis prints 17 decimals from an 80/128-bit C long double; float64 drifts, so the diff suite catches it. I matched the oracle's binary128 with `big.Float` and verified with randomized differential tests.
+- Proof: `internal/server/string_commands.go` (`parseLongDouble`, `formatLongDouble`); P2.4 differential evidence in PROJECT_LOG; COMPATIBILITY precision row.

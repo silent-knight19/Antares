@@ -36,6 +36,8 @@ func NewExecutor(st *store.Store, reg *Registry) *Executor {
 	}
 	if reg == nil {
 		reg = NewRegistry()
+		registerStringCommands(reg, st)
+		registerTTLCommands(reg, st)
 	}
 	e := &Executor{
 		store:    st,
