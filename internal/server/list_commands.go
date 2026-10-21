@@ -9,10 +9,10 @@ import (
 )
 
 func registerListCommands(reg *Registry, st *store.Store) {
-	reg.Register(Command{Name: "lpush", Write: true, Arity: -3, Handler: func(args [][]byte, out *protocol.Encoder) {
+	reg.Register(Command{Name: "lpush", Write: true, DenyOOM: true, Arity: -3, Handler: func(args [][]byte, out *protocol.Encoder) {
 		pushList(st, args, true, out)
 	}})
-	reg.Register(Command{Name: "rpush", Write: true, Arity: -3, Handler: func(args [][]byte, out *protocol.Encoder) {
+	reg.Register(Command{Name: "rpush", Write: true, DenyOOM: true, Arity: -3, Handler: func(args [][]byte, out *protocol.Encoder) {
 		pushList(st, args, false, out)
 	}})
 	reg.Register(Command{Name: "lpop", Write: true, Arity: -2, Handler: func(args [][]byte, out *protocol.Encoder) {
@@ -30,7 +30,7 @@ func registerListCommands(reg *Registry, st *store.Store) {
 	reg.Register(Command{Name: "lindex", Arity: 3, Handler: func(args [][]byte, out *protocol.Encoder) {
 		lindexCommand(st, args, out)
 	}})
-	reg.Register(Command{Name: "lset", Write: true, Arity: 4, Handler: func(args [][]byte, out *protocol.Encoder) {
+	reg.Register(Command{Name: "lset", Write: true, DenyOOM: true, Arity: 4, Handler: func(args [][]byte, out *protocol.Encoder) {
 		lsetCommand(st, args, out)
 	}})
 	reg.Register(Command{Name: "lrem", Write: true, Arity: 4, Handler: func(args [][]byte, out *protocol.Encoder) {

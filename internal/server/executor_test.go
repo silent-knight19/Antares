@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -151,6 +152,50 @@ func TestExecutorRecoversFromPanic(t *testing.T) {
 	}
 	if got := runCommand(exec, []byte("PING")); got != "+PONG\r\n" {
 		t.Fatalf("executor did not survive panic: %q", got)
+	}
+}
+
+func TestOOMGate(t *testing.T) {
+	exec := NewExecutor(nil, nil)
+	defer exec.Close()
+
+	value := strings.Repeat("x", 4096)
+	for i := 0; i < 16; i++ {
+		if got := runStrings(exec, "SET", fmt.Sprintf("k%d", i), value); got != "+OK\r\n" {
+			t.Fatalf("fill SET k%d = %q", i, got)
+		}
+	}
+	if got := runStrings(exec, "CONFIG", "SET", "maxmemory", "1000"); got != "+OK\r\n" {
+		t.Fatalf("CONFIG SET maxmemory = %q", got)
+	}
+
+	oom := "-" + protocol.OutOfMemory + "\r\n"
+	for _, args := range [][]string{
+		{"SET", "new", "v"},
+		{"MSET", "a", "1", "b", "2"},
+		{"SADD", "s", "m"},
+		{"APPEND", "k0", "x"},
+	} {
+		if got := runStrings(exec, args...); got != oom {
+			t.Fatalf("%v over limit = %q, want %q", args, got, oom)
+		}
+	}
+
+	if got := runStrings(exec, "GET", "k0"); got != "$4096\r\n"+value+"\r\n" {
+		t.Fatalf("GET over limit = %q", got)
+	}
+	if got := runStrings(exec, "DEL", "k0"); got != ":1\r\n" {
+		t.Fatalf("DEL over limit = %q", got)
+	}
+	if got := runStrings(exec, "SET", "k1"); got != "-ERR wrong number of arguments for 'set' command\r\n" {
+		t.Fatalf("arity over limit = %q", got)
+	}
+
+	if got := runStrings(exec, "CONFIG", "SET", "maxmemory", "0"); got != "+OK\r\n" {
+		t.Fatalf("CONFIG SET maxmemory 0 = %q", got)
+	}
+	if got := runStrings(exec, "SET", "after", "v"); got != "+OK\r\n" {
+		t.Fatalf("SET after clearing the limit = %q", got)
 	}
 }
 

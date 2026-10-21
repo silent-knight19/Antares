@@ -13,7 +13,7 @@ import (
 )
 
 func registerStringCommands(reg *Registry, st *store.Store) {
-	reg.Register(Command{Name: "set", Write: true, Arity: -3, Handler: func(args [][]byte, out *protocol.Encoder) {
+	reg.Register(Command{Name: "set", Write: true, DenyOOM: true, Arity: -3, Handler: func(args [][]byte, out *protocol.Encoder) {
 		setCommand(st, args, out)
 	}})
 	reg.Register(Command{Name: "get", Arity: 2, Handler: func(args [][]byte, out *protocol.Encoder) {
@@ -28,37 +28,37 @@ func registerStringCommands(reg *Registry, st *store.Store) {
 	reg.Register(Command{Name: "type", Arity: 2, Handler: func(args [][]byte, out *protocol.Encoder) {
 		typeCommand(st, args, out)
 	}})
-	reg.Register(Command{Name: "mset", Write: true, Arity: -3, Handler: func(args [][]byte, out *protocol.Encoder) {
+	reg.Register(Command{Name: "mset", Write: true, DenyOOM: true, Arity: -3, Handler: func(args [][]byte, out *protocol.Encoder) {
 		msetCommand(st, args, out)
 	}})
 	reg.Register(Command{Name: "mget", Arity: -2, Handler: func(args [][]byte, out *protocol.Encoder) {
 		mgetCommand(st, args, out)
 	}})
-	reg.Register(Command{Name: "incr", Write: true, Arity: 2, Handler: func(args [][]byte, out *protocol.Encoder) {
+	reg.Register(Command{Name: "incr", Write: true, DenyOOM: true, Arity: 2, Handler: func(args [][]byte, out *protocol.Encoder) {
 		incrDecrCommand(st, args[0], 1, out)
 	}})
-	reg.Register(Command{Name: "decr", Write: true, Arity: 2, Handler: func(args [][]byte, out *protocol.Encoder) {
+	reg.Register(Command{Name: "decr", Write: true, DenyOOM: true, Arity: 2, Handler: func(args [][]byte, out *protocol.Encoder) {
 		incrDecrCommand(st, args[0], -1, out)
 	}})
-	reg.Register(Command{Name: "incrby", Write: true, Arity: 3, Handler: func(args [][]byte, out *protocol.Encoder) {
+	reg.Register(Command{Name: "incrby", Write: true, DenyOOM: true, Arity: 3, Handler: func(args [][]byte, out *protocol.Encoder) {
 		incrByCommand(st, args, out)
 	}})
-	reg.Register(Command{Name: "decrby", Write: true, Arity: 3, Handler: func(args [][]byte, out *protocol.Encoder) {
+	reg.Register(Command{Name: "decrby", Write: true, DenyOOM: true, Arity: 3, Handler: func(args [][]byte, out *protocol.Encoder) {
 		decrByCommand(st, args, out)
 	}})
-	reg.Register(Command{Name: "incrbyfloat", Write: true, Arity: 3, Handler: func(args [][]byte, out *protocol.Encoder) {
+	reg.Register(Command{Name: "incrbyfloat", Write: true, DenyOOM: true, Arity: 3, Handler: func(args [][]byte, out *protocol.Encoder) {
 		incrByFloatCommand(st, args, out)
 	}})
-	reg.Register(Command{Name: "append", Write: true, Arity: 3, Handler: func(args [][]byte, out *protocol.Encoder) {
+	reg.Register(Command{Name: "append", Write: true, DenyOOM: true, Arity: 3, Handler: func(args [][]byte, out *protocol.Encoder) {
 		appendCommand(st, args, out)
 	}})
 	reg.Register(Command{Name: "strlen", Arity: 2, Handler: func(args [][]byte, out *protocol.Encoder) {
 		strlenCommand(st, args, out)
 	}})
-	reg.Register(Command{Name: "getset", Write: true, Arity: 3, Handler: func(args [][]byte, out *protocol.Encoder) {
+	reg.Register(Command{Name: "getset", Write: true, DenyOOM: true, Arity: 3, Handler: func(args [][]byte, out *protocol.Encoder) {
 		getsetCommand(st, args, out)
 	}})
-	reg.Register(Command{Name: "setnx", Write: true, Arity: 3, Handler: func(args [][]byte, out *protocol.Encoder) {
+	reg.Register(Command{Name: "setnx", Write: true, DenyOOM: true, Arity: 3, Handler: func(args [][]byte, out *protocol.Encoder) {
 		setnxCommand(st, args, out)
 	}})
 }

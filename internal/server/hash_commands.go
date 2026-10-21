@@ -15,7 +15,7 @@ import (
 const maxRandomReplyElements = 1_000_000
 
 func registerHashCommands(reg *Registry, st *store.Store) {
-	reg.Register(Command{Name: "hset", Write: true, Arity: -4, Handler: func(args [][]byte, out *protocol.Encoder) {
+	reg.Register(Command{Name: "hset", Write: true, DenyOOM: true, Arity: -4, Handler: func(args [][]byte, out *protocol.Encoder) {
 		hsetCommand(st, args, out)
 	}})
 	reg.Register(Command{Name: "hget", Arity: 3, Handler: func(args [][]byte, out *protocol.Encoder) {

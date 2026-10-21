@@ -8,8 +8,9 @@ package store
 // logical estimate, not the allocator's byte count.
 const (
 	// entryOverhead is the amortized cost of one data-map entry at Go's load
-	// factor, including the inline Value struct and the key's string header.
-	entryOverhead = 240
+	// factor, including the inline Value struct (144 bytes after the 24-bit Lru
+	// field) and the key's string header.
+	entryOverhead = 248
 
 	// indexOverhead is the amortized cost of one field/member index entry in
 	// map[string]int, excluding the key bytes (counted separately).
@@ -30,8 +31,10 @@ type Usage struct {
 // MemoryUsage estimates the heap bytes held by every key, including expired
 // keys not yet collected by lazy access or the active cycle.
 //
-// shortcut: a full scan per call; cache the total when maxmemory enforcement
-// lands (P7.2), where it moves onto the command path.
+// shortcut: a full scan per call; maxmemory enforcement (P7.2) calls this per
+// denyoom command, so the scan only runs while maxmemory is set (default 0
+// skips it). Replace with an incrementally maintained total when eviction
+// sampling lands (P7.3).
 func (s *Store) MemoryUsage() Usage {
 	var u Usage
 	for key, value := range s.data {

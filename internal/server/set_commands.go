@@ -10,7 +10,7 @@ import (
 )
 
 func registerSetCommands(reg *Registry, st *store.Store) {
-	reg.Register(Command{Name: "sadd", Write: true, Arity: -3, Handler: func(args [][]byte, out *protocol.Encoder) {
+	reg.Register(Command{Name: "sadd", Write: true, DenyOOM: true, Arity: -3, Handler: func(args [][]byte, out *protocol.Encoder) {
 		saddCommand(st, args, out)
 	}})
 	reg.Register(Command{Name: "srem", Write: true, Arity: -3, Handler: func(args [][]byte, out *protocol.Encoder) {

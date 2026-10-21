@@ -635,3 +635,49 @@
   - "You have no C allocator — how do you know the keyspace's memory?" → a logical model: amortized per-entry map cost plus exact payload, slice backing, and index maps, calibrated to within 10% of the Go heap.
   - "Why not just read the Go heap?" → it is process-wide and GC-dependent; `maxmemory` needs a dataset number.
 - Proof: `internal/store/memory.go` (`MemoryUsage`, `Usage`, `add`, `addIndex`), `internal/server/info_commands.go` (`memoryInfo`); `TestMemoryUsageTracksRuntime`, `TestMemoryUsageEmptyAndPerKey`, `TestInfoMemoryAccounting`.
+
+## ADR-026 — maxmemory enforcement: a DenyOOM gate on the command path, no eviction yet
+- Date: 2026-10-21 · Phase: P7.2 · Status: Accepted
+- Context: `CONFIG SET maxmemory` stored a limit that nothing enforced, so an over-limit server kept growing. Redis refuses memory-growing commands with `-OOM ...` once the keyspace is over `maxmemory` and eviction cannot free anything (`noeviction`). Eviction itself is P7.3.
+- Options:
+  - A. Reuse `Command.Write` as the refuse flag.
+  - B. Add a narrow `Command.DenyOOM` flag mirroring Redis's `CMD_DENYOOM`.
+  - C. Maintain an incremental memory counter for the check.
+- Decision: B, evaluated in `Executor.oomBlocked` after the AOF MISCONF gate and before dispatch: when `maxmemory > 0`, the named command exists, is `DenyOOM`, and its arity is valid, `store.MemoryUsage().Total > maxmemory` answers `-OOM command not allowed when used memory > 'maxmemory'.` Reads, deletes, `CONFIG`, and non-denyoom writes still run. Until eviction lands (P7.3), every `maxmemory-policy` behaves like `noeviction`.
+- Why chosen:
+  - A would refuse `DEL`/`SREM`/`SPOP`, which do not grow memory and are the way out of an over-limit keyspace — Redis marks them non-denyoom for exactly that reason.
+  - B matches Redis's own flag split (denyoom vs write) and confines the check to the 15 growing commands (`append`, the INCR family, `getset`, `hset`, `lpush`/`rpush`/`lset`, `mset`, `sadd`, `set`, `setnx`).
+  - C is unsafe here for the same in-place-mutation reason as ADR-025's accounting; the scan is correct by construction and only runs while `maxmemory` is set (the default 0 skips it).
+  - The gate runs after command resolution so unknown-command and arity errors keep Redis's precedence over `-OOM`.
+- Why rejected:
+  - A: blocks the recovery paths.
+  - C: unsafe size deltas, per ADR-025.
+- Trade-offs accepted: enforcement is an O(n) scan per denyoom command while `maxmemory > 0` (the `shortcut:` note in `memory.go` now points at P7.3); the accounting is Go-heap-shaped, not jemalloc, so the threshold trips at a different absolute byte count than Redis; with no eviction yet, `allkeys-lru`/`volatile-lru` reject rather than free.
+- Revisit if: eviction lands (P7.3) — free from the eviction pool before refusing, and replace the scan with its own accounting.
+- Interview Q&A:
+  - "Why a separate denyoom flag instead of reusing your write flag?" → writes and memory-growing commands are different sets; `DEL` is a write but must stay allowed over the limit, so the gate keys on Redis's `CMD_DENYOOM`.
+  - "What happens over maxmemory with no eviction?" → denyoom commands get `-OOM ...`; reads, deletes, and CONFIG keep working so the operator can recover.
+- Proof: `internal/server/executor.go` (`oomBlocked`), `internal/server/registry.go` (`Command.DenyOOM`), `internal/protocol/errors.go` (`OutOfMemory`); `TestOOMGate`, `TestDiffOOM`.
+
+## ADR-027 — Approximated LRU eviction: 24-bit access clock, sample 5, bounded pool
+- Date: 2026-10-21 · Phase: P7.3 · Status: Accepted
+- Context: P7.2 enforced `maxmemory` by rejecting denyoom writes under every policy, so `allkeys-lru`/`volatile-lru` behaved like `noeviction`. Redis instead frees the least-recently-used keys first, which needs a per-key recency signal and a victim choice.
+- Options:
+  - A. Exact LRU (a global recency structure over all keys).
+  - B. Approximated LRU: a 24-bit seconds clock per key, sample 5, bounded eviction pool (the plan in ADR-006).
+  - C. Keep rejecting (no eviction).
+- Decision: B. `store.Value` gains a 24-bit `Lru` stamped on every lookup and write; `store.SampleKeys` returns up to n keys with `(now - lru) mod 2^24` idle seconds; `internal/evict.Pool` keeps the 16 most-idle candidates and `PopBest` removes the victim; `Executor.performEvictions` loops until the keyspace fits or nothing is evictable, emitting an `events.Event` per victim. Only `allkeys-lru` and `volatile-lru` evict; the other Redis policy names parse as `noeviction` and still reject.
+- Why chosen:
+  - A costs ~2 pointers plus list maintenance per key and diverges from Redis; the 5-sample approximation recovers most of the hit rate, and P7.4 proves retention.
+  - The 24-bit seconds clock is the Redis trick: cheap, and idle time is taken modulo the mask so a wrap (~194 days) never reads as a huge age.
+  - The pool improves victim quality beyond a single sample-of-5 without a global ordering.
+- Why rejected:
+  - A: overhead and divergence for a bounded benefit; B is the compatibility target.
+  - C: leaves the LRU policies accepted but inert, which is exactly what P7.3 exists to fix.
+- Trade-offs accepted: victim choice is non-deterministic, so tests assert quality bounds and a hot-key invariant, not exact victims; `volatile-lru` can thrash when the volatile set is small (as in Redis); eviction scans the keyspace and samples per victim (a `shortcut:` in `performEvictions`), acceptable until measured; the JSONL event sink is Observatory (U-phase) work, so P7.3 ships the versioned schema and the emit hook against an in-process sink.
+- Revisit if: P7.4 retention is below 90% → raise the sample size (a parameter, one-line change) and re-measure.
+- Interview Q&A:
+  - "How do you pick a victim?" → stamp a 24-bit seconds clock on access, sample 5 keys, keep the 16 most idle in a bounded pool, evict the most idle, and repeat until the keyspace fits or nothing is evictable.
+  - "Why not exact LRU?" → per-key list overhead and divergence from Redis; the sample approximates it and I measure retention.
+  - "What if nothing is evictable?" → eviction fails and a denyoom command gets `-OOM` (noeviction, or `volatile-lru` with no volatile keys).
+- Proof: `internal/store/store.go` (`Value.Lru`, `lruClock`, `SampleKeys`, the `live` touch), `internal/evict/evict.go` (`Policy`, `Pool`), `internal/events/events.go` (`Event`, `Sink`), `internal/server/executor.go` (`maxmemoryGate`, `performEvictions`); `TestSampleKeysIdleAndVolatile`, `TestLookupTouchesLRU`, `TestParsePolicy`, `TestPoolPopsMostIdle`, `TestPoolBoundedToMostIdle`, `TestEvictAllKeysLRU`, `TestEvictVolatileLRUOnly`.

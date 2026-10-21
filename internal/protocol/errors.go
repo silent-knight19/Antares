@@ -51,6 +51,10 @@ const (
 // than the server's bounded random-reply size.
 const RandomCountTooLarge = "ERR count is out of range"
 
+// OutOfMemory is Redis's reply for a command that may grow memory (denyoom)
+// when maxmemory is set and the keyspace is already over the limit.
+const OutOfMemory = "OOM command not allowed when used memory > 'maxmemory'."
+
 // List LSET replies.
 const (
 	NoSuchKey       = "ERR no such key"

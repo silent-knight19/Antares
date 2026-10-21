@@ -11,11 +11,14 @@ import (
 type CommandHandler func(args [][]byte, out *protocol.Encoder)
 
 // Command is one registry entry. Arity follows Redis: positive means an exact
-// argument count including the name; negative means at least -Arity.
+// argument count including the name; negative means at least -Arity. Write
+// marks a mutation (AOF/MISCONF gate); DenyOOM marks a command that may grow
+// memory, which maxmemory rejects under pressure (Redis's CMD_DENYOOM).
 type Command struct {
 	Name    string
 	Arity   int
 	Write   bool
+	DenyOOM bool
 	Handler CommandHandler
 }
 

@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/silent-knight19/antares/internal/clock"
+	"github.com/silent-knight19/antares/internal/events"
+	"github.com/silent-knight19/antares/internal/evict"
 	"github.com/silent-knight19/antares/internal/expire"
 	"github.com/silent-knight19/antares/internal/metrics"
 	"github.com/silent-knight19/antares/internal/persist"
@@ -38,6 +40,11 @@ type Executor struct {
 
 	maxmemory       int64
 	maxmemoryPolicy string
+
+	// events is the opt-in internal tap (ADR-014); nil disables it. evictPool
+	// carries candidates within one eviction round.
+	events    events.Sink
+	evictPool evict.Pool
 
 	aof             *persist.Writer
 	rewriteInFlight atomic.Bool
@@ -219,6 +226,9 @@ func (e *Executor) run(req execRequest) {
 	if e.aofWriteBlocked(req.req, req.out) {
 		return
 	}
+	if e.maxmemoryGate(req.req, req.out) {
+		return
+	}
 	mutations := e.store.Mutations()
 	spopBefore := e.captureSpopBefore(req.req)
 	e.commands.Dispatch(req.req, req.out)
@@ -242,4 +252,68 @@ func (e *Executor) aofWriteBlocked(req protocol.Request, out *protocol.Encoder) 
 	}
 	out.Error("MISCONF Errors writing to the AOF file: " + err.Error())
 	return true
+}
+
+// maxmemoryGate runs before dispatch. While over maxmemory under an LRU policy
+// it evicts victims, then refuses a still-over memory-growing command (DenyOOM)
+// with Redis's reply. Unknown-command and arity failures fall through so they
+// keep their own errors, as in Redis. An unimplemented policy (LFU/random/ttl)
+// parses as noeviction and so rejects rather than evicts.
+func (e *Executor) maxmemoryGate(req protocol.Request, out *protocol.Encoder) bool {
+	if e.maxmemory <= 0 || len(req) == 0 {
+		return false
+	}
+	cmd, ok := e.commands.Lookup(req[0])
+	if !ok || !cmd.accepts(len(req)) {
+		return false
+	}
+	if e.store.MemoryUsage().Total <= e.maxmemory {
+		return false
+	}
+	policy := evict.ParsePolicy(e.maxmemoryPolicy)
+	if policy.Evicts() {
+		e.performEvictions(policy)
+		if e.store.MemoryUsage().Total <= e.maxmemory {
+			return false
+		}
+	}
+	if !cmd.DenyOOM {
+		return false
+	}
+	out.Error(protocol.OutOfMemory)
+	return true
+}
+
+// performEvictions removes least-recently-used keys until the keyspace fits
+// maxmemory or nothing is evictable. Each round samples evict.Samples keys into
+// a bounded pool and evicts the most idle, as Redis's approximated LRU does.
+//
+// shortcut: MemoryUsage and the sampling are O(n) scans, so eviction is
+// O(n) per victim; maintain an incremental total if eviction under load becomes
+// measurable.
+func (e *Executor) performEvictions(policy evict.Policy) {
+	volatileOnly := policy.Volatile()
+	e.evictPool = evict.Pool{}
+	for e.store.MemoryUsage().Total > e.maxmemory {
+		for _, s := range e.store.SampleKeys(volatileOnly, evict.Samples) {
+			e.evictPool.Insert(s.Key, s.Idle)
+		}
+		key, idle, ok := e.evictPool.PopBest()
+		if !ok {
+			return
+		}
+		if !e.store.Delete(key) {
+			continue
+		}
+		if e.events != nil {
+			e.events.Emit(events.Event{
+				Version: events.Version,
+				Type:    events.Evict,
+				Key:     key,
+				Policy:  string(policy),
+				Idle:    idle,
+				Sampled: evict.Samples,
+			})
+		}
+	}
 }

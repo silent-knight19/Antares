@@ -22,7 +22,9 @@ const (
 // Value is a typed keyspace entry. String values use Str; list values use
 // List, where the live elements are List[ListHead:]. The unused prefix is
 // spare room for LPUSH. HashIndex/SetIndex map field/member bytes to their
-// slice position so bulk mutations do not rescan the whole collection.
+// slice position so bulk mutations do not rescan the whole collection. Lru is
+// the 24-bit access clock (seconds) used by approximated-LRU eviction; it is
+// refreshed on every lookup and write.
 type Value struct {
 	Kind      Kind
 	Str       []byte
@@ -32,6 +34,21 @@ type Value struct {
 	HashIndex map[string]int
 	Set       [][]byte
 	SetIndex  map[string]int
+	Lru       uint32
+}
+
+// LRU clock: 24 bits of seconds, as in Redis. It wraps every ~194 days, and the
+// idle time is computed modulo the mask so a wrap never reads as a huge age.
+const (
+	lruBits      = 24
+	lruClockMask = 1<<lruBits - 1
+)
+
+// Sample is one key offered to the eviction sampler: its name and seconds since
+// last access on the 24-bit clock.
+type Sample struct {
+	Key  string
+	Idle uint32
 }
 
 // HashEntry preserves Redis's small-hash insertion order.
@@ -66,6 +83,41 @@ func NewWithClock(c clock.Clock) *Store {
 // NowMs returns the current time from the store's injected clock.
 func (s *Store) NowMs() int64 { return s.clock.Now().UnixMilli() }
 
+// lruClock is the current time on the 24-bit seconds clock.
+func (s *Store) lruClock() uint32 { return uint32(s.clock.Now().Unix()) & lruClockMask }
+
+// SampleKeys returns up to n live-or-expired keys with their idle seconds,
+// choosing from all keys or only volatile (expiring) ones. Go's randomized map
+// iteration provides the sample, as approximated LRU intends. An idle time
+// that wrapped is reported modulo the clock mask.
+func (s *Store) SampleKeys(volatileOnly bool, n int) []Sample {
+	if n <= 0 {
+		return nil
+	}
+	now := s.lruClock()
+	out := make([]Sample, 0, n)
+	if volatileOnly {
+		for key := range s.expires {
+			v, ok := s.data[key]
+			if !ok {
+				continue
+			}
+			if len(out) == n {
+				break
+			}
+			out = append(out, Sample{Key: key, Idle: (now - v.Lru) & lruClockMask})
+		}
+		return out
+	}
+	for key, v := range s.data {
+		if len(out) == n {
+			break
+		}
+		out = append(out, Sample{Key: key, Idle: (now - v.Lru) & lruClockMask})
+	}
+	return out
+}
+
 // Mutations counts explicit keyspace writes. Expiry (lazy or active) is not a
 // command effect, so the executor can use this to decide whether to append.
 func (s *Store) Mutations() uint64 { return s.mutations }
@@ -91,6 +143,7 @@ func cloneValue(v Value) Value {
 		Kind:     v.Kind,
 		Str:      bytes.Clone(v.Str),
 		ListHead: v.ListHead,
+		Lru:      v.Lru,
 	}
 	if v.List != nil {
 		out.List = make([][]byte, len(v.List))
@@ -130,14 +183,14 @@ func (s *Store) Type(key string) string {
 
 // Set stores value under key and clears any previous expiry.
 func (s *Store) Set(key string, value []byte) {
-	s.data[key] = Value{Kind: KindString, Str: value}
+	s.data[key] = Value{Kind: KindString, Str: value, Lru: s.lruClock()}
 	delete(s.expires, key)
 	s.mutations++
 }
 
 // SetWithTTL stores value under key with an absolute Unix-millisecond expiry.
 func (s *Store) SetWithTTL(key string, value []byte, expiresAtMs int64) {
-	s.data[key] = Value{Kind: KindString, Str: value}
+	s.data[key] = Value{Kind: KindString, Str: value, Lru: s.lruClock()}
 	s.expires[key] = expiresAtMs
 	s.mutations++
 }
@@ -152,6 +205,9 @@ func (s *Store) SetPreservingTTL(key string, value Value) {
 	if value.Kind == KindSet && value.SetIndex == nil {
 		value.SetIndex = buildSetIndex(value.Set)
 	}
+	// Stamp the access clock here so a freshly created value never reads as
+	// maximally idle (handlers build Value literals with Lru unset).
+	value.Lru = s.lruClock()
 	s.data[key] = value
 	s.mutations++
 }
@@ -333,5 +389,7 @@ func (s *Store) live(key string) (Value, bool) {
 		s.expiredKeys++
 		return Value{}, false
 	}
+	value.Lru = s.lruClock()
+	s.data[key] = value
 	return value, true
 }
