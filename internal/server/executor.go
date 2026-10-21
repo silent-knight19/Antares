@@ -8,6 +8,7 @@ import (
 
 	"github.com/silent-knight19/antares/internal/clock"
 	"github.com/silent-knight19/antares/internal/expire"
+	"github.com/silent-knight19/antares/internal/metrics"
 	"github.com/silent-knight19/antares/internal/protocol"
 	"github.com/silent-knight19/antares/internal/store"
 )
@@ -29,6 +30,12 @@ type Executor struct {
 	hzChanged chan struct{}
 	clock     clock.Clock
 	expiry    *expire.Cycle
+	store     *store.Store
+	stats     *metrics.Stats
+	start     time.Time
+
+	maxmemory       int64
+	maxmemoryPolicy string
 
 	closeOnce sync.Once
 }
@@ -60,14 +67,18 @@ func newExecutor(st *store.Store, reg *Registry, active bool, c clock.Clock) *Ex
 		st = store.NewWithClock(c)
 	}
 	e := &Executor{
-		requests:  make(chan execRequest, requestQueueSize),
-		quit:      make(chan struct{}),
-		done:      make(chan struct{}),
-		active:    active,
-		hz:        defaultHz,
-		hzChanged: make(chan struct{}, 1),
-		clock:     c,
-		expiry:    expire.New(st, c),
+		requests:        make(chan execRequest, requestQueueSize),
+		quit:            make(chan struct{}),
+		done:            make(chan struct{}),
+		active:          active,
+		hz:              defaultHz,
+		hzChanged:       make(chan struct{}, 1),
+		clock:           c,
+		expiry:          expire.New(st, c),
+		store:           st,
+		stats:           metrics.New(DefaultMaxConns),
+		start:           c.Now(),
+		maxmemoryPolicy: "noeviction",
 	}
 	if reg == nil {
 		reg = NewRegistry()
@@ -78,11 +89,16 @@ func newExecutor(st *store.Store, reg *Registry, active bool, c clock.Clock) *Ex
 		registerTTLCommands(reg, st)
 		registerKeyspaceCommands(reg, st)
 		registerConfigCommands(reg, e)
+		registerInfoCommands(reg, e)
+		registerConnectionCommands(reg, e)
 	}
 	e.commands = reg
 	go e.loop()
 	return e
 }
+
+// Stats exposes the process counters INFO reports.
+func (e *Executor) Stats() *metrics.Stats { return e.stats }
 
 // Handle implements server.Handler: it queues the request and waits for the
 // executor to write the reply into out. A closed executor drops the request
@@ -189,4 +205,5 @@ func (e *Executor) run(req execRequest) {
 		close(req.done)
 	}()
 	e.commands.Dispatch(req.req, req.out)
+	e.stats.Commands.Add(1)
 }

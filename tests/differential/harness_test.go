@@ -14,7 +14,7 @@ func startAntares(t *testing.T) string {
 	t.Helper()
 	exec := server.NewExecutor(nil, nil)
 	t.Cleanup(exec.Close)
-	srv := server.New(server.Config{Addr: "127.0.0.1:0"}, exec.Handle)
+	srv := server.New(server.Config{Addr: "127.0.0.1:0", Stats: exec.Stats()}, exec.Handle)
 	if err := srv.Start(); err != nil {
 		t.Fatalf("start antares: %v", err)
 	}

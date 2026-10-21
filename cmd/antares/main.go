@@ -47,6 +47,7 @@ func main() {
 		Addr:        addr,
 		MaxConns:    *maxConns,
 		IdleTimeout: *idleTimeout,
+		Stats:       exec.Stats(),
 	}, exec.Handle)
 	if err := srv.Start(); err != nil {
 		logger.Error("listen failed", "addr", addr, "err", err)

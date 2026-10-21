@@ -46,6 +46,7 @@ func (s *Store) Scan(cursor uint64, count int, match func([]byte) bool, kind Kin
 			if at, ok := s.expires[key]; ok && now > at {
 				delete(s.data, key)
 				delete(s.expires, key)
+				s.expiredKeys++
 				continue
 			}
 			if filterKind && value.Kind != kind {

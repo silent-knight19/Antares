@@ -40,10 +40,11 @@ type HashEntry struct {
 }
 
 type Store struct {
-	data     map[string]Value
-	expires  map[string]int64
-	clock    clock.Clock
-	scanSeed maphash.Seed
+	data        map[string]Value
+	expires     map[string]int64
+	clock       clock.Clock
+	scanSeed    maphash.Seed
+	expiredKeys uint64
 }
 
 func New() *Store { return NewWithClock(clock.Real{}) }
@@ -150,6 +151,12 @@ func (s *Store) Exists(key string) bool {
 	return ok
 }
 
+// VolatileLen returns the physical number of keys with an expiry.
+func (s *Store) VolatileLen() int { return len(s.expires) }
+
+// ExpiredCount returns the number of keys removed by lazy or active expiry.
+func (s *Store) ExpiredCount() uint64 { return s.expiredKeys }
+
 // Len returns the physical key count, including expired keys not yet removed
 // by lazy access or the active cycle. This is Redis's DBSIZE semantics.
 func (s *Store) Len() int {
@@ -203,6 +210,7 @@ func (s *Store) ExpireSample(nowMs int64, limit int) (expired, sampled int) {
 		if nowMs > at {
 			delete(s.data, key)
 			delete(s.expires, key)
+			s.expiredKeys++
 			expired++
 		}
 	}
@@ -265,6 +273,7 @@ func (s *Store) live(key string) (Value, bool) {
 	if at, ok := s.expires[key]; ok && s.NowMs() > at {
 		delete(s.data, key)
 		delete(s.expires, key)
+		s.expiredKeys++
 		return Value{}, false
 	}
 	return value, true

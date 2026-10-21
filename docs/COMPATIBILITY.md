@@ -20,7 +20,7 @@ Rationale for pinning strategy: ADR-020 (tooling policy, digest pinning) and PLA
 
 | Claim | Verified by | Status |
 |---|---|---|
-| redis-cli works interactively and `redis-cli --stat` is clean | P5.3 + diff suite | pending |
+| redis-cli works interactively and `redis-cli --stat` is clean | P5.3 + diff suite | verified: `INFO` exposes the fields `--stat` reads, and `CONFIG GET databases` returns the two-element reply redis-cli requires; captured live against Antares |
 | go-redis differential: 0 mismatches across implemented commands | `make diff-test` (P2.6 → P9.1) | verified for the string, list, hash, set, TTL, keyspace, and SCAN surface (P5.2, 198 string/TTL + 91 list + 71 hash + 99 set + 171 cross-type + 240 sequence + 47 keyspace steps + 32 SCAN checks + expiry and lazy-read scenarios); expands each phase |
 | DBSIZE | unit tests (P3.2) | verified: O(1) physical key count, matching Redis `dictSize`; expired keys are counted until lazy access or the active cycle removes them |
 | SCAN | differential + invariant tests (P5.2) | verified: `COUNT` (>0, last option wins), case-insensitive `MATCH`/`TYPE`, unknown types returning no keys, cursor parsing including Redis's `string2ull` quirks, and pattern-before-expiry deletion. Full-iteration key sets match the reference for count/match/type combinations; growth/shrink tests prove termination and that keys present for the whole iteration are seen at least once. Cursor values and per-call batch composition are intentionally not byte-diffed because they depend on the hash table |
@@ -31,6 +31,7 @@ Rationale for pinning strategy: ADR-020 (tooling policy, digest pinning) and PLA
 | Cross-type WRONGTYPE and empty collections | differential matrix (P4.4) | verified: 171 cases apply every list/hash/set command to strings and the other collection types, string reads/writes to every collection, and every mutator that can empty a collection; replies, TYPE transitions, EXISTS, and TTL deletion match the reference |
 | Active expiry | fake-clock cycle tests (P3.3) | verified: samples 20 volatile keys, repeats while >25% expired, respects a per-cycle time budget, and never deletes live keys |
 | CONFIG hz | unit tests (P3.3) | verified: `CONFIG GET hz` and `CONFIG SET hz` match Redis's 32-bit range validation, 1–500 clamp, parse errors, and timer reset |
+| INFO / CONFIG allowlist / HELLO / CLIENT | unit + differential tests (P5.3) | verified: every default INFO section is present in Redis's order, `all`/`everything` add the command/latency sections, unknown sections return an empty bulk, and keyspace lines match for empty/db0. `CONFIG GET` handles glob and multiple parameters over a 9-item allowlist; `CONFIG SET` validates and applies `hz`, `maxmemory`, `maxmemory-policy`, and `maxclients` (including Redis's memory units and exact error bodies). `HELLO 2` returns the RESP2 handshake and rejects other protocol versions; `CLIENT ID`/`SETNAME`/`SETINFO`/`INFO`/`LIST` answer without transport errors. Differential compares key INFO fields, section filtering, CONFIG values, and CLIENT handshakes against the pinned reference |
 | Selected official Tcl `unit/expire` subset passes | `make tcl-expire` (P3.4, extended P4.1) | verified: 39 tests pass, 28 unselected tests skipped (commands not yet implemented) |
 | Selected official Tcl `unit/type/incr` subset passes | `make tcl-incr` (P4.5) | verified: 26 tests pass, 7 skipped (OBJECT/DEBUG/SETRANGE-dependent tests not selected) |
 | Official Tcl `unit/expire` and `unit/type/incr` fully pass | `make tcl` (P9.2) | pending |
@@ -43,13 +44,13 @@ Rationale for pinning strategy: ADR-020 (tooling policy, digest pinning) and PLA
 | Divergence | Observable behavior | Decision |
 |---|---|---|
 | WATCH semantics | Value-snapshot compare: a write followed by restoring identical bytes does **not** abort EXEC (real Redis aborts). All realistic patterns behave the same | ADR-008 |
-| RESP3 | `HELLO` is not implemented yet (returns the standard unknown-command error); RESP3-only client behaviors unavailable | ADR-003; stub planned for P5.3 |
+| RESP3 | `HELLO 2` is supported, but any other protocol version returns `NOPROTO`; RESP3-only client behaviors remain unavailable | ADR-003; RESP2 is the only wire protocol |
 | COMMAND introspection | `COMMAND`, `COMMAND DOCS`, and `COMMAND INFO` return an empty array; redis-cli connects and runs interactively, but command hints/completion are empty | P2.1 stub (PLAN §5); full metadata is out of scope |
-| CONFIG surface | Only `CONFIG GET hz` and `CONFIG SET hz` are implemented; other parameters return an empty GET result or `Unknown option`, rather than Redis's full config matrix | P3.3 partial; full allowlist at P5.3 |
-| SET EXAT/PXAT | Redis accepts the absolute-expiry SET options; Antares returns `ERR syntax error` because P2.3 scope is EX/PX | PLAN §5 P2.3; revisit at P5.3 |
+| CONFIG surface | `CONFIG GET` covers a deliberate 9-parameter allowlist (`hz`, `maxmemory`, `maxmemory-policy`, `maxclients`, `proto-max-bulk-len`, `client-query-buffer-limit`, `databases`, `appendonly`, `save`); `CONFIG SET` accepts only `hz`, `maxmemory`, `maxmemory-policy`, and `maxclients`. Other names return an empty GET result or `Unknown option`, not Redis's 404-parameter matrix | P5.3 allowlist; unsupported knobs stay immutable |
+| SET EXAT/PXAT | Redis accepts the absolute-expiry SET options; Antares returns `ERR syntax error` because P2.3 scope is EX/PX | PLAN §5 P2.3; remains out of scope |
 | LSET index truncation | Indices outside the C `int` range are rejected with `ERR index out of range`; Redis truncates them to a 32-bit `int` (for example `4294967295` becomes `-1` and updates the tail) | Intentional safety choice: Antares keeps `int64` indices and treats C truncation as a Redis bug rather than compatibility |
-| INCRBYFLOAT precision | Antares always computes with IEEE binary128 (113-bit mantissa), matching C `long double` on the pinned aarch64 reference. On x86-64 Redis uses 80-bit `long double`, so its last printed digits can differ from this build | ADR-021; required for bit-exact parity with the pinned oracle |
-| Runtime request limit | `proto-max-bulk-len` is fixed at 512 MiB, and each request has a 1 GiB aggregate budget (payload plus 32 bytes per argument, Redis's default `client-query-buffer-limit`); a larger request closes the connection without a reply. `CONFIG SET` for either limit is unavailable until the P5.3 CONFIG allowlist | PLAN §5 P5.3; revisit with CONFIG support |
+| INCRBYFLOAT precision | Antares selects the reference's C `long double` ABI by `GOARCH`: 64-bit x87 on amd64/386 and IEEE binary128 on arm64, with matching exponent ranges. A non-Linux host Redis (macOS `long double` is double) may print different last digits | ADR-021; required for bit-exact parity with the Linux reference container on both CI architectures |
+| Runtime request limit | `proto-max-bulk-len` is fixed at 512 MiB, and each request has a 1 GiB aggregate budget (payload plus 32 bytes per argument, Redis's default `client-query-buffer-limit`); a larger request closes the connection without a reply. Both values are visible through `CONFIG GET` but cannot be changed yet | P5.3 exposes them read-only; revisit if dynamic limits become necessary |
 | Tcl coverage | `make tcl-expire` runs a 39-test allowlist and `make tcl-incr` a 26-test allowlist; tests requiring commands beyond the current surface (SETEX/PSETEX/GETEX, SETRANGE, EXPIRETIME, DEBUG/OBJECT, HSCAN/SSCAN/ZSCAN, AOF/repl, cluster) are skipped until their phases | PLAN §5 P3.4/P4.5/P9.2 |
 | Persistence file formats | Framed AOF and framed snapshot stream are **not** Redis-compatible files: Antares cannot load existing `.rdb`/`.aof`, and Redis cannot load ours | ADR-004, ADR-007 |
 | Value encodings | No listpack/intset/embstr encodings (non-goal); the exact `OBJECT ENCODING` surface will be decided at P2/P5 and documented here when it lands | ADR-012 |
@@ -59,6 +60,9 @@ Rationale for pinning strategy: ADR-020 (tooling policy, digest pinning) and PLA
 | Slow clients | When `-idle-timeout` is set, a connection blocked writing to a client that stopped reading is closed after that period (default 0 = no bound); real Redis's default never closes a slow client and buffers output unboundedly | ADR-002 goroutine-per-conn model; revisit with output-buffer caps at S2.3 |
 | Random reply size | `HRANDFIELD`/`SRANDMEMBER` counts that would build more than 1,000,000 reply elements return `ERR count is out of range`; Redis builds the full reply | Bounded random-reply guard (P4.2/P4.3); revisit with client-output-buffer limits |
 | FLUSHDB/FLUSHALL ASYNC | Both `ASYNC` and `SYNC` are accepted and reply `OK`, but Antares frees the keyspace synchronously (no lazy-free worker); replies and post-flush visibility match Redis | P5.1: single keyspace and no lazy-free thread yet; revisit if flush latency becomes observable |
+| INFO values | `redis_version` reports `7.4.11`, but memory values come from the Go runtime, persistence/CPU/command/latency stats are zero or empty until their phases, and only `db0` exists (`databases` still reports 16 for redis-cli compatibility; `SELECT` is not implemented). `CONFIG GET save` reports the reference default schedule, not an active persistence configuration | ADR-022; replace with logical accounting at P7.1 and real sections as phases land |
+| CLIENT state | `CLIENT SETNAME`/`SETINFO` validate and accept values but do not persist per-connection state; `GETNAME` is always nil, `ID` is always 1, and `LIST`/`INFO` are synthetic single-client views. There is no tracking, reply mode, kill, or pause behavior | ADR-022; a real per-connection client table arrives with client-output handling/replication |
+| CONFIG mutations and limits | `CONFIG SET maxmemory`/`maxmemory-policy`/`maxclients` are stored; `maxmemory`/policy are not enforced until eviction (P7.2/P7.3), and `maxclients` caps new accepts immediately. `appendonly`, `save`, `proto-max-bulk-len`, and `client-query-buffer-limit` are GET-only. `save` reports Redis's default schedule even though persistence is not implemented yet | ADR-022; enforcement follows the phase that owns each subsystem |
 
 ## Known implementation limits
 
@@ -68,9 +72,9 @@ Rationale for pinning strategy: ADR-020 (tooling policy, digest pinning) and PLA
 
 ## Open questions (decide at the phase noted)
 
-- What should `INFO server` report as `redis_version`? A 7.4-compatible string (some clients gate features on it) vs a suffixed identifier. Decide at P5.3 with go-redis behavior evidence.
+- INFO `redis_version` reports `7.4.11` so clients gate features for the surface Antares actually implements; section content follows ADR-022.
 - OOM error strings must match Redis captures — P7.2 (protocol and command error strings were pinned by live capture at P1.5 and extended at the P1 audit: unknown command incl. 128-byte name and args truncation, arity, `-ERR Protocol error: …` incl. raw non-ASCII byte passthrough, CRLF sanitization, over-cap connection refusal).
-- `HELLO` reply shape vs client expectations (go-redis, Jedis) — P5.3 differential.
+- `HELLO 2` matches the RESP2 array shape go-redis/redis-cli expect; RESP3 negotiation is deliberately unavailable.
 
 ## Licensing & safety note
 

@@ -1,6 +1,7 @@
 package server
 
 import (
+	"math/big"
 	"strings"
 	"testing"
 	"time"
@@ -393,6 +394,19 @@ func TestIncrByFloat(t *testing.T) {
 	got := runStrings(exec, "INCRBYFLOAT", "huge", "1.189731495357231765e4932")
 	if len(got) != len("$4933\r\n")+4933+2 || got[len("$4933\r\n"):len("$4933\r\n")+19] != "1189731495357231765" {
 		t.Fatalf("INCRBYFLOAT huge = %q... (len %d)", got[:40], len(got))
+	}
+}
+
+func TestIncrByFloatSubnormalBoundary(t *testing.T) {
+	half := hostLongDouble.halfMin
+	low := new(big.Float).SetPrec(half.Prec()).Mul(half, big.NewFloat(0.75))
+	high := new(big.Float).SetPrec(half.Prec()).Mul(half, big.NewFloat(2))
+	exec := newStringExec(t)
+	if got := runStrings(exec, "INCRBYFLOAT", "low", low.Text('p', 0)); got != "-ERR value is not a valid float\r\n" {
+		t.Fatalf("below half-min = %q", got)
+	}
+	if got := runStrings(exec, "INCRBYFLOAT", "high", high.Text('p', 0)); got != "$1\r\n0\r\n" {
+		t.Fatalf("min subnormal = %q", got)
 	}
 }
 

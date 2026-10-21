@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/silent-knight19/antares/internal/metrics"
 	"github.com/silent-knight19/antares/internal/protocol"
 )
 
@@ -32,6 +33,7 @@ type Config struct {
 	Addr        string
 	MaxConns    int
 	IdleTimeout time.Duration
+	Stats       *metrics.Stats
 }
 
 type Server struct {
@@ -61,6 +63,9 @@ func New(cfg Config, handler Handler) *Server {
 	if cfg.MaxConns == 0 {
 		cfg.MaxConns = DefaultMaxConns
 	}
+	if cfg.Stats != nil {
+		cfg.Stats.MaxClients.Store(int64(cfg.MaxConns))
+	}
 	return &Server{
 		cfg:      cfg,
 		handler:  handler,
@@ -83,6 +88,9 @@ func (s *Server) Start() error {
 	}
 	s.ln = ln
 	s.mu.Unlock()
+	if s.cfg.Stats != nil {
+		s.cfg.Stats.SetAddr(ln.Addr().String())
+	}
 
 	s.wg.Add(1)
 	go s.acceptLoop()
@@ -172,8 +180,13 @@ func (s *Server) acceptLoop() {
 			continue
 		}
 
+		maxConns := s.cfg.MaxConns
+		if s.cfg.Stats != nil {
+			maxConns = int(s.cfg.Stats.MaxClients.Load())
+		}
+
 		s.mu.Lock()
-		if s.stopped || (s.cfg.MaxConns > 0 && len(s.conns) >= s.cfg.MaxConns) {
+		if s.stopped || (maxConns > 0 && len(s.conns) >= maxConns) {
 			stopped := s.stopped
 			s.mu.Unlock()
 			if !stopped {
@@ -185,6 +198,9 @@ func (s *Server) acceptLoop() {
 		}
 		s.conns[conn] = struct{}{}
 		s.mu.Unlock()
+		if s.cfg.Stats != nil {
+			s.cfg.Stats.ConnectionOpened()
+		}
 
 		s.wg.Add(1)
 		go s.serveConn(conn)
@@ -197,10 +213,13 @@ func (s *Server) serveConn(conn net.Conn) {
 		s.mu.Lock()
 		delete(s.conns, conn)
 		s.mu.Unlock()
+		if s.cfg.Stats != nil {
+			s.cfg.Stats.ConnectionClosed()
+		}
 		conn.Close()
 	}()
 
-	ic := &connIO{Conn: conn, timeout: s.cfg.IdleTimeout}
+	ic := &connIO{Conn: conn, timeout: s.cfg.IdleTimeout, stats: s.cfg.Stats}
 	bw := bufio.NewWriter(ic)
 	ic.bw = bw
 	br := bufio.NewReaderSize(ic, readBufferSize)
@@ -243,6 +262,7 @@ type connIO struct {
 	net.Conn
 	timeout time.Duration
 	bw      *bufio.Writer
+	stats   *metrics.Stats
 }
 
 func (c *connIO) Read(p []byte) (int, error) {
@@ -254,14 +274,22 @@ func (c *connIO) Read(p []byte) (int, error) {
 	if c.timeout > 0 {
 		c.Conn.SetReadDeadline(time.Now().Add(c.timeout))
 	}
-	return c.Conn.Read(p)
+	n, err := c.Conn.Read(p)
+	if c.stats != nil {
+		c.stats.AddNetInput(n)
+	}
+	return n, err
 }
 
 func (c *connIO) Write(p []byte) (int, error) {
 	if c.timeout > 0 {
 		c.Conn.SetWriteDeadline(time.Now().Add(c.timeout))
 	}
-	return c.Conn.Write(p)
+	n, err := c.Conn.Write(p)
+	if c.stats != nil {
+		c.stats.AddNetOutput(n)
+	}
+	return n, err
 }
 
 func (s *Server) forceCloseConns() bool {

@@ -9,13 +9,13 @@ import (
 const (
 	inlineMaxSize   = 64 * 1024         // PROTO_INLINE_MAX_SIZE
 	maxMultibulkLen = 1<<31 - 1         // Redis rejects multibulk counts past INT_MAX
-	maxBulkLen      = 512 * 1024 * 1024 // proto-max-bulk-len default
+	MaxBulkLen      = 512 * 1024 * 1024 // proto-max-bulk-len default
 	bulkReadCap     = 64 * 1024         // chunk size/growth start for payloads above this
 
 	// maxRequestBytes mirrors Redis's client-query-buffer-limit default.
 	// requestArgOverhead accounts for the slice/argument bookkeeping that
 	// survives after the payload is read.
-	maxRequestBytes    = 1 << 30
+	MaxRequestBytes    = 1 << 30
 	requestArgOverhead = 32
 )
 
@@ -65,7 +65,7 @@ func ReadRequest(br *bufio.Reader) (Request, error) {
 // readMultibulk parses "*<count>\r\n" plus count bulk strings. skip mirrors
 // Redis: count <= 0 consumes the header and nothing else.
 func readMultibulk(br *bufio.Reader) (Request, bool, error) {
-	return readMultibulkLimit(br, maxRequestBytes)
+	return readMultibulkLimit(br, MaxRequestBytes)
 }
 
 func readMultibulkLimit(br *bufio.Reader, budget int64) (Request, bool, error) {
@@ -117,7 +117,7 @@ func readBulk(br *bufio.Reader, budget int64) ([]byte, error) {
 		return nil, &ProtocolError{Msg: "expected '$', got '" + string([]byte{got}) + "'"}
 	}
 	n, ok := parseCount(line[1:])
-	if !ok || n < 0 || n > maxBulkLen {
+	if !ok || n < 0 || n > MaxBulkLen {
 		return nil, &ProtocolError{Msg: "invalid bulk length"}
 	}
 	if n > budget {

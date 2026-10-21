@@ -506,23 +506,54 @@
 
 ---
 
-## ADR-021 — INCRBYFLOAT uses IEEE binary128 to match the pinned aarch64 oracle
-- Date: 2026-10-20 · Phase: P2.4 · Status: Accepted
-- Context: Redis implements INCRBYFLOAT with C `long double` parsing (`strtold`), addition, and `%.17Lf` output with trailing-zero trimming. C `long double` is platform-dependent: 80-bit extended on x86-64, but IEEE binary128 (113-bit mantissa) on the pinned Linux/aarch64 reference container. Go's native `float64` has a 53-bit mantissa and diverges from Redis within the 17 digits it prints.
+## ADR-021 — INCRBYFLOAT matches the reference Redis long-double ABI per GOARCH
+- Date: 2026-10-20 · amended 2026-10-21 · Phase: P2.4/P5.3 · Status: Accepted
+- Context: Redis implements INCRBYFLOAT with C `long double` parsing (`strtold`), addition, and `%.17Lf` output with trailing-zero trimming. C `long double` is platform-dependent: 80-bit x87 extended (64-bit significand) on amd64/386, but IEEE binary128 (113-bit significand) on arm64 Linux. Go's native `float64` has a 53-bit mantissa and diverges within the 17 printed digits. CI runs the pinned Redis image on amd64; the original binary128-only implementation matched the aarch64 oracle but failed `TestDiffStrings/float_huge` on amd64.
 - Options:
   - A. `float64` arithmetic and `strconv.FormatFloat`.
-  - B. `math/big.Float` with 113-bit precision, binary128 range checks, and Redis's formatting.
-  - C. Detect the reference architecture and switch between 64- and 113-bit precision.
-- Decision: B — binary128, always.
+  - B. `math/big.Float` with 113-bit precision, binary128 only.
+  - C. `math/big.Float` with precision, exponent range, and rounding selected from the reference's C `long double` ABI for the build architecture.
+- Decision: C — 64-bit x87 precision/range on amd64/386, 113-bit binary128 on arm64. The reference is the pinned Linux Redis container, so the selection follows `GOARCH`, not the host OS; a macOS-arm64 development build still targets the aarch64 reference.
 - Why chosen:
-  - The differential oracle is the digest-pinned aarch64 container; its observed outputs (including the exact 4933-digit expansion of `1e4932`) are reproduced byte-for-byte.
-  - A deterministic implementation is easier to test and reason about than one that changes with the host CPU.
-  - 756 randomized differential checks plus edge cases (hex floats, subnormals, overflow, 5119-byte inputs) produced zero mismatches.
+  - The differential oracle is the Linux container for the same architecture: x87 on amd64 CI, binary128 on aarch64. `make diff-test` therefore behaves like CI on both Apple Silicon and x86 hosts.
+  - `big.Float` with the matching precision reproduces `strtold` rounding and the 4933-digit `1e4932` expansion byte-for-byte on both architectures (checked directly against `redis:7.4.11` amd64 and arm64).
+  - The previous binary128-only decision broke CI as soon as the reference ran on amd64; selecting the ABI removes the architecture assumption instead of hiding the mismatch.
 - Why rejected:
   - A: fails parity at the 17th decimal on values the reference prints exactly.
-  - C: adds architecture-detection complexity for no benefit while the oracle is pinned; Redis itself is the platform-dependent side.
-- Trade-offs accepted: if the reference image moves to x86-64, Antares's last printed digits may differ from that Redis; the divergence is documented in COMPATIBILITY and the ADR must be revisited with the digest bump.
-- Revisit if: the reference architecture changes, or compatibility is claimed against a non-aarch64 Redis.
+  - B: correct on aarch64 but wrong on the amd64 reference (the committed CI failure).
+- Trade-offs accepted: INCRBYFLOAT output follows the build architecture, just as Redis does. A non-Linux host Redis (for example macOS, whose `long double` is double) can differ; the documented oracle is the Linux container. Range constants must stay in sync with the selected ABI.
+- Revisit if: the reference image architecture set changes, or compatibility is claimed against a non-Linux Redis.
 - Interview Q&A:
-  - "Why not just use float64?" → Redis prints 17 decimals from an 80/128-bit C long double; float64 drifts, so the diff suite catches it. I matched the oracle's binary128 with `big.Float` and verified with randomized differential tests.
-- Proof: `internal/server/string_commands.go` (`parseLongDouble`, `formatLongDouble`); P2.4 differential evidence in PROJECT_LOG; COMPATIBILITY precision row.
+  - "Why not just use float64?" → Redis prints 17 decimals from an 80/128-bit C long double; float64 drifts, so the diff suite catches it. I match the reference ABI with `big.Float` and verify the huge expansion on each architecture.
+  - "Why not always binary128?" → CI runs amd64 Redis with x87 extended precision; binary128 failed the huge-float differential there.
+- Proof: `internal/server/string_commands.go` (`newLongDoubleFormat`, `parseLongDouble`, `formatLongDouble`); P2.4/P5.3 differential evidence in PROJECT_LOG; COMPATIBILITY precision row.
+
+
+---
+
+## ADR-022 — INFO identity, CONFIG allowlist, and connection stubs are honest compatibility surfaces
+- Date: 2026-10-21 · Phase: P5.3 · Status: Accepted
+- Context: redis-cli and go-redis call `INFO`, `HELLO`, `CLIENT`, and `CONFIG` during normal operation. `redis-cli --stat` in particular asserts on `CONFIG GET databases` and then polls INFO fields; without these surfaces the server is usable per command but not through standard tooling. Persistence, eviction, and per-client state do not exist yet, so a full Redis INFO/CONFIG/CLIENT implementation would report values the server cannot honor.
+- Options:
+  - A. Report only a minimal `redis_version`, skip INFO/CONFIG/CLIENT until later phases, and keep redis-cli interactive only.
+  - B. Mirror Redis's full INFO fields and 404-parameter CONFIG matrix, with placeholder values for unimplemented subsystems.
+  - C. Implement a truthful compatibility surface: pinned version identity, real sections with zeros for future subsystems, a documented CONFIG allowlist, a RESP2-only HELLO handshake, and CLIENT stubs that accept common redis-cli/go-redis calls without pretending to track per-client state.
+- Decision: C.
+  - `INFO` reports `redis_version:7.4.11`, `redis_mode:standalone`, role `master`, and Redis's section order. Memory comes from Go's runtime until P7.1; persistence/CPU/command/latency stats stay zero/empty until their phases; only `db0` can contain keys.
+  - `CONFIG GET` covers nine parameters; `CONFIG SET` covers `hz`, `maxmemory`, `maxmemory-policy`, and `maxclients`. `save` reports Redis's default schedule but persistence does not land until P6. `maxmemory` and policy are stored but not enforced until P7.2/P7.3; `maxclients` takes effect immediately; the remaining five are GET-only.
+  - `HELLO 2` returns the RESP2 array; every other protocol version returns `NOPROTO`. RESP3 remains out of scope.
+  - CLIENT ID/GETNAME/SETNAME/SETINFO/INFO/LIST/GETREDIR/NO-EVICT/NO-TOUCH/UNPAUSE are a transport-safe stub. SETNAME/SETINFO validate, but no name or library metadata is stored; ID is 1; LIST/INFO are synthetic.
+  - `CONFIG GET databases` reports 16 to satisfy redis-cli, while SELECT is not implemented; this is documented rather than silently exposed.
+- Why chosen:
+  - `redis-cli --stat` now runs clean, and go-redis's identity handshake succeeds, without claiming persistence, eviction, or per-client tracking that does not exist.
+  - A fixed allowlist makes every mutable value reviewable and avoids a fake 404-parameter config tree.
+  - Reporting 7.4.11 lets clients enable features that Antares actually implements, while zero/empty sections are an honest signal for the rest.
+- Why rejected:
+  - A: breaks standard tooling and the P5.3 exit criterion.
+  - B: would require placeholders for subsystems and per-client state, turning INFO into a compatibility lie and multiplying test surface.
+- Trade-offs accepted: INFO memory will change source at P7.1; CLIENT state is absent until the client table lands with output buffering/replication; maxmemory is visible before it is enforced; `databases=16` is a deliberate redis-cli accommodation, not a claim that 16 databases work.
+- Revisit if: a client depends on CLIENT name round-trips, RESP3, or CONFIG parameters outside the allowlist; replace the stubs rather than widening the allowlist without an owner.
+- Interview Q&A:
+  - "Why not implement all of INFO/CONFIG?" → clients need the surface, not the lie; I exposed real sections and a small allowlist, and pushed enforcement to the phases that own it.
+  - "How do you keep compatibility honest?" → the pinned version, zeroed future stats, documented divergences in COMPATIBILITY, and differential tests on the fields that are actually stable.
+- Proof: `internal/server/info_commands.go`, `config_commands.go`, `connection_commands.go`, `internal/metrics/stats.go`; `tests/differential/info_diff_test.go`; clean live `redis-cli --stat` capture; COMPATIBILITY rows for INFO/CLIENT/CONFIG.

@@ -3,6 +3,7 @@ package server
 import (
 	"math"
 	"math/big"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -306,22 +307,37 @@ func decrByCommand(st *store.Store, args [][]byte, out *protocol.Encoder) {
 	incrDecrCommand(st, args[0], -incr, out)
 }
 
-const (
-	longDoublePrec     = 113
-	maxLongDoubleChars = 5 * 1024
-)
+const maxLongDoubleChars = 5 * 1024
 
-var (
-	longDoubleMax = func() *big.Float {
-		n := new(big.Int).Lsh(big.NewInt(1), 16384)
-		n.Sub(n, new(big.Int).Lsh(big.NewInt(1), 16384-longDoublePrec))
-		return new(big.Float).SetPrec(longDoublePrec).SetInt(n)
-	}()
-	longDoubleHalfMin = new(big.Float).SetPrec(longDoublePrec).SetMantExp(big.NewFloat(0.5), -16494)
-)
+// longDoubleFormat describes the C long double ABI of the pinned Linux
+// reference: x87 extended (64-bit significand) on amd64/386 and IEEE
+// binary128 on arm64. The host OS does not matter; make diff-test runs the
+// reference container for the same GOARCH.
+type longDoubleFormat struct {
+	prec    uint
+	max     *big.Float
+	halfMin *big.Float
+}
 
-// parseLongDouble mirrors Redis's string2ld: C long double is binary128 on
-// aarch64, so 113 bits reproduce its parsing and rounding here.
+var hostLongDouble = newLongDoubleFormat()
+
+func newLongDoubleFormat() longDoubleFormat {
+	prec, maxExp, minSubExp := uint(113), 16384, -16494
+	switch runtime.GOARCH {
+	case "amd64", "386":
+		prec, maxExp, minSubExp = 64, 16384, -16445
+	}
+	max := new(big.Int).Lsh(big.NewInt(1), uint(maxExp))
+	max.Sub(max, new(big.Int).Lsh(big.NewInt(1), uint(maxExp)-prec))
+	return longDoubleFormat{
+		prec: prec,
+		max:  new(big.Float).SetPrec(prec).SetInt(max),
+		// At or below half the minimum subnormal, strtold rounds to zero.
+		halfMin: new(big.Float).SetPrec(prec).SetMantExp(big.NewFloat(0.5), minSubExp),
+	}
+}
+
+// parseLongDouble mirrors Redis's string2ld using the host long double ABI.
 func parseLongDouble(b []byte) (*big.Float, bool) {
 	if len(b) == 0 || len(b) >= maxLongDoubleChars {
 		return nil, false
@@ -341,7 +357,7 @@ func parseLongDouble(b []byte) (*big.Float, bool) {
 	}
 	lower := strings.ToLower(body)
 	if lower == "inf" || lower == "infinity" {
-		return new(big.Float).SetPrec(longDoublePrec).SetInf(negative), true
+		return new(big.Float).SetPrec(hostLongDouble.prec).SetInf(negative), true
 	}
 	if strings.HasPrefix(lower, "nan") {
 		return nil, false
@@ -353,7 +369,7 @@ func parseLongDouble(b []byte) (*big.Float, bool) {
 			s += "p0"
 		}
 	}
-	f, _, err := big.ParseFloat(s, base, longDoublePrec, big.ToNearestEven)
+	f, _, err := big.ParseFloat(s, base, hostLongDouble.prec, big.ToNearestEven)
 	if err != nil {
 		return nil, false
 	}
@@ -404,7 +420,7 @@ func inLongDoubleRange(f *big.Float) bool {
 		return true
 	}
 	abs := new(big.Float).SetPrec(f.Prec()).Abs(f)
-	return abs.Cmp(longDoubleMax) <= 0 && abs.Cmp(longDoubleHalfMin) > 0
+	return abs.Cmp(hostLongDouble.max) <= 0 && abs.Cmp(hostLongDouble.halfMin) > 0
 }
 
 func longDoubleOverflows(f *big.Float) bool {
@@ -415,7 +431,7 @@ func longDoubleOverflows(f *big.Float) bool {
 		return false
 	}
 	abs := new(big.Float).SetPrec(f.Prec()).Abs(f)
-	return abs.Cmp(longDoubleMax) > 0
+	return abs.Cmp(hostLongDouble.max) > 0
 }
 
 func formatLongDouble(f *big.Float) string {
@@ -432,7 +448,7 @@ func formatLongDouble(f *big.Float) string {
 
 func incrByFloatCommand(st *store.Store, args [][]byte, out *protocol.Encoder) {
 	key := string(args[0])
-	current := new(big.Float).SetPrec(longDoublePrec)
+	current := new(big.Float).SetPrec(hostLongDouble.prec)
 	value, exists, errMsg := stringValue(st, key)
 	if errMsg != "" {
 		out.Error(errMsg)
@@ -457,7 +473,7 @@ func incrByFloatCommand(st *store.Store, args [][]byte, out *protocol.Encoder) {
 		out.Error(protocol.FloatResult)
 		return
 	}
-	result := new(big.Float).SetPrec(longDoublePrec).Add(current, incr)
+	result := new(big.Float).SetPrec(hostLongDouble.prec).Add(current, incr)
 	if longDoubleOverflows(result) {
 		out.Error(protocol.FloatResult)
 		return
