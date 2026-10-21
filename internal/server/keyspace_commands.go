@@ -11,6 +11,9 @@ func registerKeyspaceCommands(reg *Registry, st *store.Store) {
 	reg.Register(Command{Name: "keys", Arity: 2, Handler: func(args [][]byte, out *protocol.Encoder) {
 		keysCommand(st, args, out)
 	}})
+	reg.Register(Command{Name: "scan", Arity: -2, Handler: func(args [][]byte, out *protocol.Encoder) {
+		scanCommand(st, args, out)
+	}})
 	reg.Register(Command{Name: "rename", Arity: 3, Handler: func(args [][]byte, out *protocol.Encoder) {
 		renameCommand(st, args, out, false)
 	}})

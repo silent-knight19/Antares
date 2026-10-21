@@ -1,6 +1,10 @@
 package store
 
-import "github.com/silent-knight19/antares/internal/clock"
+import (
+	"hash/maphash"
+
+	"github.com/silent-knight19/antares/internal/clock"
+)
 
 // Store is the keyspace owned by the executor goroutine. It has no locks:
 // ADR-002 makes that goroutine the only accessor. Expiries live in a separate
@@ -36,9 +40,10 @@ type HashEntry struct {
 }
 
 type Store struct {
-	data    map[string]Value
-	expires map[string]int64
-	clock   clock.Clock
+	data     map[string]Value
+	expires  map[string]int64
+	clock    clock.Clock
+	scanSeed maphash.Seed
 }
 
 func New() *Store { return NewWithClock(clock.Real{}) }
@@ -48,9 +53,10 @@ func NewWithClock(c clock.Clock) *Store {
 		c = clock.Real{}
 	}
 	return &Store{
-		data:    make(map[string]Value),
-		expires: make(map[string]int64),
-		clock:   c,
+		data:     make(map[string]Value),
+		expires:  make(map[string]int64),
+		clock:    c,
+		scanSeed: maphash.MakeSeed(),
 	}
 }
 
