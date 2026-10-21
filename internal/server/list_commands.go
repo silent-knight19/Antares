@@ -9,16 +9,16 @@ import (
 )
 
 func registerListCommands(reg *Registry, st *store.Store) {
-	reg.Register(Command{Name: "lpush", Arity: -3, Handler: func(args [][]byte, out *protocol.Encoder) {
+	reg.Register(Command{Name: "lpush", Write: true, Arity: -3, Handler: func(args [][]byte, out *protocol.Encoder) {
 		pushList(st, args, true, out)
 	}})
-	reg.Register(Command{Name: "rpush", Arity: -3, Handler: func(args [][]byte, out *protocol.Encoder) {
+	reg.Register(Command{Name: "rpush", Write: true, Arity: -3, Handler: func(args [][]byte, out *protocol.Encoder) {
 		pushList(st, args, false, out)
 	}})
-	reg.Register(Command{Name: "lpop", Arity: -2, Handler: func(args [][]byte, out *protocol.Encoder) {
+	reg.Register(Command{Name: "lpop", Write: true, Arity: -2, Handler: func(args [][]byte, out *protocol.Encoder) {
 		popList(st, args, true, "lpop", out)
 	}})
-	reg.Register(Command{Name: "rpop", Arity: -2, Handler: func(args [][]byte, out *protocol.Encoder) {
+	reg.Register(Command{Name: "rpop", Write: true, Arity: -2, Handler: func(args [][]byte, out *protocol.Encoder) {
 		popList(st, args, false, "rpop", out)
 	}})
 	reg.Register(Command{Name: "lrange", Arity: 4, Handler: func(args [][]byte, out *protocol.Encoder) {
@@ -30,13 +30,13 @@ func registerListCommands(reg *Registry, st *store.Store) {
 	reg.Register(Command{Name: "lindex", Arity: 3, Handler: func(args [][]byte, out *protocol.Encoder) {
 		lindexCommand(st, args, out)
 	}})
-	reg.Register(Command{Name: "lset", Arity: 4, Handler: func(args [][]byte, out *protocol.Encoder) {
+	reg.Register(Command{Name: "lset", Write: true, Arity: 4, Handler: func(args [][]byte, out *protocol.Encoder) {
 		lsetCommand(st, args, out)
 	}})
-	reg.Register(Command{Name: "lrem", Arity: 4, Handler: func(args [][]byte, out *protocol.Encoder) {
+	reg.Register(Command{Name: "lrem", Write: true, Arity: 4, Handler: func(args [][]byte, out *protocol.Encoder) {
 		lremCommand(st, args, out)
 	}})
-	reg.Register(Command{Name: "ltrim", Arity: 4, Handler: func(args [][]byte, out *protocol.Encoder) {
+	reg.Register(Command{Name: "ltrim", Write: true, Arity: 4, Handler: func(args [][]byte, out *protocol.Encoder) {
 		ltrimCommand(st, args, out)
 	}})
 }

@@ -91,7 +91,7 @@ func (e *Executor) infoSection(name string) string {
 	case "memory":
 		e.memoryInfo(&b)
 	case "persistence":
-		persistenceInfo(&b)
+		e.persistenceInfo(&b)
 	case "stats":
 		e.statsInfo(&b)
 	case "replication":
@@ -232,7 +232,26 @@ func (e *Executor) memoryInfo(b *strings.Builder) {
 	field(b, "mem_allocator", "go")
 }
 
-func persistenceInfo(b *strings.Builder) {
+func (e *Executor) persistenceInfo(b *strings.Builder) {
+	aofEnabled := 0
+	aofRewriting := 0
+	rewrites := uint64(0)
+	currentSize := int64(0)
+	baseSize := int64(0)
+	lastStatus := "ok"
+	if stats, ok := e.AOFStats(); ok {
+		aofEnabled = 1
+		rewrites = stats.Rewrites
+		currentSize = stats.CurrentSize
+		baseSize = stats.BaseSize
+		if !stats.LastWriteOK {
+			lastStatus = "err"
+		}
+	}
+	if e.Rewriting() {
+		aofRewriting = 1
+	}
+
 	b.WriteString("# Persistence\r\n")
 	for _, kv := range [][2]string{
 		{"loading", "0"},
@@ -244,14 +263,16 @@ func persistenceInfo(b *strings.Builder) {
 		{"rdb_last_bgsave_time_sec", "-1"},
 		{"rdb_current_bgsave_time_sec", "-1"},
 		{"rdb_saves", "0"},
-		{"aof_enabled", "0"},
-		{"aof_rewrite_in_progress", "0"},
+		{"aof_enabled", strconv.Itoa(aofEnabled)},
+		{"aof_rewrite_in_progress", strconv.Itoa(aofRewriting)},
 		{"aof_rewrite_scheduled", "0"},
 		{"aof_last_rewrite_time_sec", "-1"},
 		{"aof_current_rewrite_time_sec", "-1"},
 		{"aof_last_bgrewrite_status", "ok"},
-		{"aof_rewrites", "0"},
-		{"aof_last_write_status", "ok"},
+		{"aof_rewrites", strconv.FormatUint(rewrites, 10)},
+		{"aof_current_size", strconv.FormatInt(currentSize, 10)},
+		{"aof_base_size", strconv.FormatInt(baseSize, 10)},
+		{"aof_last_write_status", lastStatus},
 	} {
 		field(b, kv[0], kv[1])
 	}

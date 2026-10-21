@@ -10,10 +10,10 @@ import (
 )
 
 func registerSetCommands(reg *Registry, st *store.Store) {
-	reg.Register(Command{Name: "sadd", Arity: -3, Handler: func(args [][]byte, out *protocol.Encoder) {
+	reg.Register(Command{Name: "sadd", Write: true, Arity: -3, Handler: func(args [][]byte, out *protocol.Encoder) {
 		saddCommand(st, args, out)
 	}})
-	reg.Register(Command{Name: "srem", Arity: -3, Handler: func(args [][]byte, out *protocol.Encoder) {
+	reg.Register(Command{Name: "srem", Write: true, Arity: -3, Handler: func(args [][]byte, out *protocol.Encoder) {
 		sremCommand(st, args, out)
 	}})
 	reg.Register(Command{Name: "smembers", Arity: 2, Handler: func(args [][]byte, out *protocol.Encoder) {
@@ -25,7 +25,7 @@ func registerSetCommands(reg *Registry, st *store.Store) {
 	reg.Register(Command{Name: "scard", Arity: 2, Handler: func(args [][]byte, out *protocol.Encoder) {
 		scardCommand(st, args, out)
 	}})
-	reg.Register(Command{Name: "spop", Arity: -2, Handler: func(args [][]byte, out *protocol.Encoder) {
+	reg.Register(Command{Name: "spop", Write: true, Arity: -2, Handler: func(args [][]byte, out *protocol.Encoder) {
 		spopCommand(st, args, out)
 	}})
 	reg.Register(Command{Name: "srandmember", Arity: -2, Handler: func(args [][]byte, out *protocol.Encoder) {

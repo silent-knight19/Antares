@@ -15,6 +15,7 @@ type CommandHandler func(args [][]byte, out *protocol.Encoder)
 type Command struct {
 	Name    string
 	Arity   int
+	Write   bool
 	Handler CommandHandler
 }
 

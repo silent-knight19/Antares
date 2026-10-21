@@ -20,23 +20,23 @@ func registerTTLCommands(reg *Registry, st *store.Store) {
 	reg.Register(Command{Name: "pttl", Arity: 2, Handler: func(args [][]byte, out *protocol.Encoder) {
 		ttlCommand(st, args, out, true)
 	}})
-	reg.Register(Command{Name: "persist", Arity: 2, Handler: func(args [][]byte, out *protocol.Encoder) {
+	reg.Register(Command{Name: "persist", Write: true, Arity: 2, Handler: func(args [][]byte, out *protocol.Encoder) {
 		if st.Persist(string(args[0])) {
 			out.Int(1)
 		} else {
 			out.Int(0)
 		}
 	}})
-	reg.Register(Command{Name: "expire", Arity: -3, Handler: func(args [][]byte, out *protocol.Encoder) {
+	reg.Register(Command{Name: "expire", Write: true, Arity: -3, Handler: func(args [][]byte, out *protocol.Encoder) {
 		expireCommand(st, args, out, "expire", true, true)
 	}})
-	reg.Register(Command{Name: "pexpire", Arity: -3, Handler: func(args [][]byte, out *protocol.Encoder) {
+	reg.Register(Command{Name: "pexpire", Write: true, Arity: -3, Handler: func(args [][]byte, out *protocol.Encoder) {
 		expireCommand(st, args, out, "pexpire", true, false)
 	}})
-	reg.Register(Command{Name: "expireat", Arity: -3, Handler: func(args [][]byte, out *protocol.Encoder) {
+	reg.Register(Command{Name: "expireat", Write: true, Arity: -3, Handler: func(args [][]byte, out *protocol.Encoder) {
 		expireCommand(st, args, out, "expireat", false, true)
 	}})
-	reg.Register(Command{Name: "pexpireat", Arity: -3, Handler: func(args [][]byte, out *protocol.Encoder) {
+	reg.Register(Command{Name: "pexpireat", Write: true, Arity: -3, Handler: func(args [][]byte, out *protocol.Encoder) {
 		expireCommand(st, args, out, "pexpireat", false, false)
 	}})
 	reg.Register(Command{Name: "dbsize", Arity: 1, Handler: func(_ [][]byte, out *protocol.Encoder) {

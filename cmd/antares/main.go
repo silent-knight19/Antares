@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/silent-knight19/antares/internal/clock"
+	"github.com/silent-knight19/antares/internal/persist"
 	"github.com/silent-knight19/antares/internal/server"
 	"github.com/silent-knight19/antares/internal/store"
 )
@@ -32,6 +33,10 @@ func main() {
 	port := flag.Int("port", 6380, "port to listen on (reference Redis uses 6379)")
 	maxConns := flag.Int("max-conns", server.DefaultMaxConns, "maximum concurrent connections (0 = default 10000, negative = unlimited)")
 	idleTimeout := flag.Duration("idle-timeout", 0, "close connections idle longer than this (0 = never)")
+	appendOnly := flag.Bool("appendonly", false, "enable append-only file persistence")
+	aofFile := flag.String("aof-file", "appendonly.aof", "AOF path (used with -appendonly)")
+	appendFsync := flag.String("appendfsync", "everysec", "AOF fsync policy: always|everysec|no")
+	aofRepair := flag.Bool("aof-repair", false, "on a corrupt AOF frame, discard the tail instead of refusing to start")
 	flag.Parse()
 
 	if *showVersion {
@@ -42,7 +47,37 @@ func main() {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
 	addr := net.JoinHostPort(*bind, strconv.Itoa(*port))
 	clk := clock.Real{}
-	exec := server.NewExecutorWithClock(store.NewWithClock(clk), nil, clk)
+	st := store.NewWithClock(clk)
+
+	var aof *persist.Writer
+	if *appendOnly {
+		policy, err := persist.ParseFsyncPolicy(*appendFsync)
+		if err != nil {
+			logger.Error("invalid -appendfsync", "value", *appendFsync, "err", err)
+			os.Exit(1)
+		}
+		persist.RemoveStaleRewriteTemps(*aofFile)
+		report, err := server.RecoverAOFRepair(*aofFile, st, *aofRepair)
+		if err != nil {
+			logger.Error("AOF recovery failed", "path", *aofFile, "err", err, "hint", "pass -aof-repair to discard a corrupt tail")
+			os.Exit(1)
+		}
+		if report.Truncated {
+			logger.Warn("AOF tail truncated", "path", *aofFile, "records", report.Records, "bytes", report.TruncatedBytes, "reason", report.Reason, "corrupt", report.Corrupt)
+		} else if report.Records > 0 {
+			logger.Info("AOF recovered", "path", *aofFile, "records", report.Records, "bytes", report.ValidBytes)
+		}
+		aof, err = persist.Open(*aofFile, policy)
+		if err != nil {
+			logger.Error("opening AOF failed", "path", *aofFile, "err", err)
+			os.Exit(1)
+		}
+	}
+
+	exec := server.NewExecutorWithClock(st, nil, clk)
+	if aof != nil {
+		exec = server.NewExecutorWithAOF(st, nil, clk, aof)
+	}
 	srv := server.New(server.Config{
 		Addr:        addr,
 		MaxConns:    *maxConns,
@@ -52,6 +87,9 @@ func main() {
 	if err := srv.Start(); err != nil {
 		logger.Error("listen failed", "addr", addr, "err", err)
 		exec.Close()
+		if aof != nil {
+			_ = aof.Close()
+		}
 		os.Exit(1)
 	}
 	logger.Info("antares listening", "addr", srv.Addr().String(), "version", version)
@@ -68,6 +106,11 @@ func main() {
 	}
 	if err := exec.CloseContext(shutdownCtx); err != nil {
 		logger.Warn("executor shutdown deadline expired", "err", err)
+	}
+	if aof != nil {
+		if err := aof.Close(); err != nil {
+			logger.Warn("AOF close failed", "err", err)
+		}
 	}
 	logger.Info("stopped")
 }

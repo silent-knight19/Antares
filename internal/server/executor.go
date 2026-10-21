@@ -4,11 +4,13 @@ import (
 	"context"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/silent-knight19/antares/internal/clock"
 	"github.com/silent-knight19/antares/internal/expire"
 	"github.com/silent-knight19/antares/internal/metrics"
+	"github.com/silent-knight19/antares/internal/persist"
 	"github.com/silent-knight19/antares/internal/protocol"
 	"github.com/silent-knight19/antares/internal/store"
 )
@@ -37,6 +39,9 @@ type Executor struct {
 	maxmemory       int64
 	maxmemoryPolicy string
 
+	aof             *persist.Writer
+	rewriteInFlight atomic.Bool
+
 	closeOnce sync.Once
 }
 
@@ -59,7 +64,17 @@ func NewExecutorWithClock(st *store.Store, reg *Registry, c clock.Clock) *Execut
 	return newExecutor(st, reg, true, c)
 }
 
+// NewExecutorWithAOF enables append-only persistence: mutations are framed and
+// appended in execution order after each successful command.
+func NewExecutorWithAOF(st *store.Store, reg *Registry, c clock.Clock, aof *persist.Writer) *Executor {
+	return newExecutorWithAOF(st, reg, true, c, aof)
+}
+
 func newExecutor(st *store.Store, reg *Registry, active bool, c clock.Clock) *Executor {
+	return newExecutorWithAOF(st, reg, active, c, nil)
+}
+
+func newExecutorWithAOF(st *store.Store, reg *Registry, active bool, c clock.Clock, aof *persist.Writer) *Executor {
 	if c == nil {
 		c = clock.Real{}
 	}
@@ -79,18 +94,15 @@ func newExecutor(st *store.Store, reg *Registry, active bool, c clock.Clock) *Ex
 		stats:           metrics.New(DefaultMaxConns),
 		start:           c.Now(),
 		maxmemoryPolicy: "noeviction",
+		aof:             aof,
 	}
 	if reg == nil {
 		reg = NewRegistry()
-		registerStringCommands(reg, st)
-		registerListCommands(reg, st)
-		registerHashCommands(reg, st)
-		registerSetCommands(reg, st)
-		registerTTLCommands(reg, st)
-		registerKeyspaceCommands(reg, st)
+		registerDataCommands(reg, st)
 		registerConfigCommands(reg, e)
 		registerInfoCommands(reg, e)
 		registerConnectionCommands(reg, e)
+		registerPersistenceCommands(reg, e)
 	}
 	e.commands = reg
 	go e.loop()
@@ -204,6 +216,30 @@ func (e *Executor) run(req execRequest) {
 		}
 		close(req.done)
 	}()
+	if e.aofWriteBlocked(req.req, req.out) {
+		return
+	}
+	mutations := e.store.Mutations()
+	spopBefore := e.captureSpopBefore(req.req)
 	e.commands.Dispatch(req.req, req.out)
 	e.stats.Commands.Add(1)
+	e.propagate(req.req, mutations, spopBefore)
+}
+
+// aofWriteBlocked refuses a write command once the AOF has failed, so the
+// server does not accept mutations it cannot persist. Reads still work.
+func (e *Executor) aofWriteBlocked(req protocol.Request, out *protocol.Encoder) bool {
+	if e.aof == nil || len(req) == 0 {
+		return false
+	}
+	err := e.aof.Failed()
+	if err == nil {
+		return false
+	}
+	cmd, ok := e.commands.Lookup(req[0])
+	if !ok || !cmd.Write {
+		return false
+	}
+	out.Error("MISCONF Errors writing to the AOF file: " + err.Error())
+	return true
 }

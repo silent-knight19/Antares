@@ -26,18 +26,19 @@ help:
 	@echo "  vet              run go vet"
 	@echo "  fmt              format the tree with gofmt"
 	@echo "  tidy             go mod tidy"
-	@echo "  run              run the antares server on 127.0.0.1:6380 (flags: -port -max-conns -idle-timeout)"
+	@echo "  run              run the antares server on 127.0.0.1:6380 (flags: -port -max-conns -idle-timeout -appendonly -aof-file -appendfsync -aof-repair)"
 	@echo "  run-observatory  run the observatory bridge (defaults: antares 6380, web/dist)"
 	@echo "  clean            remove build artifacts"
 	@echo "  fuzz             run the RESP fuzzer for FUZZTIME (default 30s, e.g. FUZZTIME=15m)"
 	@echo "  diff-test        run the command differential harness against reference Redis (REF_ADDR=$(REF_ADDR))"
+	@echo "  crash-test       build and run the SIGKILL acked-write harness (CRASH_ITERATIONS=100)"
 	@echo "  clock-check      enforce the ADR-009 rule: no direct wall-clock reads outside clock/server I/O"
 	@echo "  tcl-expire       run the selected official Redis unit/expire tests (downloads pinned 7.4.11 tests)"
 	@echo "  tcl-incr         run the selected official Redis unit/type/incr tests"
 	@echo "  showcase-dev     build UI if present, then run Antares + Observatory locally"
 	@echo "  ui-build         npm install + vite build web/"
 	@echo "  seed             seed PORT (default 6380) with ~10k keys for the Keyspace view"
-	@echo "  phase-gated:     verify crash-test bench tcl showcase showcase-e2e ui-dev"
+	@echo "  phase-gated:     verify bench tcl showcase showcase-e2e ui-dev"
 
 build:
 	@mkdir -p $(BIN)
@@ -79,6 +80,9 @@ diff-test:
 	docker compose up -d --wait redis-ref
 	REDIS_REF_ADDR=$(REF_ADDR) $(GO) test -count=1 -run 'TestDiff' ./tests/differential/
 
+crash-test: build
+	ANTARES_CRASH_TEST=1 $(GO) test -count=1 -run TestCrashRecovery ./tests/chaos/
+
 tcl-expire:
 	@tests/tcl/run-expire.sh expire
 
@@ -94,6 +98,6 @@ showcase-dev: build ui-build
 seed:
 	@deploy/demo/seed.sh $(PORT)
 
-verify crash-test bench tcl showcase showcase-e2e ui-dev:
+verify bench tcl showcase showcase-e2e ui-dev:
 	@echo "make $@: not implemented yet — arrives at the phase marked in docs/PLAN.md §5–§7 (DoD: §2)"
 	@exit 1

@@ -110,7 +110,8 @@
   - C. Framed: 4-byte length, 4-byte CRC32, then RESP command payload; fsync policies `always` / `everysec` / `no`; group commit (batch fsync for concurrent writers).
 - Decision: C.
 - Why chosen:
-  - Per-frame CRC localizes corruption: recovery can trust the valid prefix and truncate at the first bad frame, instead of rejecting the whole file (option A's failure mode).
+  - Per-frame CRC localizes corruption: recovery trusts the valid prefix instead of rejecting the whole file (option A's failure mode).
+  - An incomplete final frame is a torn write, so recovery truncates it. A malformed or checksum-bad frame is not a torn write, so recovery refuses to start with `ErrCorrupt` unless `-aof-repair` is passed — this stops one bad byte in the middle from silently deleting every record after it (refined at P6).
   - RESP payload means replay goes through the same execution path as live commands — one code path; the differential harness already tests that path.
   - The same framing doubles as the replication stream format (ADR-007) — one serializer, two consumers.
   - Group commit amortizes fsync across concurrent writes, making `always` survive our throughput targets.
@@ -123,7 +124,7 @@
   - "Why CRC per frame, not one checksum per file?" → tail corruption is the realistic failure; per-frame CRC lets us keep N-1 valid records and report truncation; whole-file CRC forces rejecting the valid prefix.
   - "Why keep commands instead of binary state?" → one replay path = the path my differential tests already cover; also it's the same bytes the replica consumes.
   - "Always vs everysec?" → always: ack only after fsync → zero loss (proven in crash tests); everysec: ≤1s window, 10× cheaper fsyncs; both shipped and benchmarked.
-- Proof: `TestRecovery_TornTail`, `TestAOF_GroupCommit`, `make crash-test` (100× SIGKILL), BENCHMARKS.md fsync-policy table.
+- Proof: `TestRecoverTornTailMatrix`, `TestRecoverCorruptFrameRefused`, `TestWriterGroupCommit`, `TestWriterRefusesAfterWriteFailure`, `make crash-test` (100× SIGKILL), BENCHMARKS.md fsync-policy table.
 
 ---
 
@@ -557,3 +558,58 @@
   - "Why not implement all of INFO/CONFIG?" → clients need the surface, not the lie; I exposed real sections and a small allowlist, and pushed enforcement to the phases that own it.
   - "How do you keep compatibility honest?" → the pinned version, zeroed future stats, documented divergences in COMPATIBILITY, and differential tests on the fields that are actually stable.
 - Proof: `internal/server/info_commands.go`, `config_commands.go`, `connection_commands.go`, `internal/metrics/stats.go`; `tests/differential/info_diff_test.go`; clean live `redis-cli --stat` capture; COMPATIBILITY rows for INFO/CLIENT/CONFIG.
+
+
+---
+
+## ADR-023 — AOF propagation: executor-level mutation observation with effect rewrites
+- Date: 2026-10-21 · Phase: P6.1–P6.6 · Status: Accepted
+- Context: AOF needs to record exactly the commands that changed the keyspace, in execution order, without touching all ~45 handlers. Several commands cannot be replayed verbatim: SPOP picks a random member, relative EXPIRE/PEXPIRE would replay against a different wall clock, and INCRBYFLOAT's result depends on the reference long-double ABI. The AOF rewrite also needs one format that doubles as the future full-resync snapshot (ADR-007).
+- Options:
+  - A. Instrument every handler to emit its own AOF command.
+  - B. Add a `Write` flag to the registry and log every flagged command verbatim.
+  - C. Observe a store mutation counter at the executor's single choke point, replay deterministic commands verbatim, and rewrite nondeterministic ones to their final effect.
+- Decision: C — the executor snapshots `Store.Mutations()` before dispatch; if it changed, it appends the command's effect, rewriting SET options/INCRBYFLOAT to a final `SET` (+`PEXPIREAT`), the EXPIRE family to `PEXPIREAT`, SPOP to `SREM` with the actually-removed members, and PERSIST to `PERSIST`; everything else is appended as received.
+- Why chosen:
+  - No-op writes (`SET … NX` that loses, `DEL` of a missing key) do not move the counter, so they never reach the log — the log is effect-based by construction.
+  - One hook in the already-serialized executor (ADR-002) means append order equals execution order and handlers stay unaware of persistence.
+  - `PEXPIREAT` plus a between-command `SET`+`PEXPIREAT` makes replay independent of when it runs, so relative expiries survive restart.
+  - SPOP's removed members come from the before/after set difference, so replay `SREM` deletes exactly what the client observed.
+  - Rewrite order is `BeginRewrite` → snapshot copy → serialize temp → append buffered tail → fsync → rename, so no write can fall between snapshot and buffer.
+- Why rejected:
+  - A: repeats persistence logic across every mutator; easy to forget one and silently lose durability.
+  - B: a write flag is static metadata; it cannot tell a no-op write from a real one, and it still logs random/time-relative commands verbatim.
+- Trade-offs accepted: the counter moves on some harmless overwrites (for example HSET writing the same field value), so a few redundant frames are logged; SPOP effect is derived by value rather than by index; reads are never logged. Automatic rewrite uses a fixed 64 MiB / 2× threshold instead of Redis's configurable `auto-aof-rewrite-*` knobs.
+- Revisit if: replication needs the raw command stream rather than effects, or per-command `Write` metadata is needed for ACL/keyspace notifications; a command that mutates outside `Store` would also need its own effect mapping.
+- Interview Q&A:
+  - "How do you know what to append to the AOF?" → the executor notices that the store's mutation counter moved after dispatch; if it moved, it appends the effect. No-op writes and reads never move it, so they never log.
+  - "Why rewrite SPOP/EXPIRE instead of logging them?" → replay must be deterministic: SPOP would pop a different random member and relative EXPIRE would race the restart clock, so I log the concrete members removed and an absolute PEXPIREAT.
+  - "How do you avoid losing writes during a rewrite?" → BeginRewrite first, then copy; writes after the copy land in the buffer and are appended to the new file before the rename.
+- Proof: `internal/server/persistence.go` (`propagate`, `aofEffect`, `startRewrite`), `internal/persist/writer.go` (`BeginRewrite`/`FinishRewrite`), `internal/server/persistence_test.go` (propagation effects, replay state equality, rewrite state equality), `internal/persist/writer_test.go` (`TestWriterRewriteSwap`).
+
+
+---
+
+## ADR-024 — AOF failure policy: stop appending, refuse writes, bound the rewrite tail
+- Date: 2026-10-21 · Phase: P6 (review fix) · Status: Accepted
+- Context: A durability log must fail safe. If a write to the AOF fails partway (for example the disk fills), continuing to append leaves a torn frame in the middle of the file; the next recovery would truncate there and silently drop every later record. Recovery also could not tell a torn tail from mid-file corruption. And the rewrite tail was buffered in memory without a cap.
+- Options:
+  - A. Keep appending and log the error (the pre-review behavior).
+  - B. Stop appending on the first write failure, clamp the file back to the last complete frame, refuse further writes until a rewrite or restart, fsync the directory after the swap rename, and abort a rewrite whose buffered tail exceeds a cap.
+- Decision: B.
+  - `Writer` keeps a sticky failure. A failed `Write` truncates the file back to the last good size, then every later `Append` returns that error without touching the file.
+  - The executor refuses write commands with `-MISCONF Errors writing to the AOF file: …` while the writer is failed or closed; reads still work.
+  - `finishRewrite` fsyncs the parent directory after the rename, so the swap survives power loss.
+  - A rewrite whose buffered tail exceeds `RewriteBufferMax` (64 MiB) aborts instead of growing without bound; the old file still holds every write, so nothing is lost.
+- Why chosen:
+  - Bounds loss to the single unacknowledged batch and keeps a torn frame out of the middle of the log, so the torn-tail rule stays true.
+  - MISCONF is how Redis signals a broken AOF; clients that check errors see it, and INFO `aof_last_write_status` is `err`.
+  - The directory fsync is what makes the atomic rename actually durable across a power loss.
+- Why rejected:
+  - A: a single failed write can delete every later acknowledged record on restart, and hides the failure from clients.
+- Trade-offs accepted: a failed writer stays failed until `BGREWRITEAOF` succeeds (which resets the error) or the process restarts; reads continue but writes are rejected, so the operator must clear the disk and rewrite or restart.
+- Revisit if: the disk error is transient and self-heals, in which case a retry/backoff that clears the error on a successful write could be added.
+- Interview Q&A:
+  - "What happens if the disk fills mid-write?" → the writer clamps the file to the last complete frame, refuses further appends, and the executor answers writes with MISCONF; reads keep working.
+  - "How do you tell a torn tail from corruption?" → an incomplete final frame is a torn write and is truncated; a bad length or checksum is corruption and refuses startup unless `-aof-repair` discards the tail.
+- Proof: `internal/persist/writer.go` (`failWrite`, `Failed`, `syncDir`), `internal/server/executor.go` (`aofWriteBlocked`); `TestWriterRefusesAfterWriteFailure`, `TestWriterRefusesAfterSyncFailure`, `TestRecoverCorruptFrameRefused`, `TestAOFWriteBlockedAfterFailure`.

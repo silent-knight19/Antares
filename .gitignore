@@ -91,9 +91,6 @@ pnpm-debug.log*
 .pnpm-debug.log*
 
 # UI builds and caches
-ui/dist/
-ui/build/
-ui/.next/
 web/dist/
 web/build/
 .next/

@@ -137,7 +137,8 @@ func (e *Executor) configItems() []configItem {
 		{"proto-max-bulk-len", strconv.Itoa(protocol.MaxBulkLen)},
 		{"client-query-buffer-limit", strconv.Itoa(protocol.MaxRequestBytes)},
 		{"databases", "16"},
-		{"appendonly", "no"},
+		{"appendonly", e.appendonlyValue()},
+		{"appendfsync", e.appendfsyncValue()},
 		{"save", "3600 1 300 100 60 10000"},
 	}
 }

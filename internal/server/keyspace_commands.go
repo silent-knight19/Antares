@@ -14,19 +14,19 @@ func registerKeyspaceCommands(reg *Registry, st *store.Store) {
 	reg.Register(Command{Name: "scan", Arity: -2, Handler: func(args [][]byte, out *protocol.Encoder) {
 		scanCommand(st, args, out)
 	}})
-	reg.Register(Command{Name: "rename", Arity: 3, Handler: func(args [][]byte, out *protocol.Encoder) {
+	reg.Register(Command{Name: "rename", Write: true, Arity: 3, Handler: func(args [][]byte, out *protocol.Encoder) {
 		renameCommand(st, args, out, false)
 	}})
-	reg.Register(Command{Name: "renamenx", Arity: 3, Handler: func(args [][]byte, out *protocol.Encoder) {
+	reg.Register(Command{Name: "renamenx", Write: true, Arity: 3, Handler: func(args [][]byte, out *protocol.Encoder) {
 		renameCommand(st, args, out, true)
 	}})
 	reg.Register(Command{Name: "randomkey", Arity: 1, Handler: func(_ [][]byte, out *protocol.Encoder) {
 		randomKeyCommand(st, out)
 	}})
-	reg.Register(Command{Name: "flushdb", Arity: -1, Handler: func(args [][]byte, out *protocol.Encoder) {
+	reg.Register(Command{Name: "flushdb", Write: true, Arity: -1, Handler: func(args [][]byte, out *protocol.Encoder) {
 		flushCommand(st, args, out)
 	}})
-	reg.Register(Command{Name: "flushall", Arity: -1, Handler: func(args [][]byte, out *protocol.Encoder) {
+	reg.Register(Command{Name: "flushall", Write: true, Arity: -1, Handler: func(args [][]byte, out *protocol.Encoder) {
 		flushCommand(st, args, out)
 	}})
 }

@@ -1,6 +1,7 @@
 package store
 
 import (
+	"bytes"
 	"hash/maphash"
 
 	"github.com/silent-knight19/antares/internal/clock"
@@ -45,6 +46,7 @@ type Store struct {
 	clock       clock.Clock
 	scanSeed    maphash.Seed
 	expiredKeys uint64
+	mutations   uint64
 }
 
 func New() *Store { return NewWithClock(clock.Real{}) }
@@ -63,6 +65,53 @@ func NewWithClock(c clock.Clock) *Store {
 
 // NowMs returns the current time from the store's injected clock.
 func (s *Store) NowMs() int64 { return s.clock.Now().UnixMilli() }
+
+// Mutations counts explicit keyspace writes. Expiry (lazy or active) is not a
+// command effect, so the executor can use this to decide whether to append.
+func (s *Store) Mutations() uint64 { return s.mutations }
+
+// Copy returns an independent point-in-time keyspace for AOF rewrite. It must
+// only be called by the executor goroutine; collection payloads are cloned
+// because later commands mutate their backing slices in place.
+func (s *Store) Copy() *Store {
+	cp := NewWithClock(s.clock)
+	cp.expiredKeys = s.expiredKeys
+	cp.mutations = s.mutations
+	for key, value := range s.data {
+		cp.data[key] = cloneValue(value)
+	}
+	for key, at := range s.expires {
+		cp.expires[key] = at
+	}
+	return cp
+}
+
+func cloneValue(v Value) Value {
+	out := Value{
+		Kind:     v.Kind,
+		Str:      bytes.Clone(v.Str),
+		ListHead: v.ListHead,
+	}
+	if v.List != nil {
+		out.List = make([][]byte, len(v.List))
+		for i, element := range v.List {
+			out.List[i] = bytes.Clone(element)
+		}
+	}
+	if v.Hash != nil {
+		out.Hash = make([]HashEntry, len(v.Hash))
+		for i, entry := range v.Hash {
+			out.Hash[i] = HashEntry{Field: bytes.Clone(entry.Field), Value: bytes.Clone(entry.Value)}
+		}
+	}
+	if v.Set != nil {
+		out.Set = make([][]byte, len(v.Set))
+		for i, member := range v.Set {
+			out.Set[i] = bytes.Clone(member)
+		}
+	}
+	return out
+}
 
 // Lookup returns the typed value and whether the key is live. An expired key
 // is deleted on access (lazy expiry).
@@ -83,12 +132,14 @@ func (s *Store) Type(key string) string {
 func (s *Store) Set(key string, value []byte) {
 	s.data[key] = Value{Kind: KindString, Str: value}
 	delete(s.expires, key)
+	s.mutations++
 }
 
 // SetWithTTL stores value under key with an absolute Unix-millisecond expiry.
 func (s *Store) SetWithTTL(key string, value []byte, expiresAtMs int64) {
 	s.data[key] = Value{Kind: KindString, Str: value}
 	s.expires[key] = expiresAtMs
+	s.mutations++
 }
 
 // SetPreservingTTL overwrites key without changing its expiry. Callers must
@@ -102,6 +153,7 @@ func (s *Store) SetPreservingTTL(key string, value Value) {
 		value.SetIndex = buildSetIndex(value.Set)
 	}
 	s.data[key] = value
+	s.mutations++
 }
 
 func buildHashIndex(hash []HashEntry) map[string]int {
@@ -127,6 +179,7 @@ func (s *Store) Delete(key string) bool {
 	}
 	delete(s.data, key)
 	delete(s.expires, key)
+	s.mutations++
 	return true
 }
 
@@ -144,6 +197,7 @@ func (s *Store) Rename(src, dst string) {
 	if hasExpiry {
 		s.expires[dst] = expiresAt
 	}
+	s.mutations++
 }
 
 func (s *Store) Exists(key string) bool {
@@ -194,6 +248,7 @@ func (s *Store) RandomKey() (string, bool) {
 func (s *Store) Flush() {
 	clear(s.data)
 	clear(s.expires)
+	s.mutations++
 }
 
 // ExpireSample samples up to limit volatile keys and deletes those whose
@@ -251,6 +306,7 @@ func (s *Store) SetExpire(key string, atMs int64) {
 		return
 	}
 	s.expires[key] = atMs
+	s.mutations++
 }
 
 // Persist removes a key's expiry and reports whether one was removed.
@@ -262,6 +318,7 @@ func (s *Store) Persist(key string) bool {
 		return false
 	}
 	delete(s.expires, key)
+	s.mutations++
 	return true
 }
 
