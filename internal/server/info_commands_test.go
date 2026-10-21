@@ -116,6 +116,26 @@ func TestInfoExpiredKeys(t *testing.T) {
 	}
 }
 
+func TestInfoMemoryAccounting(t *testing.T) {
+	exec := newStringExec(t)
+	runStrings(exec, "SET", "key", "value")
+	body := infoBody(t, runStrings(exec, "INFO", "memory"))
+	if got := infoField(t, body, "used_memory_dataset"); got != "5" {
+		t.Fatalf("used_memory_dataset = %q, want 5", got)
+	}
+	used, _ := strconv.Atoi(infoField(t, body, "used_memory"))
+	overhead, _ := strconv.Atoi(infoField(t, body, "used_memory_overhead"))
+	if used != overhead+5 {
+		t.Fatalf("used_memory = %d, overhead = %d; want used = overhead+5", used, overhead)
+	}
+
+	runStrings(exec, "DEL", "key")
+	body = infoBody(t, runStrings(exec, "INFO", "memory"))
+	if got := infoField(t, body, "used_memory"); got != "0" {
+		t.Fatalf("used_memory after DEL = %q, want 0", got)
+	}
+}
+
 func TestInfoHzAndMaxmemory(t *testing.T) {
 	exec := newStringExec(t)
 	runStrings(exec, "CONFIG", "SET", "hz", "20")

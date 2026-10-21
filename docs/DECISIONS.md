@@ -613,3 +613,25 @@
   - "What happens if the disk fills mid-write?" → the writer clamps the file to the last complete frame, refuses further appends, and the executor answers writes with MISCONF; reads keep working.
   - "How do you tell a torn tail from corruption?" → an incomplete final frame is a torn write and is truncated; a bad length or checksum is corruption and refuses startup unless `-aof-repair` discards the tail.
 - Proof: `internal/persist/writer.go` (`failWrite`, `Failed`, `syncDir`), `internal/server/executor.go` (`aofWriteBlocked`); `TestWriterRefusesAfterWriteFailure`, `TestWriterRefusesAfterSyncFailure`, `TestRecoverCorruptFrameRefused`, `TestAOFWriteBlockedAfterFailure`.
+
+## ADR-025 — Memory accounting: a logical keyspace model feeds INFO and maxmemory
+- Date: 2026-10-21 · Phase: P7.1 · Status: Accepted
+- Context: `INFO memory` reported `used_memory` from Go's `runtime.MemStats.Alloc`. That number is process-wide and moves with GC and unrelated allocations, so it is not a dataset size. The next subphase enforces `maxmemory` against it, which needs a stable figure that reflects the keyspace only.
+- Options:
+  - A. Keep reading Go runtime counters.
+  - B. Maintain an incremental per-key byte counter updated on every mutation.
+  - C. Scan the keyspace on demand and model the retained heap from the shapes we allocate.
+- Decision: C. `store.MemoryUsage()` sums a per-entry map cost plus exact payload lengths, collection slice backing, and the hash/set index maps, and returns `Usage{Total, Dataset}`. `INFO` reports `used_memory`/`used_memory_overhead`/`used_memory_dataset` from it; `used_memory_rss` and `allocator_*` stay Go runtime values.
+- Why chosen:
+  - A is the wrong concept for `maxmemory`: it swings with the Go heap, so eviction would fire on unrelated allocations.
+  - B is O(1) but unsafe here: collection handlers mutate a `Value`'s slices in place and re-store it, so an old-size/new-size delta can read the already-mutated backing (e.g. an `LSET` that changes element length) and miss the change. Scanning the current state is correct by construction.
+  - The model lands within 10% of Go's retained heap for payload-sized datasets across all four value types (`TestMemoryUsageTracksRuntime`).
+- Why rejected:
+  - A: not a dataset size; it was only ever a placeholder until accounting landed (ADR-022 anticipated this).
+  - B: in-place mutation footguns for a few bytes saved; would also need a touch on every expiry/flush path.
+- Trade-offs accepted: `MemoryUsage` is O(n) over physical keys (a `shortcut:` note in `memory.go` marks where P7.2 must cache it); the estimate models Go map/slice overhead, not jemalloc size classes, so absolute bytes and the fragmentation ratio differ from real Redis (COMPATIBILITY).
+- Revisit if: `maxmemory` must include non-keyspace overhead (clients, buffers, AOF), or the per-command scan becomes measurable.
+- Interview Q&A:
+  - "You have no C allocator — how do you know the keyspace's memory?" → a logical model: amortized per-entry map cost plus exact payload, slice backing, and index maps, calibrated to within 10% of the Go heap.
+  - "Why not just read the Go heap?" → it is process-wide and GC-dependent; `maxmemory` needs a dataset number.
+- Proof: `internal/store/memory.go` (`MemoryUsage`, `Usage`, `add`, `addIndex`), `internal/server/info_commands.go` (`memoryInfo`); `TestMemoryUsageTracksRuntime`, `TestMemoryUsageEmptyAndPerKey`, `TestInfoMemoryAccounting`.

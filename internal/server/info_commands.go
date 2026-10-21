@@ -182,7 +182,10 @@ func (e *Executor) clientsInfo(b *strings.Builder) {
 func (e *Executor) memoryInfo(b *strings.Builder) {
 	var m runtime.MemStats
 	runtime.ReadMemStats(&m)
-	used := m.Alloc
+	usage := e.store.MemoryUsage()
+	used := uint64(usage.Total)
+	overhead := uint64(usage.Total - usage.Dataset)
+	dataset := uint64(usage.Dataset)
 	rss := m.Sys
 	e.stats.ObserveMemory(used)
 	peak := e.stats.PeakMemory.Load()
@@ -192,6 +195,10 @@ func (e *Executor) memoryInfo(b *strings.Builder) {
 	peakPerc := 100.0
 	if peak > 0 {
 		peakPerc = float64(used) / float64(peak) * 100
+	}
+	datasetPerc := 100.0
+	if used > 0 {
+		datasetPerc = float64(dataset) / float64(used) * 100
 	}
 	fragRatio := 0.0
 	if used > 0 {
@@ -206,12 +213,12 @@ func (e *Executor) memoryInfo(b *strings.Builder) {
 	field(b, "used_memory_peak", strconv.FormatUint(peak, 10))
 	field(b, "used_memory_peak_human", bytesHuman(peak))
 	fmt.Fprintf(b, "used_memory_peak_perc:%.2f%%\r\n", peakPerc)
-	field(b, "used_memory_overhead", "0")
+	field(b, "used_memory_overhead", strconv.FormatUint(overhead, 10))
 	field(b, "used_memory_startup", "0")
-	field(b, "used_memory_dataset", strconv.FormatUint(used, 10))
-	field(b, "used_memory_dataset_perc", "100.00%")
-	field(b, "allocator_allocated", strconv.FormatUint(used, 10))
-	field(b, "allocator_active", strconv.FormatUint(used, 10))
+	field(b, "used_memory_dataset", strconv.FormatUint(dataset, 10))
+	fmt.Fprintf(b, "used_memory_dataset_perc:%.2f%%\r\n", datasetPerc)
+	field(b, "allocator_allocated", strconv.FormatUint(m.Alloc, 10))
+	field(b, "allocator_active", strconv.FormatUint(m.HeapInuse, 10))
 	field(b, "allocator_resident", strconv.FormatUint(rss, 10))
 	field(b, "total_system_memory", "0")
 	field(b, "total_system_memory_human", "0B")
