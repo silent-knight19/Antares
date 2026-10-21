@@ -100,6 +100,7 @@ func TestDiffWrongTypeMatrix(t *testing.T) {
 		{"INCRBY", "K", "1"},
 		{"DECR", "K"},
 		{"INCRBYFLOAT", "K", "1"},
+		{"INCRBYFLOAT", "K", "abc"},
 		{"APPEND", "K", "x"},
 		{"STRLEN", "K"},
 		{"GETSET", "K", "x"},

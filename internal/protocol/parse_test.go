@@ -251,6 +251,38 @@ func TestReadRequest(t *testing.T) {
 	}
 }
 
+func TestReadMultibulkRequestBudget(t *testing.T) {
+	req, skip, err := readMultibulkLimit(
+		bufio.NewReader(strings.NewReader("*2\r\n$3\r\nfoo\r\n$3\r\nbar\r\n")), 1024)
+	if err != nil || skip {
+		t.Fatalf("under-budget request: req=%q skip=%v err=%v", req, skip, err)
+	}
+	if len(req) != 2 || string(req[0]) != "foo" || string(req[1]) != "bar" {
+		t.Fatalf("under-budget request = %q", req)
+	}
+
+	var br = bufio.NewReader(strings.NewReader("*1\r\n$100\r\n"))
+	_, _, err = readMultibulkLimit(br, 50)
+	if !errors.Is(err, errRequestTooLarge) {
+		t.Fatalf("oversized bulk header err = %v, want errRequestTooLarge", err)
+	}
+
+	_, _, err = readMultibulkLimit(
+		bufio.NewReader(strings.NewReader("*2\r\n$0\r\n\r\n$0\r\n\r\n")), 40)
+	if !errors.Is(err, errRequestTooLarge) {
+		t.Fatalf("per-argument overhead err = %v, want errRequestTooLarge", err)
+	}
+}
+
+func TestReadBulkOverBudgetDoesNotReadPayload(t *testing.T) {
+	// The header alone is enough to reject this, so an absent 512 MiB payload
+	// must not change the error or force an allocation.
+	_, err := readBulk(bufio.NewReader(strings.NewReader("$536870912\r\n")), 1024)
+	if !errors.Is(err, errRequestTooLarge) {
+		t.Fatalf("err = %v, want errRequestTooLarge", err)
+	}
+}
+
 // Incomplete input must surface as an I/O error, never as a protocol error:
 // real Redis simply keeps waiting for the rest of the bytes.
 func TestReadRequestIncomplete(t *testing.T) {

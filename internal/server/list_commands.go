@@ -9,16 +9,16 @@ import (
 )
 
 func registerListCommands(reg *Registry, st *store.Store) {
-	reg.Register(Command{Name: "lpush", Arity: -3, Flags: FlagWrite, Handler: func(args [][]byte, out *protocol.Encoder) {
+	reg.Register(Command{Name: "lpush", Arity: -3, Handler: func(args [][]byte, out *protocol.Encoder) {
 		pushList(st, args, true, out)
 	}})
-	reg.Register(Command{Name: "rpush", Arity: -3, Flags: FlagWrite, Handler: func(args [][]byte, out *protocol.Encoder) {
+	reg.Register(Command{Name: "rpush", Arity: -3, Handler: func(args [][]byte, out *protocol.Encoder) {
 		pushList(st, args, false, out)
 	}})
-	reg.Register(Command{Name: "lpop", Arity: -2, Flags: FlagWrite, Handler: func(args [][]byte, out *protocol.Encoder) {
+	reg.Register(Command{Name: "lpop", Arity: -2, Handler: func(args [][]byte, out *protocol.Encoder) {
 		popList(st, args, true, "lpop", out)
 	}})
-	reg.Register(Command{Name: "rpop", Arity: -2, Flags: FlagWrite, Handler: func(args [][]byte, out *protocol.Encoder) {
+	reg.Register(Command{Name: "rpop", Arity: -2, Handler: func(args [][]byte, out *protocol.Encoder) {
 		popList(st, args, false, "rpop", out)
 	}})
 	reg.Register(Command{Name: "lrange", Arity: 4, Handler: func(args [][]byte, out *protocol.Encoder) {
@@ -30,66 +30,106 @@ func registerListCommands(reg *Registry, st *store.Store) {
 	reg.Register(Command{Name: "lindex", Arity: 3, Handler: func(args [][]byte, out *protocol.Encoder) {
 		lindexCommand(st, args, out)
 	}})
-	reg.Register(Command{Name: "lset", Arity: 4, Flags: FlagWrite, Handler: func(args [][]byte, out *protocol.Encoder) {
+	reg.Register(Command{Name: "lset", Arity: 4, Handler: func(args [][]byte, out *protocol.Encoder) {
 		lsetCommand(st, args, out)
 	}})
-	reg.Register(Command{Name: "lrem", Arity: 4, Flags: FlagWrite, Handler: func(args [][]byte, out *protocol.Encoder) {
+	reg.Register(Command{Name: "lrem", Arity: 4, Handler: func(args [][]byte, out *protocol.Encoder) {
 		lremCommand(st, args, out)
 	}})
-	reg.Register(Command{Name: "ltrim", Arity: 4, Flags: FlagWrite, Handler: func(args [][]byte, out *protocol.Encoder) {
+	reg.Register(Command{Name: "ltrim", Arity: 4, Handler: func(args [][]byte, out *protocol.Encoder) {
 		ltrimCommand(st, args, out)
 	}})
 }
 
-func listValue(st *store.Store, key string) ([][]byte, bool, string) {
-	v, ok := st.Lookup(key)
-	if !ok {
-		return nil, false, ""
-	}
-	if v.Kind != store.KindList {
-		return nil, true, protocol.WrongType
-	}
-	return v.List, true, ""
+func listValue(st *store.Store, key string) (store.Value, bool, string) {
+	return lookupTyped(st, key, store.KindList)
 }
 
-func saveList(st *store.Store, key string, list [][]byte) {
-	if len(list) == 0 {
+func listView(v store.Value) [][]byte {
+	return v.List[v.ListHead:]
+}
+
+func saveListValue(st *store.Store, key string, v store.Value) {
+	if len(v.List) == v.ListHead {
 		st.Delete(key)
 		return
 	}
-	st.SetPreservingTTL(key, store.Value{Kind: store.KindList, List: list})
+	v.Kind = store.KindList
+	st.SetPreservingTTL(key, v)
+}
+
+func saveListState(st *store.Store, key string, base [][]byte, head int) {
+	if len(base) == head {
+		st.Delete(key)
+		return
+	}
+	base, head = listStorage(base, head, len(base)-head)
+	saveListValue(st, key, store.Value{Kind: store.KindList, List: base, ListHead: head})
+}
+
+// listStorage trims to the live span and keeps front headroom for LPUSH; it
+// reallocates when the front gap is too small or the backing array is over 2x.
+func listStorage(base [][]byte, head, length int) ([][]byte, int) {
+	if length == 0 {
+		return nil, 0
+	}
+	headroom := length / 2
+	if headroom < 1 {
+		headroom = 1
+	}
+	total := head + length
+	if head <= headroom && total <= len(base) && cap(base) <= 2*total {
+		return base[:total], head
+	}
+	next := make([][]byte, length+headroom)
+	copy(next[headroom:], base[head:head+length])
+	return next, headroom
 }
 
 func pushList(st *store.Store, args [][]byte, left bool, out *protocol.Encoder) {
 	key := string(args[0])
 	elements := args[1:]
-	list, exists, errMsg := listValue(st, key)
+	v, exists, errMsg := listValue(st, key)
 	if errMsg != "" {
 		out.Error(errMsg)
 		return
 	}
-	var next [][]byte
-	if !left && exists && cap(list)-len(list) >= len(elements) {
-		next = list[:len(list)+len(elements)]
-		copy(next[len(list):], elements)
-	} else {
-		next = make([][]byte, 0, len(list)+len(elements))
-		if left {
-			for i := len(elements) - 1; i >= 0; i-- {
-				next = append(next, elements[i])
-			}
-			next = append(next, list...)
-		} else {
-			next = append(next, list...)
-			next = append(next, elements...)
-		}
-	}
 	if exists {
-		st.SetPreservingTTL(key, store.Value{Kind: store.KindList, List: next})
-	} else {
-		st.SetList(key, next)
+		v.List = v.List[:v.ListHead+len(listView(v))]
 	}
-	out.Int(int64(len(next)))
+	length := len(v.List) - v.ListHead
+
+	if !left {
+		v.List = append(v.List, elements...)
+		v.List, v.ListHead = listStorage(v.List, v.ListHead, length+len(elements))
+		saveListValue(st, key, v)
+		out.Int(int64(length + len(elements)))
+		return
+	}
+
+	n := len(elements)
+	if v.ListHead >= n {
+		oldHead := v.ListHead
+		for i, element := range elements {
+			v.List[oldHead-1-i] = element
+		}
+		v.ListHead = oldHead - n
+		saveListValue(st, key, v)
+		out.Int(int64(length + n))
+		return
+	}
+
+	headroom := (length + n) / 2
+	if headroom < 1 {
+		headroom = 1
+	}
+	base := make([][]byte, length+n+headroom)
+	for i, element := range elements {
+		base[headroom+n-1-i] = element
+	}
+	copy(base[headroom+n:], v.List[v.ListHead:])
+	saveListValue(st, key, store.Value{Kind: store.KindList, List: base, ListHead: headroom})
+	out.Int(int64(length + n))
 }
 
 func popList(st *store.Store, args [][]byte, left bool, name string, out *protocol.Encoder) {
@@ -108,7 +148,8 @@ func popList(st *store.Store, args [][]byte, left bool, name string, out *protoc
 		count = n
 	}
 
-	list, exists, errMsg := listValue(st, string(args[0]))
+	key := string(args[0])
+	v, exists, errMsg := listValue(st, key)
 	if errMsg != "" {
 		out.Error(errMsg)
 		return
@@ -121,19 +162,20 @@ func popList(st *store.Store, args [][]byte, left bool, name string, out *protoc
 		}
 		return
 	}
+	length := len(v.List) - v.ListHead
 
 	if !hasCount {
 		if left {
-			popped := list[0]
-			list[0] = nil
+			popped := v.List[v.ListHead]
 			out.Bulk(popped)
-			saveList(st, string(args[0]), list[1:])
+			v.List[v.ListHead] = nil
+			saveListState(st, key, v.List, v.ListHead+1)
 		} else {
-			last := len(list) - 1
-			popped := list[last]
-			list[last] = nil
+			last := len(v.List) - 1
+			popped := v.List[last]
 			out.Bulk(popped)
-			saveList(st, string(args[0]), list[:last])
+			v.List[last] = nil
+			saveListState(st, key, v.List[:last], v.ListHead)
 		}
 		return
 	}
@@ -141,24 +183,24 @@ func popList(st *store.Store, args [][]byte, left bool, name string, out *protoc
 		out.ArrayHeader(0)
 		return
 	}
-	take := len(list)
+	take := length
 	if count < int64(take) {
 		take = int(count)
 	}
 	out.ArrayHeader(take)
 	if left {
 		for i := 0; i < take; i++ {
-			out.Bulk(list[i])
-			list[i] = nil
+			out.Bulk(v.List[v.ListHead+i])
+			v.List[v.ListHead+i] = nil
 		}
-		saveList(st, string(args[0]), list[take:])
+		saveListState(st, key, v.List, v.ListHead+take)
 		return
 	}
-	for i := len(list) - 1; i >= len(list)-take; i-- {
-		out.Bulk(list[i])
-		list[i] = nil
+	for i := len(v.List) - 1; i >= len(v.List)-take; i-- {
+		out.Bulk(v.List[i])
+		v.List[i] = nil
 	}
-	saveList(st, string(args[0]), list[:len(list)-take])
+	saveListState(st, key, v.List[:len(v.List)-take], v.ListHead)
 }
 
 func lrangeCommand(st *store.Store, args [][]byte, out *protocol.Encoder) {
@@ -172,7 +214,7 @@ func lrangeCommand(st *store.Store, args [][]byte, out *protocol.Encoder) {
 		out.Error(protocol.NotInteger)
 		return
 	}
-	list, exists, errMsg := listValue(st, string(args[0]))
+	v, exists, errMsg := listValue(st, string(args[0]))
 	if errMsg != "" {
 		out.Error(errMsg)
 		return
@@ -181,6 +223,7 @@ func lrangeCommand(st *store.Store, args [][]byte, out *protocol.Encoder) {
 		out.ArrayHeader(0)
 		return
 	}
+	list := listView(v)
 	start, stop, ok = listBounds(start, stop, int64(len(list)))
 	if !ok {
 		out.ArrayHeader(0)
@@ -193,7 +236,7 @@ func lrangeCommand(st *store.Store, args [][]byte, out *protocol.Encoder) {
 }
 
 func llenCommand(st *store.Store, args [][]byte, out *protocol.Encoder) {
-	list, exists, errMsg := listValue(st, string(args[0]))
+	v, exists, errMsg := listValue(st, string(args[0]))
 	if errMsg != "" {
 		out.Error(errMsg)
 		return
@@ -202,11 +245,11 @@ func llenCommand(st *store.Store, args [][]byte, out *protocol.Encoder) {
 		out.Int(0)
 		return
 	}
-	out.Int(int64(len(list)))
+	out.Int(int64(len(v.List) - v.ListHead))
 }
 
 func lindexCommand(st *store.Store, args [][]byte, out *protocol.Encoder) {
-	list, exists, errMsg := listValue(st, string(args[0]))
+	v, exists, errMsg := listValue(st, string(args[0]))
 	if errMsg != "" {
 		out.Error(errMsg)
 		return
@@ -215,6 +258,7 @@ func lindexCommand(st *store.Store, args [][]byte, out *protocol.Encoder) {
 		out.Null()
 		return
 	}
+	list := listView(v)
 	index, ok := protocol.ParseInt(args[1])
 	if !ok {
 		out.Error(protocol.NotInteger)
@@ -232,7 +276,7 @@ func lindexCommand(st *store.Store, args [][]byte, out *protocol.Encoder) {
 
 func lsetCommand(st *store.Store, args [][]byte, out *protocol.Encoder) {
 	key := string(args[0])
-	list, exists, errMsg := listValue(st, key)
+	v, exists, errMsg := listValue(st, key)
 	if errMsg != "" {
 		out.Error(errMsg)
 		return
@@ -241,6 +285,7 @@ func lsetCommand(st *store.Store, args [][]byte, out *protocol.Encoder) {
 		out.Error(protocol.NoSuchKey)
 		return
 	}
+	list := listView(v)
 	index, ok := protocol.ParseInt(args[1])
 	if !ok {
 		out.Error(protocol.NotInteger)
@@ -254,7 +299,7 @@ func lsetCommand(st *store.Store, args [][]byte, out *protocol.Encoder) {
 		return
 	}
 	list[index] = args[2]
-	st.SetPreservingTTL(key, store.Value{Kind: store.KindList, List: list})
+	saveListValue(st, key, v)
 	out.Simple("OK")
 }
 
@@ -269,7 +314,7 @@ func lremCommand(st *store.Store, args [][]byte, out *protocol.Encoder) {
 		return
 	}
 	key := string(args[0])
-	list, exists, errMsg := listValue(st, key)
+	v, exists, errMsg := listValue(st, key)
 	if errMsg != "" {
 		out.Error(errMsg)
 		return
@@ -278,6 +323,7 @@ func lremCommand(st *store.Store, args [][]byte, out *protocol.Encoder) {
 		out.Int(0)
 		return
 	}
+	list := listView(v)
 
 	limit := count
 	if limit < 0 {
@@ -288,8 +334,8 @@ func lremCommand(st *store.Store, args [][]byte, out *protocol.Encoder) {
 	}
 	var removed int64
 	if count >= 0 {
-		oldLen := len(list)
-		next := list[:0]
+		head := v.ListHead
+		next := v.List[head:head]
 		for _, element := range list {
 			if removed < limit && bytes.Equal(element, args[2]) {
 				removed++
@@ -297,10 +343,12 @@ func lremCommand(st *store.Store, args [][]byte, out *protocol.Encoder) {
 			}
 			next = append(next, element)
 		}
-		for i := len(next); i < oldLen; i++ {
-			list[i] = nil
+		for i := head + len(next); i < len(v.List); i++ {
+			v.List[i] = nil
 		}
-		list = next
+		if removed > 0 {
+			saveListState(st, key, v.List[:head+len(next)], head)
+		}
 	} else {
 		next := make([][]byte, 0, len(list))
 		for i := len(list) - 1; i >= 0; i-- {
@@ -313,10 +361,9 @@ func lremCommand(st *store.Store, args [][]byte, out *protocol.Encoder) {
 		for i, j := 0, len(next)-1; i < j; i, j = i+1, j-1 {
 			next[i], next[j] = next[j], next[i]
 		}
-		list = next
-	}
-	if removed > 0 {
-		saveList(st, key, list)
+		if removed > 0 {
+			saveListValue(st, key, store.Value{Kind: store.KindList, List: rightSize(next)})
+		}
 	}
 	out.Int(removed)
 }
@@ -333,7 +380,7 @@ func ltrimCommand(st *store.Store, args [][]byte, out *protocol.Encoder) {
 		return
 	}
 	key := string(args[0])
-	list, exists, errMsg := listValue(st, key)
+	v, exists, errMsg := listValue(st, key)
 	if errMsg != "" {
 		out.Error(errMsg)
 		return
@@ -342,6 +389,7 @@ func ltrimCommand(st *store.Store, args [][]byte, out *protocol.Encoder) {
 		out.Simple("OK")
 		return
 	}
+	list := listView(v)
 	start, stop, ok = listBounds(start, stop, int64(len(list)))
 	if !ok {
 		st.Delete(key)
@@ -352,13 +400,16 @@ func ltrimCommand(st *store.Store, args [][]byte, out *protocol.Encoder) {
 		out.Simple("OK")
 		return
 	}
-	for i := int64(0); i < start; i++ {
-		list[i] = nil
+	head := v.ListHead
+	newHead := head + int(start)
+	keptEnd := newHead + int(stop-start+1)
+	for i := head; i < newHead; i++ {
+		v.List[i] = nil
 	}
-	for i := stop + 1; i < int64(len(list)); i++ {
-		list[i] = nil
+	for i := keptEnd; i < len(v.List); i++ {
+		v.List[i] = nil
 	}
-	st.SetPreservingTTL(key, store.Value{Kind: store.KindList, List: list[start : stop+1]})
+	saveListState(st, key, v.List[:keptEnd], newHead)
 	out.Simple("OK")
 }
 

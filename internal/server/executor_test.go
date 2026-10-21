@@ -23,7 +23,6 @@ func TestExecutorSerializesCommands(t *testing.T) {
 	reg.Register(Command{
 		Name:  "seq",
 		Arity: 3,
-		Flags: FlagWrite,
 		Handler: func(args [][]byte, out *protocol.Encoder) {
 			seq++
 			seen = append(seen, seq)

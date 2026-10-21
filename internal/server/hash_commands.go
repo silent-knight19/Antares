@@ -15,7 +15,7 @@ import (
 const maxRandomReplyElements = 1_000_000
 
 func registerHashCommands(reg *Registry, st *store.Store) {
-	reg.Register(Command{Name: "hset", Arity: -4, Flags: FlagWrite, Handler: func(args [][]byte, out *protocol.Encoder) {
+	reg.Register(Command{Name: "hset", Arity: -4, Handler: func(args [][]byte, out *protocol.Encoder) {
 		hsetCommand(st, args, out)
 	}})
 	reg.Register(Command{Name: "hget", Arity: 3, Handler: func(args [][]byte, out *protocol.Encoder) {
@@ -24,7 +24,7 @@ func registerHashCommands(reg *Registry, st *store.Store) {
 	reg.Register(Command{Name: "hmget", Arity: -3, Handler: func(args [][]byte, out *protocol.Encoder) {
 		hmgetCommand(st, args, out)
 	}})
-	reg.Register(Command{Name: "hdel", Arity: -3, Flags: FlagWrite, Handler: func(args [][]byte, out *protocol.Encoder) {
+	reg.Register(Command{Name: "hdel", Arity: -3, Handler: func(args [][]byte, out *protocol.Encoder) {
 		hdelCommand(st, args, out)
 	}})
 	reg.Register(Command{Name: "hlen", Arity: 2, Handler: func(args [][]byte, out *protocol.Encoder) {
@@ -48,14 +48,7 @@ func registerHashCommands(reg *Registry, st *store.Store) {
 }
 
 func hashValue(st *store.Store, key string) (store.Value, bool, string) {
-	v, ok := st.Lookup(key)
-	if !ok {
-		return store.Value{}, false, ""
-	}
-	if v.Kind != store.KindHash {
-		return store.Value{}, true, protocol.WrongType
-	}
-	return v, true, ""
+	return lookupTyped(st, key, store.KindHash)
 }
 
 func hashIndex(hash []store.HashEntry, field []byte) int {
@@ -92,10 +85,7 @@ func hsetCommand(st *store.Store, args [][]byte, out *protocol.Encoder) {
 	hash := v.Hash
 	index := v.HashIndex
 	if index == nil {
-		index = make(map[string]int, len(hash))
-		for i, entry := range hash {
-			index[string(entry.Field)] = i
-		}
+		index = buildHashIndex(hash)
 	}
 	added := int64(0)
 	for i := 1; i < len(args); i += 2 {
@@ -163,38 +153,71 @@ func hdelCommand(st *store.Store, args [][]byte, out *protocol.Encoder) {
 		return
 	}
 	hash := v.Hash
-	oldLen := len(hash)
+	index := v.HashIndex
+	if index == nil {
+		index = buildHashIndex(hash)
+	}
+	targets := make(map[string]struct{}, len(args)-1)
+	for _, field := range args[1:] {
+		targets[string(field)] = struct{}{}
+	}
+	hash, removed := deleteHashFields(hash, index, targets)
+	if removed > 0 {
+		if len(hash) == 0 {
+			st.Delete(key)
+		} else {
+			hash = rightSize(hash)
+			st.SetPreservingTTL(key, store.Value{Kind: store.KindHash, Hash: hash, HashIndex: index})
+		}
+	}
+	out.Int(removed)
+}
+
+// hashOrderedFields is Redis's default hash-max-listpack-entries. Below it,
+// HGETALL order is observable insertion order, so deletions shift; above it,
+// order is unspecified and deletion can swap-remove in O(1).
+const hashOrderedFields = 512
+
+func deleteHashFields(hash []store.HashEntry, index map[string]int, targets map[string]struct{}) ([]store.HashEntry, int64) {
+	if len(hash) > hashOrderedFields {
+		removed := int64(0)
+		for field := range targets {
+			pos, ok := index[field]
+			if !ok {
+				continue
+			}
+			last := len(hash) - 1
+			if pos != last {
+				hash[pos] = hash[last]
+				index[string(hash[pos].Field)] = pos
+			}
+			hash[last] = store.HashEntry{}
+			hash = hash[:last]
+			delete(index, field)
+			removed++
+		}
+		return hash, removed
+	}
+
 	next := hash[:0]
 	removed := int64(0)
 	for _, entry := range hash {
-		deleted := false
-		for _, field := range args[1:] {
-			if bytes.Equal(entry.Field, field) {
-				deleted = true
-				break
-			}
-		}
-		if deleted {
+		if _, ok := targets[string(entry.Field)]; ok {
 			removed++
 			continue
 		}
 		next = append(next, entry)
 	}
 	if removed > 0 {
-		if len(next) == 0 {
-			st.Delete(key)
-		} else {
-			for i := len(next); i < oldLen; i++ {
-				hash[i] = store.HashEntry{}
-			}
-			index := make(map[string]int, len(next))
-			for i, entry := range next {
-				index[string(entry.Field)] = i
-			}
-			st.SetPreservingTTL(key, store.Value{Kind: store.KindHash, Hash: next, HashIndex: index})
+		for i := len(next); i < len(hash); i++ {
+			hash[i] = store.HashEntry{}
+		}
+		clear(index)
+		for i, entry := range next {
+			index[string(entry.Field)] = i
 		}
 	}
-	out.Int(removed)
+	return next, removed
 }
 
 func hlenCommand(st *store.Store, args [][]byte, out *protocol.Encoder) {
@@ -348,9 +371,9 @@ func hrandfieldCommand(st *store.Store, args [][]byte, out *protocol.Encoder) {
 			emit(hash[rand.IntN(len(hash))])
 			return
 		}
-		for _, index := range rand.Perm(len(hash))[:take] {
+		eachDistinctIndex(len(hash), take, func(index int) {
 			emit(hash[index])
-		}
+		})
 		return
 	}
 

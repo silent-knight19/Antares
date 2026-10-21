@@ -22,7 +22,8 @@ func TestSetBasics(t *testing.T) {
 		{[]string{"SISMEMBER", "s", "z"}, ":0\r\n"},
 		{[]string{"SCARD", "s"}, ":4\r\n"},
 		{[]string{"SREM", "s", "b", "z", "b"}, ":1\r\n"},
-		{[]string{"SMEMBERS", "s"}, "*3\r\n$1\r\na\r\n$1\r\nc\r\n$1\r\nd\r\n"},
+		// Sets are unordered; SREM swap-removes, so the last member fills b's slot.
+		{[]string{"SMEMBERS", "s"}, "*3\r\n$1\r\na\r\n$1\r\nd\r\n$1\r\nc\r\n"},
 		{[]string{"SREM", "s", "a", "c", "d"}, ":3\r\n"},
 		{[]string{"EXISTS", "s"}, ":0\r\n"},
 		{[]string{"SMEMBERS", "missing"}, "*0\r\n"},

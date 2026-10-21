@@ -12,13 +12,13 @@ import (
 )
 
 func registerStringCommands(reg *Registry, st *store.Store) {
-	reg.Register(Command{Name: "set", Arity: -3, Flags: FlagWrite, Handler: func(args [][]byte, out *protocol.Encoder) {
+	reg.Register(Command{Name: "set", Arity: -3, Handler: func(args [][]byte, out *protocol.Encoder) {
 		setCommand(st, args, out)
 	}})
 	reg.Register(Command{Name: "get", Arity: 2, Handler: func(args [][]byte, out *protocol.Encoder) {
 		getCommand(st, args, out)
 	}})
-	reg.Register(Command{Name: "del", Arity: -2, Flags: FlagWrite, Handler: func(args [][]byte, out *protocol.Encoder) {
+	reg.Register(Command{Name: "del", Arity: -2, Handler: func(args [][]byte, out *protocol.Encoder) {
 		delCommand(st, args, out)
 	}})
 	reg.Register(Command{Name: "exists", Arity: -2, Handler: func(args [][]byte, out *protocol.Encoder) {
@@ -27,37 +27,37 @@ func registerStringCommands(reg *Registry, st *store.Store) {
 	reg.Register(Command{Name: "type", Arity: 2, Handler: func(args [][]byte, out *protocol.Encoder) {
 		typeCommand(st, args, out)
 	}})
-	reg.Register(Command{Name: "mset", Arity: -3, Flags: FlagWrite, Handler: func(args [][]byte, out *protocol.Encoder) {
+	reg.Register(Command{Name: "mset", Arity: -3, Handler: func(args [][]byte, out *protocol.Encoder) {
 		msetCommand(st, args, out)
 	}})
 	reg.Register(Command{Name: "mget", Arity: -2, Handler: func(args [][]byte, out *protocol.Encoder) {
 		mgetCommand(st, args, out)
 	}})
-	reg.Register(Command{Name: "incr", Arity: 2, Flags: FlagWrite, Handler: func(args [][]byte, out *protocol.Encoder) {
+	reg.Register(Command{Name: "incr", Arity: 2, Handler: func(args [][]byte, out *protocol.Encoder) {
 		incrDecrCommand(st, args[0], 1, out)
 	}})
-	reg.Register(Command{Name: "decr", Arity: 2, Flags: FlagWrite, Handler: func(args [][]byte, out *protocol.Encoder) {
+	reg.Register(Command{Name: "decr", Arity: 2, Handler: func(args [][]byte, out *protocol.Encoder) {
 		incrDecrCommand(st, args[0], -1, out)
 	}})
-	reg.Register(Command{Name: "incrby", Arity: 3, Flags: FlagWrite, Handler: func(args [][]byte, out *protocol.Encoder) {
+	reg.Register(Command{Name: "incrby", Arity: 3, Handler: func(args [][]byte, out *protocol.Encoder) {
 		incrByCommand(st, args, out)
 	}})
-	reg.Register(Command{Name: "decrby", Arity: 3, Flags: FlagWrite, Handler: func(args [][]byte, out *protocol.Encoder) {
+	reg.Register(Command{Name: "decrby", Arity: 3, Handler: func(args [][]byte, out *protocol.Encoder) {
 		decrByCommand(st, args, out)
 	}})
-	reg.Register(Command{Name: "incrbyfloat", Arity: 3, Flags: FlagWrite, Handler: func(args [][]byte, out *protocol.Encoder) {
+	reg.Register(Command{Name: "incrbyfloat", Arity: 3, Handler: func(args [][]byte, out *protocol.Encoder) {
 		incrByFloatCommand(st, args, out)
 	}})
-	reg.Register(Command{Name: "append", Arity: 3, Flags: FlagWrite, Handler: func(args [][]byte, out *protocol.Encoder) {
+	reg.Register(Command{Name: "append", Arity: 3, Handler: func(args [][]byte, out *protocol.Encoder) {
 		appendCommand(st, args, out)
 	}})
 	reg.Register(Command{Name: "strlen", Arity: 2, Handler: func(args [][]byte, out *protocol.Encoder) {
 		strlenCommand(st, args, out)
 	}})
-	reg.Register(Command{Name: "getset", Arity: 3, Flags: FlagWrite, Handler: func(args [][]byte, out *protocol.Encoder) {
+	reg.Register(Command{Name: "getset", Arity: 3, Handler: func(args [][]byte, out *protocol.Encoder) {
 		getsetCommand(st, args, out)
 	}})
-	reg.Register(Command{Name: "setnx", Arity: 3, Flags: FlagWrite, Handler: func(args [][]byte, out *protocol.Encoder) {
+	reg.Register(Command{Name: "setnx", Arity: 3, Handler: func(args [][]byte, out *protocol.Encoder) {
 		setnxCommand(st, args, out)
 	}})
 }
@@ -67,14 +67,8 @@ const maxStringLen = 512 << 20
 // stringValue returns a live string value. The final string is a ready-to-send
 // error body when the key exists with another type.
 func stringValue(st *store.Store, key string) ([]byte, bool, string) {
-	v, ok := st.Lookup(key)
-	if !ok {
-		return nil, false, ""
-	}
-	if v.Kind != store.KindString {
-		return nil, true, protocol.WrongType
-	}
-	return v.Str, true, ""
+	v, ok, errMsg := lookupTyped(st, key, store.KindString)
+	return v.Str, ok, errMsg
 }
 
 type setOptions struct {
@@ -437,11 +431,6 @@ func formatLongDouble(f *big.Float) string {
 }
 
 func incrByFloatCommand(st *store.Store, args [][]byte, out *protocol.Encoder) {
-	incr, ok := parseLongDouble(args[1])
-	if !ok {
-		out.Error(protocol.NotFloat)
-		return
-	}
 	key := string(args[0])
 	current := new(big.Float).SetPrec(longDoublePrec)
 	value, exists, errMsg := stringValue(st, key)
@@ -450,11 +439,17 @@ func incrByFloatCommand(st *store.Store, args [][]byte, out *protocol.Encoder) {
 		return
 	}
 	if exists {
+		var ok bool
 		current, ok = parseLongDouble(value)
 		if !ok {
 			out.Error(protocol.NotFloat)
 			return
 		}
+	}
+	incr, ok := parseLongDouble(args[1])
+	if !ok {
+		out.Error(protocol.NotFloat)
+		return
 	}
 	// big.Float.Add panics on opposite infinities; Redis returns an error for
 	// any infinite operand before it computes a result.
@@ -501,7 +496,22 @@ func joinAppend(old, add []byte, limit int) ([]byte, bool) {
 	if total > limit {
 		return nil, false
 	}
-	joined := make([]byte, total)
+	if total == 0 && old == nil {
+		return []byte{}, true
+	}
+	if cap(old) >= total {
+		joined := old[:total]
+		copy(joined[len(old):], add)
+		return joined, true
+	}
+	capacity := total
+	if doubled := 2 * len(old); doubled > capacity {
+		capacity = doubled
+	}
+	if capacity > limit {
+		capacity = limit
+	}
+	joined := make([]byte, total, capacity)
 	copy(joined, old)
 	copy(joined[len(old):], add)
 	return joined, true

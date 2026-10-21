@@ -6,14 +6,6 @@ import (
 	"github.com/silent-knight19/antares/internal/protocol"
 )
 
-// CommandFlags describe how a command may touch the keyspace. FlagWrite will
-// drive AOF appends and replica write rejection when those land.
-type CommandFlags uint8
-
-const (
-	FlagWrite CommandFlags = 1 << iota
-)
-
 // CommandHandler executes one command's arguments (the command name is
 // excluded) and writes its reply to out.
 type CommandHandler func(args [][]byte, out *protocol.Encoder)
@@ -23,7 +15,6 @@ type CommandHandler func(args [][]byte, out *protocol.Encoder)
 type Command struct {
 	Name    string
 	Arity   int
-	Flags   CommandFlags
 	Handler CommandHandler
 }
 

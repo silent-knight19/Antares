@@ -87,7 +87,7 @@ Evidence: ADR-012, ADR-019 (Observatory non-goals).
 
 ### Q13. Where is Antares weaker than real Redis?
 
-Known, documented divergences: WATCH uses value-snapshot comparison (a write-then-restore-identical-value does not abort EXEC, while Redis aborts); persistence formats are intentionally not RDB/AOF-file-compatible; no compact encodings (listpack/intset); snapshot transfer for full resync is a framed command stream, larger than RDB for big values; INCRBYFLOAT always uses binary128, while Redis follows the host C `long double` (80-bit on x86-64); `proto-max-bulk-len` is fixed at 512 MiB until CONFIG support lands at P5.3.
+Known, documented divergences: WATCH uses value-snapshot comparison (a write-then-restore-identical-value does not abort EXEC, while Redis aborts); persistence formats are intentionally not RDB/AOF-file-compatible; no compact encodings (listpack/intset); snapshot transfer for full resync is a framed command stream, larger than RDB for big values; INCRBYFLOAT always uses binary128, while Redis follows the host C `long double` (80-bit on x86-64); `proto-max-bulk-len` is fixed at 512 MiB and the aggregate request budget at 1 GiB until CONFIG support lands at P5.3.
 Evidence: `COMPATIBILITY.md`; ADR-004, ADR-007, ADR-008.
 
 ---

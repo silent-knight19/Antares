@@ -45,8 +45,9 @@ Rationale for pinning strategy: ADR-020 (tooling policy, digest pinning) and PLA
 | COMMAND introspection | `COMMAND`, `COMMAND DOCS`, and `COMMAND INFO` return an empty array; redis-cli connects and runs interactively, but command hints/completion are empty | P2.1 stub (PLAN §5); full metadata is out of scope |
 | CONFIG surface | Only `CONFIG GET hz` and `CONFIG SET hz` are implemented; other parameters return an empty GET result or `Unknown option`, rather than Redis's full config matrix | P3.3 partial; full allowlist at P5.3 |
 | SET EXAT/PXAT | Redis accepts the absolute-expiry SET options; Antares returns `ERR syntax error` because P2.3 scope is EX/PX | PLAN §5 P2.3; revisit at P5.3 |
+| LSET index truncation | Indices outside the C `int` range are rejected with `ERR index out of range`; Redis truncates them to a 32-bit `int` (for example `4294967295` becomes `-1` and updates the tail) | Intentional safety choice: Antares keeps `int64` indices and treats C truncation as a Redis bug rather than compatibility |
 | INCRBYFLOAT precision | Antares always computes with IEEE binary128 (113-bit mantissa), matching C `long double` on the pinned aarch64 reference. On x86-64 Redis uses 80-bit `long double`, so its last printed digits can differ from this build | ADR-021; required for bit-exact parity with the pinned oracle |
-| Runtime bulk limit | `proto-max-bulk-len` is fixed at 512 MiB in both the parser and APPEND; `CONFIG SET proto-max-bulk-len` is unavailable until the P5.3 CONFIG allowlist | PLAN §5 P5.3; revisit with CONFIG support |
+| Runtime request limit | `proto-max-bulk-len` is fixed at 512 MiB, and each request has a 1 GiB aggregate budget (payload plus 32 bytes per argument, Redis's default `client-query-buffer-limit`); a larger request closes the connection without a reply. `CONFIG SET` for either limit is unavailable until the P5.3 CONFIG allowlist | PLAN §5 P5.3; revisit with CONFIG support |
 | Tcl coverage | `make tcl-expire` runs a 39-test allowlist and `make tcl-incr` a 26-test allowlist; tests requiring commands beyond the current surface (SETEX/PSETEX/GETEX, SETRANGE, EXPIRETIME, DEBUG/OBJECT, KEYS/SCAN, AOF/repl, cluster) are skipped until their phases | PLAN §5 P3.4/P4.5/P9.2 |
 | Persistence file formats | Framed AOF and framed snapshot stream are **not** Redis-compatible files: Antares cannot load existing `.rdb`/`.aof`, and Redis cannot load ours | ADR-004, ADR-007 |
 | Value encodings | No listpack/intset/embstr encodings (non-goal); the exact `OBJECT ENCODING` surface will be decided at P2/P5 and documented here when it lands | ADR-012 |
@@ -58,7 +59,8 @@ Rationale for pinning strategy: ADR-020 (tooling policy, digest pinning) and PLA
 
 ## Known implementation limits
 
-- Lists are slice-backed: `LPUSH` copies the list and repeated head pushes are O(N²); `RPUSH` reuses spare capacity, and pops/`LTRIM`/`LREM` clear removed slots. A deque is a later optimization, not a compatibility difference.
+- Lists are slice-backed with front headroom: `LPUSH`/`RPUSH`/`LPOP`/`RPOP` amortize to O(1) while capacity lasts, and `LTRIM`/`LREM` clear and release removed slots. A few shifts still copy when headroom is exhausted; a deque remains a later optimization, not a compatibility difference.
+- Hash field order is insertion order for hashes up to 512 fields. Above that, `HDEL` uses swap-remove, so `HGETALL`/`HKEYS`/`HVALS` order after a delete is no longer insertion order; Redis also gives no order guarantee for hashtable-encoded hashes.
 
 ## Open questions (decide at the phase noted)
 

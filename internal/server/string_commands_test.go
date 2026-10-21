@@ -377,6 +377,11 @@ func TestIncrByFloat(t *testing.T) {
 		}
 	}
 
+	runStrings(exec, "RPUSH", "wrongtype", "a")
+	if got := runStrings(exec, "INCRBYFLOAT", "wrongtype", "abc"); got != "-WRONGTYPE Operation against a key holding the wrong kind of value\r\n" {
+		t.Fatalf("INCRBYFLOAT wrong type with bad float = %q", got)
+	}
+
 	longOK := strings.Repeat("0", 5116) + "1.5"
 	if got := runStrings(exec, "INCRBYFLOAT", "longok", longOK); got != "$3\r\n1.5\r\n" {
 		t.Fatalf("INCRBYFLOAT 5119-byte value = %q", got)
@@ -505,6 +510,23 @@ func TestEmptyKeyAndBinaryValues(t *testing.T) {
 		if got := runStrings(exec, tc.args...); got != tc.want {
 			t.Fatalf("%q = %q, want %q", tc.args, got, tc.want)
 		}
+	}
+}
+
+func TestAppendReusesCapacity(t *testing.T) {
+	old := make([]byte, 1, 8)
+	old[0] = 'a'
+	got, ok := joinAppend(old, []byte("bc"), 16)
+	if !ok || string(got) != "abc" {
+		t.Fatalf("joinAppend = %q, %v", got, ok)
+	}
+	if &got[0] != &old[0] {
+		t.Fatal("joinAppend copied despite spare capacity")
+	}
+
+	grown, ok := joinAppend([]byte("a"), []byte("b"), 16)
+	if !ok || string(grown) != "ab" || cap(grown) < 2 {
+		t.Fatalf("growing append = %q cap %d, %v", grown, cap(grown), ok)
 	}
 }
 

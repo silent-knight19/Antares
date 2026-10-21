@@ -2,6 +2,7 @@ package protocol
 
 import (
 	"bufio"
+	"errors"
 	"io"
 )
 
@@ -10,7 +11,15 @@ const (
 	maxMultibulkLen = 1<<31 - 1         // Redis rejects multibulk counts past INT_MAX
 	maxBulkLen      = 512 * 1024 * 1024 // proto-max-bulk-len default
 	bulkReadCap     = 64 * 1024         // chunk size/growth start for payloads above this
+
+	// maxRequestBytes mirrors Redis's client-query-buffer-limit default.
+	// requestArgOverhead accounts for the slice/argument bookkeeping that
+	// survives after the payload is read.
+	maxRequestBytes    = 1 << 30
+	requestArgOverhead = 32
 )
+
+var errRequestTooLarge = errors.New("request too large")
 
 // Request is one client command: the verb followed by binary-safe arguments.
 // Pipelined requests are consumed one ReadRequest call each.
@@ -56,6 +65,10 @@ func ReadRequest(br *bufio.Reader) (Request, error) {
 // readMultibulk parses "*<count>\r\n" plus count bulk strings. skip mirrors
 // Redis: count <= 0 consumes the header and nothing else.
 func readMultibulk(br *bufio.Reader) (Request, bool, error) {
+	return readMultibulkLimit(br, maxRequestBytes)
+}
+
+func readMultibulkLimit(br *bufio.Reader, budget int64) (Request, bool, error) {
 	if _, err := br.ReadByte(); err != nil {
 		return nil, false, unexpectedEOF(err)
 	}
@@ -76,16 +89,20 @@ func readMultibulk(br *bufio.Reader) (Request, bool, error) {
 	}
 	req := make(Request, 0, capHint)
 	for i := int64(0); i < n; i++ {
-		arg, err := readBulk(br)
+		if budget <= requestArgOverhead {
+			return nil, false, errRequestTooLarge
+		}
+		arg, err := readBulk(br, budget-requestArgOverhead)
 		if err != nil {
 			return nil, false, err
 		}
+		budget -= int64(len(arg)) + requestArgOverhead
 		req = append(req, arg)
 	}
 	return req, false, nil
 }
 
-func readBulk(br *bufio.Reader) ([]byte, error) {
+func readBulk(br *bufio.Reader, budget int64) ([]byte, error) {
 	line, err := readCountLine(br, "too big bulk count string")
 	if err != nil {
 		return nil, err
@@ -102,6 +119,9 @@ func readBulk(br *bufio.Reader) ([]byte, error) {
 	n, ok := parseCount(line[1:])
 	if !ok || n < 0 || n > maxBulkLen {
 		return nil, &ProtocolError{Msg: "invalid bulk length"}
+	}
+	if n > budget {
+		return nil, errRequestTooLarge
 	}
 	need := n + 2
 	if need <= bulkReadCap {

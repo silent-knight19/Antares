@@ -16,9 +16,10 @@ SHA="3c266ece0abd54ed3b1c912c6eb86b7508cf382cb690ee6649d3843f018f6357"
 TCLSH=${TCLSH:-tclsh}
 command -v "$TCLSH" >/dev/null 2>&1 || { echo "tclsh (8.5+) is required" >&2; exit 1; }
 
-if [ ! -d "$SRC/tests/unit" ]; then
+VERIFIED="$CACHE/redis-7.4.11.verified"
+TARBALL="$CACHE/redis-7.4.11.tar.gz"
+if [ ! -d "$SRC/tests/unit" ] || [ ! -f "$VERIFIED" ]; then
     mkdir -p "$CACHE"
-    TARBALL="$CACHE/redis-7.4.11.tar.gz"
     if [ ! -f "$TARBALL" ]; then
         echo "Downloading Redis 7.4.11 tests..."
         curl -fsSL "$URL" -o "$TARBALL"
@@ -28,7 +29,9 @@ if [ ! -d "$SRC/tests/unit" ]; then
     else
         echo "$SHA  $TARBALL" | shasum -a 256 -c - >/dev/null
     fi
+    rm -rf "$SRC"
     tar -xzf "$TARBALL" -C "$CACHE"
+    : >"$VERIFIED"
 fi
 
 TMP=$(mktemp -d)

@@ -15,12 +15,14 @@ const (
 )
 
 // Value is a typed keyspace entry. String values use Str; list values use
-// List in head-to-tail order. HashIndex/SetIndex map field/member bytes to
-// their slice position so bulk mutations do not rescan the whole collection.
+// List, where the live elements are List[ListHead:]. The unused prefix is
+// spare room for LPUSH. HashIndex/SetIndex map field/member bytes to their
+// slice position so bulk mutations do not rescan the whole collection.
 type Value struct {
 	Kind      Kind
 	Str       []byte
 	List      [][]byte
+	ListHead  int
 	Hash      []HashEntry
 	HashIndex map[string]int
 	Set       [][]byte
@@ -61,16 +63,6 @@ func (s *Store) Lookup(key string) (Value, bool) {
 	return s.live(key)
 }
 
-// Get returns a live string value. Missing and non-string keys return false;
-// commands that must distinguish WRONGTYPE use Lookup.
-func (s *Store) Get(key string) ([]byte, bool) {
-	v, ok := s.live(key)
-	if !ok || v.Kind != KindString {
-		return nil, false
-	}
-	return v.Str, true
-}
-
 // Type returns the Redis type name for a live key, or "none".
 func (s *Store) Type(key string) string {
 	v, ok := s.live(key)
@@ -90,60 +82,6 @@ func (s *Store) Set(key string, value []byte) {
 func (s *Store) SetWithTTL(key string, value []byte, expiresAtMs int64) {
 	s.data[key] = Value{Kind: KindString, Str: value}
 	s.expires[key] = expiresAtMs
-}
-
-// SetKeepTTL overwrites value while preserving an existing live expiry.
-func (s *Store) SetKeepTTL(key string, value []byte) {
-	if _, ok := s.live(key); !ok {
-		s.Set(key, value)
-		return
-	}
-	s.data[key] = Value{Kind: KindString, Str: value}
-}
-
-// SetList stores a list and clears any previous expiry.
-func (s *Store) SetList(key string, list [][]byte) {
-	s.data[key] = Value{Kind: KindList, List: list}
-	delete(s.expires, key)
-}
-
-// SetListKeepTTL stores a list while preserving an existing live expiry.
-func (s *Store) SetListKeepTTL(key string, list [][]byte) {
-	if _, ok := s.live(key); !ok {
-		s.SetList(key, list)
-		return
-	}
-	s.data[key] = Value{Kind: KindList, List: list}
-}
-
-// SetHash stores a hash and clears any previous expiry.
-func (s *Store) SetHash(key string, hash []HashEntry) {
-	s.data[key] = Value{Kind: KindHash, Hash: hash, HashIndex: buildHashIndex(hash)}
-	delete(s.expires, key)
-}
-
-// SetHashKeepTTL stores a hash while preserving an existing live expiry.
-func (s *Store) SetHashKeepTTL(key string, hash []HashEntry) {
-	if _, ok := s.live(key); !ok {
-		s.SetHash(key, hash)
-		return
-	}
-	s.data[key] = Value{Kind: KindHash, Hash: hash, HashIndex: buildHashIndex(hash)}
-}
-
-// SetMembers stores a set and clears any previous expiry.
-func (s *Store) SetMembers(key string, members [][]byte) {
-	s.data[key] = Value{Kind: KindSet, Set: members, SetIndex: buildSetIndex(members)}
-	delete(s.expires, key)
-}
-
-// SetMembersKeepTTL stores a set while preserving an existing live expiry.
-func (s *Store) SetMembersKeepTTL(key string, members [][]byte) {
-	if _, ok := s.live(key); !ok {
-		s.SetMembers(key, members)
-		return
-	}
-	s.data[key] = Value{Kind: KindSet, Set: members, SetIndex: buildSetIndex(members)}
 }
 
 // SetPreservingTTL overwrites key without changing its expiry. Callers must

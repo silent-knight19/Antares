@@ -36,12 +36,11 @@ func TestRegistryDispatch(t *testing.T) {
 	}
 }
 
-func TestRegistryLookupCaseInsensitiveAndFlags(t *testing.T) {
+func TestRegistryLookupCaseInsensitive(t *testing.T) {
 	reg := NewRegistry()
 	reg.Register(Command{
 		Name:  "SET",
 		Arity: 3,
-		Flags: FlagWrite,
 		Handler: func(args [][]byte, out *protocol.Encoder) {
 			out.Simple("OK")
 		},
@@ -51,7 +50,7 @@ func TestRegistryLookupCaseInsensitiveAndFlags(t *testing.T) {
 	if !ok {
 		t.Fatal("lookup set: not found")
 	}
-	if cmd.Name != "set" || cmd.Arity != 3 || cmd.Flags != FlagWrite {
+	if cmd.Name != "set" || cmd.Arity != 3 {
 		t.Fatalf("lookup set = %+v", cmd)
 	}
 	if _, ok := reg.Lookup([]byte("nosuchcmd")); ok {

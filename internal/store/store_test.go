@@ -10,7 +10,7 @@ import (
 func TestStoreBasics(t *testing.T) {
 	s := New()
 
-	if _, ok := s.Get("missing"); ok {
+	if _, ok := lookupString(s, "missing"); ok {
 		t.Fatal("Get(missing) found a value")
 	}
 	if s.Exists("missing") {
@@ -21,8 +21,8 @@ func TestStoreBasics(t *testing.T) {
 	}
 
 	s.Set("key", []byte("value"))
-	if got, ok := s.Get("key"); !ok || string(got) != "value" {
-		t.Fatalf("Get(key) = %q, %v; want value, true", got, ok)
+	if got, ok := lookupString(s, "key"); !ok || string(got) != "value" {
+		t.Fatalf("lookupString(key) = %q, %v; want value, true", got, ok)
 	}
 	if !s.Exists("key") {
 		t.Fatal("Exists(key) = false")
@@ -32,7 +32,7 @@ func TestStoreBasics(t *testing.T) {
 	}
 
 	s.Set("key", []byte("new"))
-	if got, _ := s.Get("key"); string(got) != "new" {
+	if got, _ := lookupString(s, "key"); string(got) != "new" {
 		t.Fatalf("Get(key) after overwrite = %q, want new", got)
 	}
 	if !s.Delete("key") {
@@ -49,11 +49,11 @@ func TestStoreExpiryBoundary(t *testing.T) {
 	s.SetWithTTL("key", []byte("value"), 2000)
 
 	f.Advance(time.Second)
-	if _, ok := s.Get("key"); !ok {
+	if _, ok := lookupString(s, "key"); !ok {
 		t.Fatal("key expired at its exact deadline")
 	}
 	f.Advance(time.Millisecond)
-	if _, ok := s.Get("key"); ok {
+	if _, ok := lookupString(s, "key"); ok {
 		t.Fatal("key survived past its deadline")
 	}
 }
@@ -63,7 +63,7 @@ func TestStoreLazyDeleteOnAccess(t *testing.T) {
 		name string
 		call func(*Store)
 	}{
-		{"Get", func(s *Store) { s.Get("dead") }},
+		{"Lookup", func(s *Store) { s.Lookup("dead") }},
 		{"Exists", func(s *Store) { s.Exists("dead") }},
 		{"Delete", func(s *Store) { s.Delete("dead") }},
 		{"ExpiresAt", func(s *Store) { s.ExpiresAt("dead") }},
@@ -82,19 +82,6 @@ func TestStoreLazyDeleteOnAccess(t *testing.T) {
 	}
 }
 
-func TestStoreSetKeepTTLOnExpiredKeyStartsFresh(t *testing.T) {
-	s := NewWithClock(clock.NewFake(time.UnixMilli(1000)))
-	s.SetWithTTL("dead", []byte("old"), 999)
-	s.SetKeepTTL("dead", []byte("new"))
-
-	if got, ok := s.Get("dead"); !ok || string(got) != "new" {
-		t.Fatalf("Get(dead) = %q, %v; want new, true", got, ok)
-	}
-	if _, ok := s.expires["dead"]; ok {
-		t.Fatal("SetKeepTTL preserved an expired deadline")
-	}
-}
-
 func TestStoreLenCountsPhysicalKeys(t *testing.T) {
 	s := NewWithClock(clock.NewFake(time.UnixMilli(1000)))
 	s.Set("live", []byte("value"))
@@ -103,7 +90,7 @@ func TestStoreLenCountsPhysicalKeys(t *testing.T) {
 	if got := s.Len(); got != 2 {
 		t.Fatalf("Len() before access = %d, want 2 physical keys", got)
 	}
-	s.Get("dead")
+	lookupString(s, "dead")
 	if got := s.Len(); got != 1 {
 		t.Fatalf("Len() after lazy delete = %d, want 1", got)
 	}
@@ -131,23 +118,19 @@ func TestStoreExpireSample(t *testing.T) {
 	if got := s.Len(); got != 1 {
 		t.Fatalf("Len after second sample = %d, want 1", got)
 	}
-	if _, ok := s.Get("future"); !ok {
+	if _, ok := lookupString(s, "future"); !ok {
 		t.Fatal("active sample deleted a live key")
 	}
 }
 
-func TestStoreExpiryAndKeepTTL(t *testing.T) {
+func TestStoreExpiryAndOverwrite(t *testing.T) {
 	f := clock.NewFake(time.UnixMilli(1_000_000))
 	s := NewWithClock(f)
 	expiresAt := f.Now().Add(time.Minute).UnixMilli()
 	s.SetWithTTL("key", []byte("value"), expiresAt)
 
-	if got, ok := s.Get("key"); !ok || string(got) != "value" {
-		t.Fatalf("Get(key) = %q, %v; want value, true", got, ok)
-	}
-	s.SetKeepTTL("key", []byte("kept"))
-	if got := s.expires["key"]; got != expiresAt {
-		t.Fatalf("SetKeepTTL expiry = %d, want %d", got, expiresAt)
+	if got, ok := lookupString(s, "key"); !ok || string(got) != "value" {
+		t.Fatalf("lookupString(key) = %q, %v; want value, true", got, ok)
 	}
 	s.Set("key", []byte("plain"))
 	if got := s.expires["key"]; got != 0 {
@@ -155,8 +138,8 @@ func TestStoreExpiryAndKeepTTL(t *testing.T) {
 	}
 
 	s.SetWithTTL("dead", []byte("value"), f.Now().UnixMilli()-1)
-	if _, ok := s.Get("dead"); ok {
-		t.Fatal("Get(dead) found an expired value")
+	if _, ok := lookupString(s, "dead"); ok {
+		t.Fatal("lookupString(dead) found an expired value")
 	}
 	if s.Exists("dead") || s.Len() != 1 {
 		t.Fatalf("expired key still counted: Exists=%v Len=%d", s.Exists("dead"), s.Len())
@@ -166,12 +149,12 @@ func TestStoreExpiryAndKeepTTL(t *testing.T) {
 func TestStoreListValueAndType(t *testing.T) {
 	f := clock.NewFake(time.UnixMilli(1_000_000))
 	s := NewWithClock(f)
-	s.SetList("l", [][]byte{[]byte("a"), []byte("b")})
+	s.SetPreservingTTL("l", Value{Kind: KindList, List: [][]byte{[]byte("a"), []byte("b")}})
 	if got := s.Type("l"); got != "list" {
 		t.Fatalf("Type(list) = %q", got)
 	}
-	if _, ok := s.Get("l"); ok {
-		t.Fatal("Get(list) returned a string")
+	if _, ok := lookupString(s, "l"); ok {
+		t.Fatal("lookupString(list) returned a string")
 	}
 	v, ok := s.Lookup("l")
 	if !ok || v.Kind != KindList || len(v.List) != 2 {
@@ -195,7 +178,7 @@ func TestStoreSetPreservingTTL(t *testing.T) {
 	s := NewWithClock(f)
 	s.SetWithTTL("live", []byte("old"), 2000)
 	s.SetPreservingTTL("live", Value{Kind: KindString, Str: []byte("new")})
-	if got, ok := s.Get("live"); !ok || string(got) != "new" {
+	if got, ok := lookupString(s, "live"); !ok || string(got) != "new" {
 		t.Fatalf("Get(live) = %q, %v; want new, true", got, ok)
 	}
 	if got := s.expires["live"]; got != 2000 {
@@ -207,7 +190,7 @@ func TestStoreSetPreservingTTL(t *testing.T) {
 	if got := s.expires["dead"]; got != 999 {
 		t.Fatalf("SetPreservingTTL expired deadline = %d, want 999", got)
 	}
-	if _, ok := s.Get("dead"); ok {
+	if _, ok := lookupString(s, "dead"); ok {
 		t.Fatal("SetPreservingTTL resurrected an expired key")
 	}
 
@@ -219,12 +202,12 @@ func TestStoreSetPreservingTTL(t *testing.T) {
 
 func TestStoreHashValueAndType(t *testing.T) {
 	s := New()
-	s.SetHash("h", []HashEntry{{Field: []byte("f"), Value: []byte("v")}})
+	s.SetPreservingTTL("h", Value{Kind: KindHash, Hash: []HashEntry{{Field: []byte("f"), Value: []byte("v")}}})
 	if got := s.Type("h"); got != "hash" {
 		t.Fatalf("Type(hash) = %q", got)
 	}
-	if _, ok := s.Get("h"); ok {
-		t.Fatal("Get(hash) returned a string")
+	if _, ok := lookupString(s, "h"); ok {
+		t.Fatal("lookupString(hash) returned a string")
 	}
 	v, ok := s.Lookup("h")
 	if !ok || v.Kind != KindHash || len(v.Hash) != 1 {
@@ -238,12 +221,12 @@ func TestStoreHashValueAndType(t *testing.T) {
 
 func TestStoreSetValueAndType(t *testing.T) {
 	s := New()
-	s.SetMembers("s", [][]byte{[]byte("a"), []byte("b")})
+	s.SetPreservingTTL("s", Value{Kind: KindSet, Set: [][]byte{[]byte("a"), []byte("b")}})
 	if got := s.Type("s"); got != "set" {
 		t.Fatalf("Type(set) = %q", got)
 	}
-	if _, ok := s.Get("s"); ok {
-		t.Fatal("Get(set) returned a string")
+	if _, ok := lookupString(s, "s"); ok {
+		t.Fatal("lookupString(set) returned a string")
 	}
 	v, ok := s.Lookup("s")
 	if !ok || v.Kind != KindSet || len(v.Set) != 2 {
@@ -253,4 +236,12 @@ func TestStoreSetValueAndType(t *testing.T) {
 	if got := s.Type("s"); got != "string" {
 		t.Fatalf("Type after overwrite = %q", got)
 	}
+}
+
+func lookupString(s *Store, key string) ([]byte, bool) {
+	v, ok := s.Lookup(key)
+	if !ok || v.Kind != KindString {
+		return nil, false
+	}
+	return v.Str, true
 }

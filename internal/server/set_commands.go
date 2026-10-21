@@ -10,10 +10,10 @@ import (
 )
 
 func registerSetCommands(reg *Registry, st *store.Store) {
-	reg.Register(Command{Name: "sadd", Arity: -3, Flags: FlagWrite, Handler: func(args [][]byte, out *protocol.Encoder) {
+	reg.Register(Command{Name: "sadd", Arity: -3, Handler: func(args [][]byte, out *protocol.Encoder) {
 		saddCommand(st, args, out)
 	}})
-	reg.Register(Command{Name: "srem", Arity: -3, Flags: FlagWrite, Handler: func(args [][]byte, out *protocol.Encoder) {
+	reg.Register(Command{Name: "srem", Arity: -3, Handler: func(args [][]byte, out *protocol.Encoder) {
 		sremCommand(st, args, out)
 	}})
 	reg.Register(Command{Name: "smembers", Arity: 2, Handler: func(args [][]byte, out *protocol.Encoder) {
@@ -25,7 +25,7 @@ func registerSetCommands(reg *Registry, st *store.Store) {
 	reg.Register(Command{Name: "scard", Arity: 2, Handler: func(args [][]byte, out *protocol.Encoder) {
 		scardCommand(st, args, out)
 	}})
-	reg.Register(Command{Name: "spop", Arity: -2, Flags: FlagWrite, Handler: func(args [][]byte, out *protocol.Encoder) {
+	reg.Register(Command{Name: "spop", Arity: -2, Handler: func(args [][]byte, out *protocol.Encoder) {
 		spopCommand(st, args, out)
 	}})
 	reg.Register(Command{Name: "srandmember", Arity: -2, Handler: func(args [][]byte, out *protocol.Encoder) {
@@ -34,14 +34,7 @@ func registerSetCommands(reg *Registry, st *store.Store) {
 }
 
 func setValue(st *store.Store, key string) (store.Value, bool, string) {
-	v, ok := st.Lookup(key)
-	if !ok {
-		return store.Value{}, false, ""
-	}
-	if v.Kind != store.KindSet {
-		return store.Value{}, true, protocol.WrongType
-	}
-	return v, true, ""
+	return lookupTyped(st, key, store.KindSet)
 }
 
 func setIndex(members [][]byte, member []byte) int {
@@ -74,10 +67,7 @@ func saddCommand(st *store.Store, args [][]byte, out *protocol.Encoder) {
 	members := v.Set
 	index := v.SetIndex
 	if index == nil {
-		index = make(map[string]int, len(members))
-		for i, member := range members {
-			index[string(member)] = i
-		}
+		index = buildSetIndex(members)
 	}
 	added := int64(0)
 	for _, member := range args[1:] {
@@ -107,38 +97,46 @@ func sremCommand(st *store.Store, args [][]byte, out *protocol.Encoder) {
 		return
 	}
 	members := v.Set
-	oldLen := len(members)
-	next := members[:0]
-	removed := int64(0)
-	for _, member := range members {
-		drop := false
-		for _, target := range args[1:] {
-			if bytes.Equal(member, target) {
-				drop = true
-				break
-			}
-		}
-		if drop {
-			removed++
-			continue
-		}
-		next = append(next, member)
+	index := v.SetIndex
+	if index == nil {
+		index = buildSetIndex(members)
 	}
+	targets := make(map[string]struct{}, len(args)-1)
+	for _, member := range args[1:] {
+		targets[string(member)] = struct{}{}
+	}
+	members, removed := removeSetMembers(members, index, targets)
 	if removed > 0 {
-		if len(next) == 0 {
+		if len(members) == 0 {
 			st.Delete(key)
 		} else {
-			for i := len(next); i < oldLen; i++ {
-				members[i] = nil
-			}
-			index := make(map[string]int, len(next))
-			for i, member := range next {
-				index[string(member)] = i
-			}
-			st.SetPreservingTTL(key, store.Value{Kind: store.KindSet, Set: next, SetIndex: index})
+			members = rightSize(members)
+			st.SetPreservingTTL(key, store.Value{Kind: store.KindSet, Set: members, SetIndex: index})
 		}
 	}
 	out.Int(removed)
+}
+
+// removeSetMembers uses the member index and swap-remove: sets are unordered,
+// so this is O(1) per member instead of a full scan and index rebuild.
+func removeSetMembers(members [][]byte, index map[string]int, targets map[string]struct{}) ([][]byte, int64) {
+	removed := int64(0)
+	for member := range targets {
+		pos, ok := index[string(member)]
+		if !ok {
+			continue
+		}
+		last := len(members) - 1
+		if pos != last {
+			members[pos] = members[last]
+			index[string(members[pos])] = pos
+		}
+		members[last] = nil
+		members = members[:last]
+		delete(index, string(member))
+		removed++
+	}
+	return members, removed
 }
 
 func smembersCommand(st *store.Store, args [][]byte, out *protocol.Encoder) {
@@ -232,31 +230,34 @@ func spopCommand(st *store.Store, args [][]byte, out *protocol.Encoder) {
 	if count < int64(take) {
 		take = int(count)
 	}
-	order := rand.Perm(len(members))[:take]
-	selected := make([]bool, len(members))
+	initial := len(members)
+	index := v.SetIndex
+	if index == nil {
+		index = buildSetIndex(members)
+	}
 	out.ArrayHeader(take)
-	for _, index := range order {
-		out.Bulk(members[index])
-		selected[index] = true
-	}
-	next := members[:0]
-	for i, member := range members {
-		if !selected[i] {
-			next = append(next, member)
+	for range take {
+		pos := rand.IntN(len(members))
+		popped := members[pos]
+		out.Bulk(popped)
+		last := len(members) - 1
+		delete(index, string(popped))
+		if pos != last {
+			members[pos] = members[last]
+			index[string(members[pos])] = pos
 		}
+		members[last] = nil
+		members = members[:last]
 	}
-	if len(next) == 0 {
+	if len(members) == 0 {
 		st.Delete(key)
-	} else {
-		for i := len(next); i < len(members); i++ {
-			members[i] = nil
-		}
-		index := make(map[string]int, len(next))
-		for i, member := range next {
-			index[string(member)] = i
-		}
-		st.SetPreservingTTL(key, store.Value{Kind: store.KindSet, Set: next, SetIndex: index})
+		return
 	}
+	next := rightSize(members)
+	if len(next) < initial/2 {
+		index = buildSetIndex(next)
+	}
+	st.SetPreservingTTL(key, store.Value{Kind: store.KindSet, Set: next, SetIndex: index})
 }
 
 func popMember(st *store.Store, key string, v store.Value, index int) []byte {
@@ -267,17 +268,14 @@ func popMember(st *store.Store, key string, v store.Value, index int) []byte {
 		members[index] = members[last]
 	}
 	members[last] = nil
-	next := members[:last]
+	next := rightSize(members[:last])
 	if len(next) == 0 {
 		st.Delete(key)
 		return popped
 	}
 	indexMap := v.SetIndex
 	if indexMap == nil {
-		indexMap = make(map[string]int, len(next))
-		for i, member := range next {
-			indexMap[string(member)] = i
-		}
+		indexMap = buildSetIndex(next)
 	} else {
 		delete(indexMap, string(popped))
 		if index != last {
@@ -344,9 +342,9 @@ func srandmemberCommand(st *store.Store, args [][]byte, out *protocol.Encoder) {
 			out.Bulk(members[rand.IntN(len(members))])
 			return
 		}
-		for _, index := range rand.Perm(len(members))[:take] {
+		eachDistinctIndex(len(members), take, func(index int) {
 			out.Bulk(members[index])
-		}
+		})
 		return
 	}
 

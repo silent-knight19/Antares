@@ -113,6 +113,16 @@ func TestListSetAndTrim(t *testing.T) {
 	}
 }
 
+func TestListSetHugeIndexDivergesFromRedis(t *testing.T) {
+	exec := newStringExec(t)
+	runStrings(exec, "RPUSH", "l", "a", "b", "c")
+	for _, index := range []string{"4294967295", "4294967296", "9223372036854775807"} {
+		if got := runStrings(exec, "LSET", "l", index, "z"); got != "-ERR index out of range\r\n" {
+			t.Fatalf("LSET index %s = %q", index, got)
+		}
+	}
+}
+
 func TestListRem(t *testing.T) {
 	exec := newStringExec(t)
 	runStrings(exec, "RPUSH", "l", "a", "b", "a", "c", "a", "b", "a")
