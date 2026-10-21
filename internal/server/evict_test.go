@@ -2,6 +2,7 @@ package server
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -54,6 +55,11 @@ func TestEvictAllKeysLRU(t *testing.T) {
 		if e.Type != events.Evict || e.Policy != "allkeys-lru" || e.Sampled != evict.Samples || e.Version != events.Version {
 			t.Fatalf("unexpected event %+v", e)
 		}
+	}
+
+	body := infoBody(t, runStrings(exec, "INFO", "stats"))
+	if n, err := strconv.Atoi(infoField(t, body, "evicted_keys")); err != nil || n == 0 {
+		t.Fatalf("INFO evicted_keys = %q, want a positive count", infoField(t, body, "evicted_keys"))
 	}
 }
 

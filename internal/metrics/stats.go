@@ -22,7 +22,8 @@ type Stats struct {
 	NetInput atomic.Uint64
 	NetOut   atomic.Uint64
 
-	PeakMemory atomic.Uint64
+	PeakMemory  atomic.Uint64
+	EvictedKeys atomic.Uint64
 
 	addr atomic.Value
 }

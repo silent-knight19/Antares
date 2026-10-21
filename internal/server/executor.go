@@ -305,6 +305,7 @@ func (e *Executor) performEvictions(policy evict.Policy) {
 		if !e.store.Delete(key) {
 			continue
 		}
+		e.stats.EvictedKeys.Add(1)
 		if e.events != nil {
 			e.events.Emit(events.Event{
 				Version: events.Version,

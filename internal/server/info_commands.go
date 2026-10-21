@@ -297,13 +297,14 @@ func (e *Executor) statsInfo(b *strings.Builder) {
 	for _, name := range []string{
 		"rejected_connections", "sync_full", "sync_partial_ok", "sync_partial_err",
 		"expired_stale_perc", "expired_time_cap_reached_count",
-		"expire_cycle_cpu_milliseconds", "evicted_keys", "keyspace_hits",
+		"expire_cycle_cpu_milliseconds", "keyspace_hits",
 		"keyspace_misses", "pubsub_channels", "pubsub_patterns", "latest_fork_usec",
 		"total_forks", "total_reads_processed", "total_writes_processed",
 		"total_error_replies",
 	} {
 		field(b, name, "0")
 	}
+	field(b, "evicted_keys", strconv.FormatUint(e.stats.EvictedKeys.Load(), 10))
 	field(b, "expired_keys", strconv.FormatUint(e.store.ExpiredCount(), 10))
 }
 
