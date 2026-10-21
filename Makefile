@@ -13,9 +13,10 @@ OBSERVATORY_BIN := $(BIN)/observatory
 
 FUZZTIME ?= 30s
 REF_ADDR ?= 127.0.0.1:6379
+PORT ?= 6380
 
 .PHONY: help build test test-race vet fmt tidy run run-observatory clean fuzz \
-	verify diff-test clock-check tcl-expire tcl-incr crash-test bench tcl showcase showcase-e2e ui-dev
+	verify diff-test clock-check tcl-expire tcl-incr crash-test bench tcl showcase showcase-dev showcase-e2e ui-dev ui-build seed
 
 help:
 	@echo "Antares targets:"
@@ -26,13 +27,16 @@ help:
 	@echo "  fmt              format the tree with gofmt"
 	@echo "  tidy             go mod tidy"
 	@echo "  run              run the antares server on 127.0.0.1:6380 (flags: -port -max-conns -idle-timeout)"
-	@echo "  run-observatory  run the observatory bridge (stub until U2)"
+	@echo "  run-observatory  run the observatory bridge (defaults: antares 6380, web/dist)"
 	@echo "  clean            remove build artifacts"
 	@echo "  fuzz             run the RESP fuzzer for FUZZTIME (default 30s, e.g. FUZZTIME=15m)"
 	@echo "  diff-test        run the command differential harness against reference Redis (REF_ADDR=$(REF_ADDR))"
 	@echo "  clock-check      enforce the ADR-009 rule: no direct wall-clock reads outside clock/server I/O"
 	@echo "  tcl-expire       run the selected official Redis unit/expire tests (downloads pinned 7.4.11 tests)"
 	@echo "  tcl-incr         run the selected official Redis unit/type/incr tests"
+	@echo "  showcase-dev     build UI if present, then run Antares + Observatory locally"
+	@echo "  ui-build         npm install + vite build web/"
+	@echo "  seed             seed PORT (default 6380) with ~10k keys for the Keyspace view"
 	@echo "  phase-gated:     verify crash-test bench tcl showcase showcase-e2e ui-dev"
 
 build:
@@ -80,6 +84,15 @@ tcl-expire:
 
 tcl-incr:
 	@tests/tcl/run-incr.sh
+
+ui-build:
+	@if [ -f web/package.json ]; then cd web && npm install --no-audit --no-fund && npm run build; else echo "ui-build: web/package.json not found yet; bridge serves the placeholder page"; fi
+
+showcase-dev: build ui-build
+	@deploy/demo/run-dev.sh
+
+seed:
+	@deploy/demo/seed.sh $(PORT)
 
 verify crash-test bench tcl showcase showcase-e2e ui-dev:
 	@echo "make $@: not implemented yet — arrives at the phase marked in docs/PLAN.md §5–§7 (DoD: §2)"

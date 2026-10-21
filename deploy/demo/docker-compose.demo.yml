@@ -1,0 +1,40 @@
+# U2 demo profile: Antares + bridge + pinned reference Redis.
+#   docker compose -f deploy/demo/docker-compose.demo.yml up --build
+# Then open http://127.0.0.1:6390. The reference Redis is optional for the UI;
+# it powers the side-by-side target selector.
+name: antares-demo
+
+services:
+  antares:
+    build:
+      context: ../..
+      dockerfile: deploy/demo/Dockerfile
+    command: ["/usr/local/bin/antares", "-bind", "0.0.0.0", "-port", "6380"]
+    ports:
+      - "127.0.0.1:6380:6380"
+
+  redis-ref:
+    image: redis:7.4.11@sha256:4fa24486b8bcca8eec45ee0eb166edc674795e53a2b53d1a9ef263eecebaac85
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    ports:
+      - "127.0.0.1:6379:6379"
+
+  observatory:
+    build:
+      context: ../..
+      dockerfile: deploy/demo/Dockerfile
+    command:
+      - /usr/local/bin/observatory
+      - -addr
+      - 0.0.0.0:6390
+      - -antares
+      - antares:6380
+      - -redis
+      - redis-ref:6379
+      - -web
+      - /web/dist
+    ports:
+      - "127.0.0.1:6390:6390"
+    depends_on:
+      - antares
+      - redis-ref

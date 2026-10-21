@@ -18,7 +18,7 @@
 |---|---|---|
 | `.gitignore` | Ignore rules: build artifacts, runtime data (aof/rdb/tap), node_modules, env files, the downloaded Tcl test cache | scaffold |
 | `LICENSE` | MIT, © 2026 Sachin Kumar Singh | scaffold |
-| `Makefile` | Canonical commands (`build test test-race vet fmt tidy run clean`, `fuzz` with `FUZZTIME`); `diff-test` starts the pinned reference and runs the command differential harness; `clock-check` enforces ADR-009 wall-clock boundaries, `tcl-expire` runs the selected official expiry subset, and `tcl-incr` the selected official incr subset; remaining gated targets (`verify`, `crash-test`, `showcase`, …) fail loudly until their phase; CI calls these same targets | scaffold |
+| `Makefile` | Canonical commands (`build test test-race vet fmt tidy run clean`, `fuzz` with `FUZZTIME`); `diff-test` starts the pinned reference and runs the command differential harness; `clock-check` enforces ADR-009 wall-clock boundaries, `tcl-expire` runs the selected official expiry subset, and `tcl-incr` the selected official incr subset; M1 adds `ui-build` (npm + Vite), `showcase-dev` (build + UI + demo runner), and `seed`, with `PORT ?= 6380`; remaining gated targets (`verify`, `crash-test`, `showcase`, …) fail loudly until their phase; CI calls these same targets | scaffold |
 | `README.md` | Public landing page: what/why, status, architecture, layout, getting started, roadmap, non-goals | scaffold |
 | `go.mod` | Module `github.com/silent-knight19/antares`; Go 1.27.1 pin; single direct dependency: go-redis v9 (test-only differential client, ADR-017) | scaffold |
 | `go.sum` | Module checksums for go-redis and its indirect deps | scaffold |
@@ -35,7 +35,9 @@
 | Path | What it is | Ownership |
 |---|---|---|
 | `cmd/antares/main.go` | Server entry point: flags (`-bind`, `-port`, `-max-conns`, `-idle-timeout`), slog logs, SIGINT/SIGTERM → graceful shutdown; creates the store + executor and wires `executor.Handle`, closing the executor after the server drains | scaffold |
-| `cmd/observatory/main.go` | Observatory bridge entry point; P0 stub → U2 | stub |
+| `cmd/observatory/main.go` | Observatory bridge entry point (U2): flags (`-version`, `-addr`, `-antares`, `-redis`, `-web`, `-poll`), graceful shutdown, and a placeholder HTML page when `web/dist` has not been built | scaffold |
+| `cmd/observatory/bridge.go` | Observatory HTTP bridge (U2): `Config`, `New`/`Close`/`Handler`, routes `/api/health`, `/api/exec`, `/api/keys`, `/api/info`, `/api/events/stream` (SSE) and static SPA serving; lazy-redialing targets, SCAN-backed key rows with type/TTL/size preview, INFO field parsing, and `toReplyJSON` wire rendering | scaffold |
+| `cmd/observatory/bridge_test.go` | Bridge tests: health (`antares_addr`, redis unconfigured), exec replies incl. error-at-HTTP-200 and transport failures, keys (types/TTL/preview/type filter/bad count), info version, SSE hello+info events, static placeholder and 404 | scaffold |
 
 ## Packages (`internal/`)
 
@@ -97,6 +99,10 @@ Each package carries a `doc.go` charter referencing its ADR; real files land in 
 | `internal/repl/doc.go` | PSYNC, backlog ring, replica apply (ADR-007/010) | scaffold → hand-own at S1 |
 | `internal/events/doc.go` | Event-tap types + rotated JSONL sink (ADR-014) | scaffold |
 | `internal/client/doc.go` | Minimal RESP2 client for bridge + replica (ADR-017) | scaffold |
+| `internal/client/client.go` | U1 RESP2 client: `Dial`/`Execute`/`Do`/`Close`, injected clock, per-call deadline, mutex-serialized single connection (no pool), and a `Result` carrying reply, canonical request bytes, raw reply bytes, and latency | scaffold |
+| `internal/client/reply.go` | U1 reply model and parser (`simple`/`error`/`integer`/`bulk`/`array`/`null`) reusing `internal/protocol` limits, with canonical RESP re-encoding for the bridge wire trace and bounded line/array/depth guards | scaffold |
+| `internal/client/client_test.go` | Client integration tests against an in-process Antares: PING/SET/GET/MGET, error replies, binary-safe values, and closed-connection failure | scaffold |
+| `internal/client/reply_test.go` | Reply parser tests: every type, encode round-trip, malformed-input rejection, oversized line/array, and depth limit | scaffold |
 | `internal/metrics/doc.go` | Metrics package charter | scaffold |
 | `internal/metrics/stats.go` | Process counters shared by server/executor/INFO: run/repl IDs, dynamic max clients, connected/total connections, commands, network bytes, peak memory, and listener address | scaffold |
 
@@ -110,8 +116,9 @@ Each package carries a `doc.go` charter referencing its ADR; real files land in 
 | `docs/FILE_MANIFEST.md` | This file | scaffold |
 | `docs/INTERVIEW_QBANK.md` | Rehearsal Q&A + boundary-of-knowledge list | scaffold |
 | `docs/COMPATIBILITY.md` | Pinned versions, compat claims, deliberate divergences, licensing note (stub until P9.1) | scaffold |
+| `docs/UI-DESIGN.md` | U0 design baseline: dark-theme tokens, ASCII shell/Playground/Keyspace wireframes, render policy, a11y, keyboard map, and the M1 API contract; updated at U3/U4/U6a to match the built console | scaffold |
 
-Planned docs from `PLAN.md` §13, arriving at their phases: `UI-DESIGN.md` (U0), `ARCHITECTURE.md` (P10.2), `BENCHMARKS.md` (P9.4), `FAILURE_MODES.md` (S3.3).
+Planned docs from `PLAN.md` §13, arriving at their phases: `ARCHITECTURE.md` (P10.2), `BENCHMARKS.md` (P9.4), `FAILURE_MODES.md` (S3.3).
 
 ## Tests, benchmarks, UI, deploy
 
@@ -140,10 +147,21 @@ Entries below are populated at the phase noted; directories without files remain
 | `tests/tcl/incr_tests.txt` | Allowlist of 26 official `unit/type/incr` tests; OBJECT/DEBUG/SETRANGE-dependent tests are excluded |
 | `bench/scripts/.gitkeep` | P9.4 |
 | `bench/results/.gitkeep` | P9.4 (commit-keyed raw outputs) |
-| `web/src/.gitkeep` | U3 (SPA scaffold) |
+| `web/{package.json,package-lock.json,tsconfig.json,vite.config.ts,postcss.config.js,index.html}` | U3 SPA build setup: Vite + React 19 + TS + Tailwind v3; dev server proxies `/api` to `127.0.0.1:6390`; production build emitted to `web/dist` (git-ignored) |
+| `web/tailwind.config.js` | U3 Tailwind config; imports the U0 token theme from `web/tokens/tailwind.config.js` |
+| `web/tokens/tailwind.config.js` | U0 design tokens (dark theme, one accent, ok/warn/crit/info, AA contrast) |
+| `web/src/main.tsx` | U3 React entry: `QueryClientProvider` + `BrowserRouter` |
+| `web/src/App.tsx` | U3 routes: `/playground`, `/keyspace`, index redirect, catch-all |
+| `web/src/index.css` | Tailwind layers, base dark styling, selection, reduced-motion |
+| `web/src/components/{Layout,StatusBar}.tsx` | U3 shell: left nav with later-milestone entries, status bar polling `/api/health` every 4s and consuming the SSE info stream |
+| `web/src/components/{ui,ReplyView,KeyDrawer}.tsx` | Shared states/badges; U4 per-type RESP renderer; U6a read-only key detail drawer (Esc closes, bounded inline reads) |
+| `web/src/lib/{api,types,command,format,keyDetail,useInfoStream}.ts` | Typed bridge client, reply types, inline command splitter, TTL formatting, detail loader, SSE hook |
+| `web/src/pages/{Playground,Keyspace,NotFound}.tsx` | U4 Playground (input/history/presets/wire trace/latency), U6a virtualized SCAN table, 404 |
 | `web/e2e/.gitkeep` | U12 (Playwright) |
-| `web/tokens/.gitkeep` | U0/U3 (design tokens) |
-| `deploy/demo/.gitkeep` | U2/M2 (demo compose profile + seeds) |
+| `deploy/demo/run-dev.sh` | U2 local demo runner: starts Antares, optionally the pinned reference Redis, then the Observatory |
+| `deploy/demo/seed.sh` | U2 seed data (~10k `user:*` plus `queue:*`/`session:*`/`tags:*`) via `redis-cli --pipe` |
+| `deploy/demo/Dockerfile` | U2 demo image (Go + Node build stages, static bridge serving); superseded by the P10.1 packaging profile |
+| `deploy/demo/docker-compose.demo.yml` | U2 demo stack: Antares + pinned reference Redis + Observatory |
 
 ## Hand-own commitments (PLAN §8)
 

@@ -29,7 +29,7 @@
 
 ## What is Antares?
 
-Antares is a Redis-compatible server written from scratch in Go: the RESP2 protocol, 65 commands covering strings, lists, hashes, sets, TTL, DBSIZE, CONFIG, INFO, HELLO 2, CLIENT stubs, and PING/ECHO/COMMAND, plus lazy and active expiry. Persistence, eviction, transactions, and replication are planned, not yet implemented. The **Antares Observatory** — a separate showcase and tooling service plus web UI — is being built alongside it; its bridge currently ships as a stub.
+Antares is a Redis-compatible server written from scratch in Go: the RESP2 protocol, 65 commands covering strings, lists, hashes, sets, TTL, DBSIZE, CONFIG, INFO, HELLO 2, CLIENT stubs, and PING/ECHO/COMMAND, plus lazy and active expiry. Persistence, eviction, transactions, and replication are planned, not yet implemented. The **Antares Observatory** — a separate showcase and tooling service plus web UI — is being built alongside it; its M1 dev console (bridge + Playground + Keyspace SPA) runs today via `make showcase-dev`.
 
 Target shape:
 
@@ -39,7 +39,7 @@ go-redis (verify)   ──RESP──▶ Antares + real Redis (differential)
 Observatory ──own client + INFO + event tap + claims──▶ SPA (SSE + REST)
 ```
 
-The event tap and Observatory UI are planned; the server currently exposes no tap.
+The M1 dev console uses the client + `INFO` + REST/SSE bridge; the event tap and the showcase views (M2) are still planned, and the server currently exposes no tap.
 
 Every claim the project makes is meant to be machine-verifiable — differential tests against real Redis, crash tests, benchmarks, and CI-verified numbers displayed in the Observatory UI.
 
@@ -47,17 +47,18 @@ Every claim the project makes is meant to be machine-verifiable — differential
 
 ## Project status
 
-> **P1–P3, P4.1–P4.5, and P5.1–P5.3 complete — the wire path is done and fuzz-tested (15-min fuzz clean, 166M executions), commands run through a single keyspace-owning executor, and the edge-hardened string, list, hash, set, and keyspace surfaces are live: SET/GET/DEL/EXISTS/TYPE, MSET/MGET, the INCR family including a bit-exact INCRBYFLOAT, APPEND/STRLEN/GETSET/SETNX, LPUSH/RPUSH/LPOP/RPOP/LRANGE/LLEN/LINDEX/LSET/LREM/LTRIM, HSET/HGET/HMGET/HDEL/HLEN/HGETALL/HKEYS/HVALS/HEXISTS/HRANDFIELD, SADD/SREM/SMEMBERS/SISMEMBER/SCARD/SPOP/SRANDMEMBER, KEYS with a Redis-compatible glob matcher, SCAN with reverse-binary cursors and MATCH/COUNT/TYPE, RENAME/RENAMENX, RANDOMKEY, FLUSHDB/FLUSHALL, lazy and active expiry, DBSIZE, an INFO section surface, a CONFIG GET/SET allowlist, HELLO 2, CLIENT stubs, and exact wrong-type/overflow/limit errors.** TTL state sits in a separate expires dict, with TTL/PTTL/PERSIST and the full EXPIRE/PEXPIRE/EXPIREAT/PEXPIREAT family (NX/XX/GT/LT). Domain time now comes from one injected clock (ADR-009), so expiry tests advance time instead of sleeping. A committed differential harness (`make diff-test`) runs 198 string/TTL steps, 91 list steps, 71 hash steps, 99 set steps, a 171-case cross-type matrix, 240 generated collection-sequence steps, a 47-step keyspace corpus, a 32-check SCAN corpus, and an INFO/CONFIG/CLIENT field diff, plus expiry/lazy-read scenarios against the pinned Redis 7.4.11 with zero mismatches; 1056 one-off checks also passed. The selected official Tcl subsets are green via `make tcl-expire` (39 `unit/expire` tests) and `make tcl-incr` (26 `unit/type/incr` tests), which download the pinned 7.4.11 test source at run time. PING/ECHO plus the `COMMAND` stub work. The project is under active construction.
+> **P1–P3, P4.1–P4.5, and P5.1–P5.3 complete — the wire path is done and fuzz-tested (15-min fuzz clean, 166M executions), commands run through a single keyspace-owning executor, and the edge-hardened string, list, hash, set, and keyspace surfaces are live: SET/GET/DEL/EXISTS/TYPE, MSET/MGET, the INCR family including a bit-exact INCRBYFLOAT, APPEND/STRLEN/GETSET/SETNX, LPUSH/RPUSH/LPOP/RPOP/LRANGE/LLEN/LINDEX/LSET/LREM/LTRIM, HSET/HGET/HMGET/HDEL/HLEN/HGETALL/HKEYS/HVALS/HEXISTS/HRANDFIELD, SADD/SREM/SMEMBERS/SISMEMBER/SCARD/SPOP/SRANDMEMBER, KEYS with a Redis-compatible glob matcher, SCAN with reverse-binary cursors and MATCH/COUNT/TYPE, RENAME/RENAMENX, RANDOMKEY, FLUSHDB/FLUSHALL, lazy and active expiry, DBSIZE, an INFO section surface, a CONFIG GET/SET allowlist, HELLO 2, CLIENT stubs, and exact wrong-type/overflow/limit errors.** TTL state sits in a separate expires dict, with TTL/PTTL/PERSIST and the full EXPIRE/PEXPIRE/EXPIREAT/PEXPIREAT family (NX/XX/GT/LT). Domain time now comes from one injected clock (ADR-009), so expiry tests advance time instead of sleeping. A committed differential harness (`make diff-test`) runs 198 string/TTL steps, 91 list steps, 71 hash steps, 99 set steps, a 171-case cross-type matrix, 240 generated collection-sequence steps, a 47-step keyspace corpus, a 32-check SCAN corpus, and an INFO/CONFIG/CLIENT field diff, plus expiry/lazy-read scenarios against the pinned Redis 7.4.11 with zero mismatches; 1056 one-off checks also passed. The selected official Tcl subsets are green via `make tcl-expire` (39 `unit/expire` tests) and `make tcl-incr` (26 `unit/type/incr` tests), which download the pinned 7.4.11 test source at run time. PING/ECHO plus the `COMMAND` stub work. **The Observatory M1 dev console (U0–U4, U6a) is now live**: a `internal/client` RESP2 client, the `cmd/observatory` REST/SSE bridge, and a React/Vite/Tailwind SPA whose Playground executes commands with a wire trace and latency, and whose Keyspace browses SCAN results with type/TTL/size previews and a read-only detail drawer (`make showcase-dev`). The project is under active construction.
 
 | Works today | Arrives later |
 |---|---|
 | `make build` (both binaries), `make test`, `make test-race`, `make vet`, `make fmt`, `make tidy`, `make fuzz`, `make diff-test` (strings + lists + hashes + sets + TTL + keyspace + SCAN + INFO), `make tcl-expire` + `make tcl-incr` (selected official expiry/incr tests) | Full Tcl suite wiring (P9.2), persistence, eviction, transactions, replication |
 | TCP server speaking RESP2 — parser with a 31-case corpus captured from real Redis + fuzz harness, pooled reply writer, capture-exact error strings, pipeline-aware flushing; PING/ECHO/COMMAND answered through the registry and single keyspace-owning executor (case-insensitive lookup, Redis arity checks, `COMMAND` stub for redis-cli) | `make verify`, `make crash-test`, `make tcl`, `make bench`, `make showcase` |
 | Edge-hardened string core — SET (EX/PX/NX/XX/GET/KEEPTTL), GET, DEL, EXISTS, TYPE, MSET/MGET, INCR/DECR/INCRBY/DECRBY/INCRBYFLOAT, APPEND, STRLEN, GETSET, SETNX; lists — LPUSH/RPUSH/LPOP/RPOP (with counts), LRANGE, LLEN, LINDEX, LSET, LREM, LTRIM, negative ranges, error-order parity, TTL preservation, auto-delete; hashes — HSET/HGET/HMGET/HDEL/HLEN/HGETALL/HKEYS/HVALS/HEXISTS/HRANDFIELD with insertion-order iteration; sets — SADD/SREM/SMEMBERS/SISMEMBER/SCARD/SPOP/SRANDMEMBER with unordered iteration and random pop/rand semantics; keyspace — KEYS glob matching, SCAN with MATCH/COUNT/TYPE and Redis's reverse-binary cursor, RENAME/RENAMENX with TTL transfer, RANDOMKEY, FLUSHDB/FLUSHALL; separate expires dict with lazy delete-on-access, TTL/PTTL/PERSIST, EXPIRE/PEXPIRE/EXPIREAT/PEXPIREAT incl. NX/XX/GT/LT, physical DBSIZE, active expiry (hz=10), INFO sections, CONFIG GET/SET allowlist, HELLO 2, and CLIENT stubs; empty/binary/1 MiB values, wide batches, overflow parity, 512 MiB bulk + 1 GiB request guards, pinned WRONGTYPE body; `make diff-test` green (198 string/TTL + 91 list + 71 hash + 99 set + 171 cross-type + 240 sequence + 47 keyspace steps + 32 SCAN checks + INFO diff + expiry + lazy reads), 1056 one-off live checks clean, and 65 selected official Tcl expiry/incr tests green | Persistence (P6); full Tcl suite at P9.2 |
-| CI: gofmt check + `vet` + `build` + race-tested tests + differential harness | Observatory bridge and web UI (U2 onward) |
+| CI: gofmt check + `vet` + `build` + race-tested tests + differential harness | Full Observatory showcase (M2) and Playwright E2E (U12) |
+| Observatory M1 dev console — `internal/client` RESP2 client, `cmd/observatory` REST/SSE bridge, React/Vite/Tailwind SPA with Playground (history, presets, wire trace, latency) and Keyspace (SCAN table, type/TTL/size preview, read-only detail drawer); `make ui-build`, `make showcase-dev`, `make seed` | Event tap, metrics charts, durability lab, replication lab (M2/M3) |
 | `docker compose up` — pinned reference Redis 7.4.11 | |
 
-The Observatory bridge (`cmd/observatory`) still ships as a version-printing stub and fails loudly with a pointer to its phase; `cmd/antares` is the real server.
+The Observatory bridge (`cmd/observatory`) is live as the M1 dev console and serves the built SPA from `web/dist` (or a placeholder page when it has not been built); `cmd/antares` is the real server.
 
 ## Architecture
 
@@ -131,7 +132,9 @@ make test-race   # go test -race ./...
 
 ```bash
 make run              # run the antares server on 127.0.0.1:6380
-make run-observatory  # run the observatory bridge (stub until U2)
+make run-observatory  # run the observatory bridge on 127.0.0.1:6390 (serves web/dist or a placeholder)
+make showcase-dev     # build server + UI, then run Antares + Observatory together
+make seed             # load ~10k demo keys into the running server
 ```
 
 Antares listens on port 6380 by default (`-port`, `-bind`, `-max-conns`, `-idle-timeout` flags available), so it can run alongside the reference Redis on 6379.
@@ -162,6 +165,9 @@ docker compose up -d   # Redis on 127.0.0.1:6379
 | `make tcl-incr` | Run the selected official `unit/type/incr` subset |
 | `make run` | Run the Antares server |
 | `make run-observatory` | Run the Observatory bridge |
+| `make ui-build` | `npm install` + Vite production build of `web/` into `web/dist` |
+| `make showcase-dev` | Build the binaries and UI, then run Antares + the Observatory locally |
+| `make seed` | Seed the running demo server with ~10k keys |
 | `make clean` | Remove build artifacts |
 | `make help` | List all targets |
 
