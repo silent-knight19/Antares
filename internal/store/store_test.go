@@ -1,6 +1,7 @@
 package store
 
 import (
+	"sort"
 	"testing"
 	"time"
 
@@ -235,6 +236,82 @@ func TestStoreSetValueAndType(t *testing.T) {
 	s.Set("s", []byte("value"))
 	if got := s.Type("s"); got != "string" {
 		t.Fatalf("Type after overwrite = %q", got)
+	}
+}
+
+func TestStoreKeysSkipExpiredWithoutDeleting(t *testing.T) {
+	f := clock.NewFake(time.UnixMilli(1000))
+	s := NewWithClock(f)
+	s.Set("live", []byte("value"))
+	s.SetWithTTL("future", []byte("value"), 2000)
+	s.SetWithTTL("dead", []byte("value"), 999)
+
+	keys := s.Keys()
+	sort.Strings(keys)
+	if len(keys) != 2 || keys[0] != "future" || keys[1] != "live" {
+		t.Fatalf("Keys() = %v, want [future live]", keys)
+	}
+	if got := s.Len(); got != 3 {
+		t.Fatalf("Len after Keys() = %d, want 3 physical keys", got)
+	}
+}
+
+func TestStoreRandomKeySkipsAndDeletesExpired(t *testing.T) {
+	f := clock.NewFake(time.UnixMilli(1000))
+	s := NewWithClock(f)
+	s.SetWithTTL("dead", []byte("value"), 999)
+	if key, ok := s.RandomKey(); ok {
+		t.Fatalf("RandomKey() = %q, true for an expired-only keyspace", key)
+	}
+	if len(s.data) != 0 || len(s.expires) != 0 {
+		t.Fatalf("RandomKey left expired state: data=%d expires=%d", len(s.data), len(s.expires))
+	}
+
+	s.Set("live", []byte("value"))
+	if key, ok := s.RandomKey(); !ok || key != "live" {
+		t.Fatalf("RandomKey() = %q, %v; want live, true", key, ok)
+	}
+}
+
+func TestStoreRenameMovesValueAndExpiry(t *testing.T) {
+	f := clock.NewFake(time.UnixMilli(1000))
+	s := NewWithClock(f)
+	s.SetWithTTL("src", []byte("value"), 2000)
+	s.SetWithTTL("dst", []byte("old"), 3000)
+
+	s.Rename("src", "dst")
+	if got, ok := lookupString(s, "dst"); !ok || string(got) != "value" {
+		t.Fatalf("lookupString(dst) = %q, %v; want value, true", got, ok)
+	}
+	if s.Exists("src") {
+		t.Fatal("Rename left the source key behind")
+	}
+	if got := s.expires["dst"]; got != 2000 {
+		t.Fatalf("Rename expiry = %d, want 2000 (source deadline)", got)
+	}
+
+	s.Set("plain", []byte("new"))
+	s.Rename("plain", "dst")
+	if got := s.expires["dst"]; got != 0 {
+		t.Fatalf("Rename without source expiry = %d, want 0 (destination cleared)", got)
+	}
+}
+
+func TestStoreFlush(t *testing.T) {
+	f := clock.NewFake(time.UnixMilli(1000))
+	s := NewWithClock(f)
+	s.Set("plain", []byte("value"))
+	s.SetWithTTL("volatile", []byte("value"), 2000)
+
+	s.Flush()
+	if got := s.Len(); got != 0 {
+		t.Fatalf("Len after Flush = %d, want 0", got)
+	}
+	if len(s.expires) != 0 {
+		t.Fatalf("Flush left %d expiries", len(s.expires))
+	}
+	if _, ok := s.RandomKey(); ok {
+		t.Fatal("RandomKey found a key after Flush")
 	}
 }
 

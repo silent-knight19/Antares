@@ -123,6 +123,22 @@ func (s *Store) Delete(key string) bool {
 	return true
 }
 
+// Rename moves src to dst, overwriting dst and replacing its expiry with src's.
+// Callers must have observed src at command start; this deliberately skips the
+// live check so a key expiring mid-command is moved with its original deadline.
+func (s *Store) Rename(src, dst string) {
+	value := s.data[src]
+	expiresAt, hasExpiry := s.expires[src]
+	delete(s.data, src)
+	delete(s.expires, src)
+	delete(s.data, dst)
+	delete(s.expires, dst)
+	s.data[dst] = value
+	if hasExpiry {
+		s.expires[dst] = expiresAt
+	}
+}
+
 func (s *Store) Exists(key string) bool {
 	_, ok := s.live(key)
 	return ok
@@ -132,6 +148,39 @@ func (s *Store) Exists(key string) bool {
 // by lazy access or the active cycle. This is Redis's DBSIZE semantics.
 func (s *Store) Len() int {
 	return len(s.data)
+}
+
+// Keys returns live key names. It does not delete expired keys, matching
+// Redis's KEYS, which skips them without touching the expires dict.
+func (s *Store) Keys() []string {
+	now := s.NowMs()
+	keys := make([]string, 0, len(s.data))
+	for key := range s.data {
+		if at, ok := s.expires[key]; ok && now > at {
+			continue
+		}
+		keys = append(keys, key)
+	}
+	return keys
+}
+
+// RandomKey returns a live key, deleting expired keys it encounters. Redis
+// retries until it finds a live key or the keyspace is empty.
+func (s *Store) RandomKey() (string, bool) {
+	for len(s.data) > 0 {
+		for key := range s.data {
+			if _, ok := s.live(key); ok {
+				return key, true
+			}
+		}
+	}
+	return "", false
+}
+
+// Flush empties the keyspace.
+func (s *Store) Flush() {
+	clear(s.data)
+	clear(s.expires)
 }
 
 // ExpireSample samples up to limit volatile keys and deletes those whose

@@ -76,6 +76,7 @@ func newExecutor(st *store.Store, reg *Registry, active bool, c clock.Clock) *Ex
 		registerHashCommands(reg, st)
 		registerSetCommands(reg, st)
 		registerTTLCommands(reg, st)
+		registerKeyspaceCommands(reg, st)
 		registerConfigCommands(reg, e)
 	}
 	e.commands = reg
