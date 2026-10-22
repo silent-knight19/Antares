@@ -184,6 +184,7 @@ Entries below are populated at the phase noted; directories without files remain
 | `bench/results/` | P9.4 directory containing commit-keyed raw benchmark metrics JSON files |
 | `docs/BENCHMARKS.md` | P9.4 benchmark report: methodology, target criteria (P=1: 60-100k, P=16: 400-800k or >=50%), median results, latency percentiles, and reproduction instructions |
 | `docs/RUNBOOK.md` | P10.1 operational runbook: <5 min quick starts (Docker compose and local build), configuration flags, verification commands, and troubleshooting |
+| `docs/ARCHITECTURE.md` | P10.2 system architecture blueprint: Mermaid diagrams, concurrency engine, wire protocol, dual expiration, framed AOF durability, memory model, LRU approximation, and 6-layer verification pyramid |
 | `web/{package.json,package-lock.json,tsconfig.json,vite.config.ts,postcss.config.js,index.html}` | U3 SPA build setup: Vite + React 19 + TS + Tailwind v3; dev server proxies `/api` to `127.0.0.1:6390`; production build emitted to `web/dist` (git-ignored) |
 | `web/tailwind.config.js` | U3 Tailwind config; imports the U0 token theme from `web/tokens/tailwind.config.js` |
 | `web/tokens/tailwind.config.js` | U0 design tokens (dark theme, one accent, ok/warn/crit/info, AA contrast) |

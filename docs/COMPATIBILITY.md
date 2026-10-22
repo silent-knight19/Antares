@@ -80,11 +80,12 @@ Rationale for pinning strategy: ADR-020 (tooling policy, digest pinning) and PLA
 - Hash field order is insertion order for hashes up to 512 fields. Above that, `HDEL` uses swap-remove, so `HGETALL`/`HKEYS`/`HVALS` order after a delete is no longer insertion order; Redis also gives no order guarantee for hashtable-encoded hashes.
 - `SCAN` walks a virtual power-of-two bucket table over the Go map with Redis's reverse-binary cursor. Cursor values and batch sizes therefore differ from Redis, but the contract is the same: a returned cursor of 0 means termination, every key present throughout the iteration is returned at least once, duplicates are possible, and keys added or removed mid-iteration are not guaranteed. The table size follows the physical key count between calls, so growth and shrink are safe; cursors are not portable across restarts. Each call makes one pass over the keyspace and visits at most `min(10×COUNT, 65,536)` buckets, so a huge `COUNT` cannot stall the server; a complete walk still costs `O(n²/COUNT)` key visits.
 
-## Open questions (decide at the phase noted)
+## Resolved questions (finalized at P10.2)
 
-- INFO `redis_version` reports `7.4.11` so clients gate features for the surface Antares actually implements; section content follows ADR-022.
-- OOM error strings must match Redis captures — P7.2 (protocol and command error strings were pinned by live capture at P1.5 and extended at the P1 audit: unknown command incl. 128-byte name and args truncation, arity, `-ERR Protocol error: …` incl. raw non-ASCII byte passthrough, CRLF sanitization, over-cap connection refusal).
-- `HELLO 2` matches the RESP2 array shape go-redis/redis-cli expect; RESP3 negotiation is deliberately unavailable.
+- **Version Reporting**: `INFO server redis_version` reports `7.4.11` so connecting clients gate features for the surface Antares actually implements; section content strictly follows ADR-022.
+- **OOM Error Strings**: Captured byte-for-byte in P7.2 (`-OOM command not allowed when used memory > 'maxmemory'.`) with arity and unknown-command errors taking precedence.
+- **Protocol Handshake**: `HELLO 2` returns the RESP2 array handshake go-redis/redis-cli expect; RESP3 is cleanly refused with `NOPROTO` (ADR-003).
+- **Benchmark & Claim Reproduction**: One-command `make verify` runs tests, differential matrix, Tcl suites, 100x crash tests, fuzz smoke, and benchmarks, regenerating `claims.json` with commit-keyed provenance.
 
 ## Licensing & safety note
 

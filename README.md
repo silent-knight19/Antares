@@ -43,7 +43,11 @@ The M1 dev console uses the client + `INFO` + REST/SSE bridge. The opt-in JSONL 
 
 Every claim the project makes is meant to be machine-verifiable — differential tests against real Redis, crash tests, benchmarks, and CI-verified numbers displayed in the Observatory UI.
 
-> **Why the name?** Antares — α Scorpii — is the red star called "the rival of Mars": a red rival to Redis.
+### Why the name? Antares (α Scorpii)
+
+Antares (*Alpha Scorpii*) is the red supergiant star at the heart of the constellation Scorpius. Its name derives from the Ancient Greek Ἀντάρης (*Ant-Árēs*), meaning **"the rival of Mars"** (Ares): in the night sky, its fiery crimson hue rivals that of the red planet itself.
+
+Here, **Antares is the red rival to Redis** — engineered from scratch in Go to rival the gold standard in in-memory storage performance, durability, and correctness, purpose-built to be scrutinized and verified in real time through its **Observatory**.
 
 ## Project status
 
@@ -202,6 +206,7 @@ From [`docs/PLAN.md`](docs/PLAN.md) §7 — roughly 20–22 weeks at 3 hours/day
 | Document | What's inside |
 |---|---|
 | [`docs/PLAN.md`](docs/PLAN.md) | Master plan: objective, definition of done, architecture, phases, verification strategy, roadmap |
+| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | System design & subsystem blueprints: concurrency, storage, AOF, LRU eviction, transactions, and verification pyramid |
 | [`docs/DECISIONS.md`](docs/DECISIONS.md) | Decision log (ADRs): context, options, why chosen, why rejected, trade-offs, and proof for every non-trivial decision |
 | [`docs/PROJECT_LOG.md`](docs/PROJECT_LOG.md) | Session log: what was built, issues in symptom → diagnosis → fix → prevention form, exit evidence |
 | [`docs/FILE_MANIFEST.md`](docs/FILE_MANIFEST.md) | Every tracked file, its purpose, and the hand-own commitments for the critical path |

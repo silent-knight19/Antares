@@ -569,5 +569,17 @@
 - Exit evidence: `docker build -t antares:local .` built cleanly; container smoke run (`docker run ... antares:local`) verified with `redis-cli -p 6388 PING` (PONG), SET/GET; `docker compose config` clean; `make fmt`, `make vet`, `make test`, and `make clock-check` all pass.
 - Next session first task: P10.2 — README ("Why the name? Antares"), ARCHITECTURE.md (diagrams), COMPATIBILITY.md final, non-goals.
 
+### 2026-10-22 — P10.2: README narrative, ARCHITECTURE.md, COMPATIBILITY.md finalized, non-goals
+
+- Built: `docs/ARCHITECTURE.md` — comprehensive architecture blueprint with Mermaid diagrams covering overall system layout, the single-executor keyspace concurrency model (ADR-002), wire protocol/streaming parser (ADR-003), lazy & active dual expiration with injected virtual clock (ADR-005/009), framed AOF group-commit durability and background rewrite compaction (ADR-004/010/024), logical memory accounting & approximated LRU eviction (ADR-025/026/027), atomic transactions (ADR-008/028), and the 6-layer verification pyramid. `README.md` expanded with the deep narrative origin behind the name *Antares* (*Alpha Scorpii*, "rival of Mars" / red rival to Redis). `docs/COMPATIBILITY.md` finalized: transitioned the open questions section to resolved status (server version 7.4.11, byte-exact OOM error handling, RESP2/RESP3 negotiation, and claims provenance).
+- Findings: the architecture document bridges codebase implementation to high-level system design questions commonly probed during senior engineering system design interviews.
+- Issues: none.
+- Files touched: `docs/ARCHITECTURE.md`, `README.md`, `docs/{COMPATIBILITY,FILE_MANIFEST,PLAN,PROJECT_LOG}.md`.
+- ADRs written: none (documents all existing accepted ADRs).
+- QBank updated: none.
+- Exit evidence: `docs/ARCHITECTURE.md` complete and formatted with Mermaid diagrams; `make fmt`, `make vet`, `make test`, and `make clock-check` pass cleanly.
+- Next session first task: P10.3 — 30s/2min/10min project narratives, QBank first full pass, and resume bullets.
+
+
 
 
