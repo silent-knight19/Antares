@@ -14,6 +14,7 @@ import (
 	"github.com/silent-knight19/antares/internal/metrics"
 	"github.com/silent-knight19/antares/internal/persist"
 	"github.com/silent-knight19/antares/internal/protocol"
+	"github.com/silent-knight19/antares/internal/repl"
 	"github.com/silent-knight19/antares/internal/store"
 )
 
@@ -48,6 +49,10 @@ type Executor struct {
 
 	aof             *persist.Writer
 	rewriteInFlight atomic.Bool
+
+	replMu     sync.Mutex
+	repl       *repl.State
+	replCancel context.CancelFunc
 
 	closeOnce sync.Once
 }
@@ -104,6 +109,7 @@ func newExecutorWithAOF(st *store.Store, reg *Registry, active bool, c clock.Clo
 		maxmemoryPolicy: "noeviction",
 		aof:             aof,
 	}
+	e.repl = repl.NewState(e.stats.ReplID, c)
 	if reg == nil {
 		reg = NewRegistry()
 		registerDataCommands(reg, st)
@@ -112,6 +118,7 @@ func newExecutorWithAOF(st *store.Store, reg *Registry, active bool, c clock.Clo
 		registerConnectionCommands(reg, e)
 		registerPersistenceCommands(reg, e)
 		registerTransactionCommands(reg)
+		registerReplicationCommands(reg, e)
 	}
 	e.commands = reg
 	go e.loop()
@@ -157,6 +164,7 @@ func (e *Executor) Close() {
 // must not reuse its encoder after that happens.
 func (e *Executor) CloseContext(ctx context.Context) error {
 	e.closeOnce.Do(func() {
+		e.cancelReplica()
 		close(e.quit)
 	})
 	select {
@@ -166,6 +174,24 @@ func (e *Executor) CloseContext(ctx context.Context) error {
 		return ctx.Err()
 	}
 }
+
+func (e *Executor) cancelReplica() {
+	e.replMu.Lock()
+	defer e.replMu.Unlock()
+	if e.replCancel != nil {
+		e.replCancel()
+		e.replCancel = nil
+	}
+}
+
+func (e *Executor) setReplCancel(cancel context.CancelFunc) {
+	e.replMu.Lock()
+	defer e.replMu.Unlock()
+	e.replCancel = cancel
+}
+
+// Repl exposes the replication state.
+func (e *Executor) Repl() *repl.State { return e.repl }
 
 func (e *Executor) loop() {
 	defer close(e.done)
@@ -237,6 +263,10 @@ func (e *Executor) run(req execRequest) {
 		tx.dirty = true
 		return
 	}
+	if e.readOnlyBlocked(req.req, req.out) {
+		tx.dirty = true
+		return
+	}
 	blocked, evicted := e.maxmemoryGate(req.req, req.out)
 	if err := e.persistEvictions(evicted); err != nil {
 		slog.Error("AOF eviction append failed", "keys", len(evicted), "err", err)
@@ -252,10 +282,23 @@ func (e *Executor) run(req execRequest) {
 	e.execute(req, tx)
 }
 
+// readOnlyBlocked rejects write commands when node is a read-only replica.
+func (e *Executor) readOnlyBlocked(req protocol.Request, out *protocol.Encoder) bool {
+	if e.repl == nil || !e.repl.IsSlave() || !e.repl.SlaveReadOnly() || len(req) == 0 {
+		return false
+	}
+	cmd, ok := e.commands.Lookup(req[0])
+	if !ok || !cmd.Write || cmd.Name == "exec" {
+		return false
+	}
+	out.Error(protocol.ReadOnlyReplica)
+	return true
+}
+
 // persistEvictions records one DEL for every key evicted while preparing this
-// command, so a restart cannot resurrect them.
+// command, so a restart cannot resurrect them and replicas remove them.
 func (e *Executor) persistEvictions(keys []string) error {
-	if e.aof == nil || len(keys) == 0 {
+	if len(keys) == 0 {
 		return nil
 	}
 	args := make([][]byte, 0, len(keys)+1)
@@ -263,7 +306,14 @@ func (e *Executor) persistEvictions(keys []string) error {
 	for _, key := range keys {
 		args = append(args, []byte(key))
 	}
-	return e.aof.Append(persist.EncodeCommand(args...))
+	cmdBytes := persist.EncodeCommand(args...)
+	if e.repl != nil && e.repl.IsMaster() {
+		e.repl.FeedBacklog(cmdBytes)
+	}
+	if e.aof != nil {
+		return e.aof.Append(cmdBytes)
+	}
+	return nil
 }
 
 // aofWriteBlocked refuses a write command once the AOF has failed, so the

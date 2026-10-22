@@ -309,6 +309,10 @@ func (e *Executor) statsInfo(b *strings.Builder) {
 }
 
 func (e *Executor) replicationInfo(b *strings.Builder) {
+	if e.repl != nil {
+		b.WriteString(e.repl.FormatInfo())
+		return
+	}
 	b.WriteString("# Replication\r\n")
 	field(b, "role", "master")
 	field(b, "connected_slaves", "0")

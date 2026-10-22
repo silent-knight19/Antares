@@ -28,6 +28,8 @@ func TestErrorBodies(t *testing.T) {
 		{"unknown long name truncated at 128", UnknownCommand(strings.Repeat("c", 200)), "ERR unknown command '" + strings.Repeat("c", 128) + "', with args beginning with: "},
 		{"wrong type", WrongType, "WRONGTYPE Operation against a key holding the wrong kind of value"},
 		{"string too long", StringTooLong, "ERR string exceeds maximum allowed size (proto-max-bulk-len)"},
+		{"invalid master port", InvalidMasterPort, "ERR Invalid master port"},
+		{"read only replica", ReadOnlyReplica, "READONLY You can't write against a read only replica."},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

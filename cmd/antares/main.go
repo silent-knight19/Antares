@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -39,6 +40,7 @@ func main() {
 	appendFsync := flag.String("appendfsync", "everysec", "AOF fsync policy: always|everysec|no")
 	aofRepair := flag.Bool("aof-repair", false, "on a corrupt AOF frame, discard the tail instead of refusing to start")
 	eventLog := flag.String("event-log", "", "write internal events as rotated JSONL to this path (empty = disabled, ADR-014)")
+	replicaOf := flag.String("replicaof", "", "master host and port to replicate from, e.g. '127.0.0.1 6379'")
 	flag.Parse()
 
 	if *showVersion {
@@ -79,6 +81,26 @@ func main() {
 	exec := server.NewExecutorWithClock(st, nil, clk)
 	if aof != nil {
 		exec = server.NewExecutorWithAOF(st, nil, clk, aof)
+	}
+	if *replicaOf != "" {
+		host, portStr := "", ""
+		if strings.Contains(*replicaOf, ":") {
+			if h, p, err := net.SplitHostPort(*replicaOf); err == nil {
+				host, portStr = h, p
+			}
+		} else {
+			parts := strings.Fields(*replicaOf)
+			if len(parts) == 2 {
+				host, portStr = parts[0], parts[1]
+			}
+		}
+		if host != "" && portStr != "" {
+			if rPort, pErr := strconv.Atoi(portStr); pErr == nil && rPort > 0 && rPort <= 65535 {
+				exec.Repl().SetMaster(host, rPort)
+				exec.StartReplicaHandshake(host, rPort)
+				logger.Info("configured as replica", "master", host, "port", rPort)
+			}
+		}
 	}
 	var eventSink *events.JSONLSink
 	if *eventLog != "" {

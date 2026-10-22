@@ -121,7 +121,7 @@ func (e *Executor) AOFStats() (persist.Stats, bool) {
 func (e *Executor) Rewriting() bool { return e.rewriteInFlight.Load() }
 
 func (e *Executor) captureSpopBefore(req protocol.Request) map[string]struct{} {
-	if e.aof == nil || len(req) < 2 || !strings.EqualFold(string(req[0]), "spop") {
+	if (e.aof == nil && (e.repl == nil || !e.repl.IsMaster())) || len(req) < 2 || !strings.EqualFold(string(req[0]), "spop") {
 		return nil
 	}
 	v, ok := e.store.Lookup(string(req[1]))
@@ -145,29 +145,37 @@ func (e *Executor) propagate(req protocol.Request, mutations uint64, spopBefore 
 // nil when it did not mutate the keyspace. Raw commands are safe to replay;
 // random, relative-time, and precision-sensitive ones are rewritten.
 func (e *Executor) collectEffects(req protocol.Request, mutations uint64, spopBefore map[string]struct{}) [][][]byte {
-	if e.aof == nil || len(req) == 0 || e.store.Mutations() == mutations {
+	if (e.aof == nil && (e.repl == nil || !e.repl.IsMaster())) || len(req) == 0 || e.store.Mutations() == mutations {
 		return nil
 	}
 	return e.aofEffect(req, spopBefore)
 }
 
 // appendEffects writes every effect into one frame so replay applies a
-// multi-command effect (a transaction) atomically.
+// multi-command effect (a transaction) atomically, and feeds the replication backlog.
 func (e *Executor) appendEffects(effects [][][]byte) error {
 	if len(effects) == 0 {
 		return nil
 	}
 	var payload []byte
 	for _, args := range effects {
-		payload = append(payload, persist.EncodeCommand(args...)...)
+		cmdBytes := persist.EncodeCommand(args...)
+		if e.aof != nil {
+			payload = append(payload, cmdBytes...)
+		}
+		if e.repl != nil && e.repl.IsMaster() {
+			e.repl.FeedBacklog(cmdBytes)
+		}
 	}
-	if err := e.aof.Append(payload); err != nil {
-		slog.Error("AOF append failed", "err", err)
-		return err
-	}
-	if e.aof.ShouldRewrite() {
-		if err := e.startRewrite(); err != nil && !errors.Is(err, errRewriteInProgress) {
-			slog.Error("AOF automatic rewrite failed", "err", err)
+	if e.aof != nil {
+		if err := e.aof.Append(payload); err != nil {
+			slog.Error("AOF append failed", "err", err)
+			return err
+		}
+		if e.aof.ShouldRewrite() {
+			if err := e.startRewrite(); err != nil && !errors.Is(err, errRewriteInProgress) {
+				slog.Error("AOF automatic rewrite failed", "err", err)
+			}
 		}
 	}
 	return nil

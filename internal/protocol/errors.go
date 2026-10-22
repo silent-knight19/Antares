@@ -61,6 +61,12 @@ const (
 	IndexOutOfRange = "ERR index out of range"
 )
 
+// Replication replies.
+const (
+	InvalidMasterPort = "ERR Invalid master port"
+	ReadOnlyReplica   = "READONLY You can't write against a read only replica."
+)
+
 // InvalidExpireTime returns Redis's per-command expiry rejection, e.g.
 // "ERR invalid expire time in 'set' command".
 func InvalidExpireTime(command string) string {

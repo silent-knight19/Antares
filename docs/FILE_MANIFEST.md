@@ -124,6 +124,15 @@ Each package carries a `doc.go` charter referencing its ADR; real files land in 
 | `internal/evict/evict.go` | P7.3 eviction core: `Policy` (`noeviction`/`allkeys-lru`/`volatile-lru`) with `ParsePolicy`/`Evicts`/`Volatile`, and a bounded `Pool` (16 slots) that keeps the most-idle sampled candidates and pops the victim (ADR-006/027) | scaffold |
 | `internal/evict/evict_test.go` | Policy parsing/predicates and pool behavior: most-idle pop order and the 16-entry most-idle bound | scaffold |
 | `internal/repl/doc.go` | PSYNC, backlog ring, replica apply (ADR-007/010) | scaffold → hand-own at S1 |
+| `internal/repl/repl.go` | S1.1 replication state machine (`RoleMaster`/`RoleSlave`), master/slave offset tracking, link status, and live `# Replication` INFO section rendering (ADR-007) | **hand-own** — S1.1 |
+| `internal/repl/repl_test.go` | Role transitions (master→slave→promoted), link status progression, and offset tracking | scaffold |
+| `internal/repl/handshake.go` | S1.1 4-step master handshake client (`PING` → `REPLCONF listening-port` → `REPLCONF capa` → `PSYNC`), keepalive empty-line handling, and wire exchange tracing | **hand-own** — S1.1 |
+| `internal/repl/handshake_test.go` | Handshake mock replay, unreachable master, and live handshake test against reference Redis 7.4.11 | scaffold |
+| `internal/repl/backlog.go` | S1.2 1MB circular backlog ring buffer (`DefaultBacklogSize`), byte-exact wrapping, `CanPartialResync` window check, and `Slice` contiguous extractor (ADR-007/010) | **hand-own** — S1.2 |
+| `internal/repl/backlog_test.go` | Backlog ring wraparound, large writes > capacity, 1MB capacity bounds, and concurrent read/write race stress | scaffold |
+| `internal/server/replication_commands.go` | S1.1 commands: `REPLICAOF`/`SLAVEOF` (host/port and `NO ONE`), `REPLCONF` (listening-port, capa, ip-address, ack), and `PSYNC` | **hand-own** — S1.1 |
+| `internal/server/replication_commands_test.go` | Role switching, port validation, read-only write rejection, `REPLCONF` options, and `PSYNC` full/continue replies | scaffold |
+| `internal/server/propagation_test.go` | S1.2 mutation effect propagation to backlog, byte-exact `master_repl_offset` tracking matching RESP command lengths, transactions, and slice verification | scaffold |
 | `internal/events/doc.go` | Event-tap types + rotated JSONL sink (ADR-014) | scaffold |
 | `internal/events/events.go` | P7.3 versioned event schema (`Version`, `Evict`, `Event`) and the `Sink` interface the executor emits to | scaffold |
 | `internal/events/jsonl.go` | Opt-in rotated JSONL file sink (`NewJSONLSink`, 64 MiB × 2, one-line JSON per event), wired by `-event-log` and `Executor.SetEventSink` (ADR-014) | scaffold |

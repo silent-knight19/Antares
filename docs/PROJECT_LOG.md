@@ -608,6 +608,35 @@
 - Exit evidence: `npm run build` inside `web/` completes cleanly with 123.48 kB gzip; `go test -v ./cmd/observatory/...` passes all 12 tests; `go test -race ./cmd/observatory/...` clean; `go test ./...` passes all unit, differential, and chaos tests across the repository.
 - Next session first task: S1.1 — Replication Core: REPLICAOF configuration and master handshake.
 
+---
+
+### 2026-10-22 — S1.1 & S1.2: Replication Core (Handshake, Backlog Ring, and Stream Offsets)
+
+- Built:
+  - `internal/protocol/errors.go`: added Redis 7.4.11 exact replica errors `InvalidMasterPort` (`ERR Invalid master port`) and `ReadOnlyReplica` (`READONLY You can't write against a read only replica.`).
+  - `internal/repl/repl.go`: replication role state machine (`RoleMaster`, `RoleSlave`), link status machine (`down` → `connecting` → `handshake` → `sync` → `up`), offset tracking (`master_repl_offset`, `slave_repl_offset`), read-only gating, and `# Replication` INFO section formatter strictly matching Redis 7.4.11 key/value format.
+  - `internal/repl/handshake.go`: 4-step master handshake client (`PING` → `REPLCONF listening-port` → `REPLCONF capa eof capa psync2` → `PSYNC ? -1`), keepalive empty-line handling (resets read deadline on `\r\n`), structured wire trace recorder, and capture replay verification.
+  - `internal/repl/backlog.go`: 1MB circular backlog ring buffer (`DefaultBacklogSize = 1048576`), byte-exact wrapping, `CanPartialResync` window check, and `Slice` contiguous extractor (ADR-007/010).
+  - `internal/server/replication_commands.go`: `REPLICAOF`/`SLAVEOF` host/port switching and `NO ONE` promotion, `REPLCONF` (listening-port, capa, ip-address, ack), and `PSYNC` responding with `+FULLRESYNC` / `+CONTINUE`.
+  - `internal/server/executor.go` & `persistence.go`: wired `repl.State` into executor; enforced `readOnlyBlocked` write gating; wired mutation effect capture (`collectEffects` and `appendEffects`) and maxmemory eviction DELs into `e.repl.FeedBacklog`, ensuring `master_repl_offset` increases by the exact RESP byte length of every mutation.
+  - `cmd/antares/main.go`: added `-replicaof host:port` CLI flag.
+- Findings:
+  - Redis 7.4.11 reference master emits keepalive newlines (`\n`) during `PSYNC` execution before sending `+FULLRESYNC`; `handshake.go` handles keepalives transparently by extending timeouts.
+  - Read-only write rejections in Redis 7.4.11 do not have an `ERR ` prefix: `-READONLY You can't write against a read only replica.\r\n`.
+  - Live Redis 7.4.11 verifies that `SET foo bar` advances `master_repl_offset` by exactly 31 bytes (`*3\r\n$3\r\nSET\r\n$3\r\nfoo\r\n$3\r\nbar\r\n`), matching Antares' `persist.EncodeCommand` byte-for-byte.
+- Issues: none.
+- Files touched: `internal/protocol/errors.go`, `internal/protocol/errors_test.go`, `internal/repl/repl.go`, `internal/repl/repl_test.go`, `internal/repl/handshake.go`, `internal/repl/handshake_test.go`, `internal/repl/backlog.go`, `internal/repl/backlog_test.go`, `internal/server/replication_commands.go`, `internal/server/replication_commands_test.go`, `internal/server/propagation_test.go`, `internal/server/executor.go`, `internal/server/info_commands.go`, `internal/server/persistence.go`, `cmd/antares/main.go`, `docs/{PLAN.md,FILE_MANIFEST.md,PROJECT_LOG.md}`.
+- ADRs written: none (implements ADR-007, ADR-010, PLAN §5).
+- QBank updated: none.
+- Exit evidence:
+  - `TestHandshakeLiveRedis` successfully executes the 4-step handshake against live Redis 7.4.11 on `127.0.0.1:6379`, receiving `+FULLRESYNC <replid> <offset>`.
+  - `TestBacklog*` tests pass under `-race` asserting wrapping, large payload handling, and window boundaries.
+  - `TestReplicationPropagationStreamAndOffsets` passes under `-race` asserting byte-exact offset advances on SET, HSET, DEL, and MULTI/EXEC transactions.
+  - `go test ./...` and `go test -race ./internal/repl/... ./internal/server/...` 100% green.
+  - `REDIS_REF_ADDR=127.0.0.1:6379 go test ./tests/differential/...` passes 100%.
+- Next session first task: S1.3 — Full resync: snapshot stream (shared format) + per-replica concurrent-write buffer.
+
+
 
 
 
