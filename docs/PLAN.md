@@ -279,7 +279,7 @@ Tentative dates (start 2026-10-19): W1 = Oct 19–25 → W22 ends ~Mar 21, 2027.
 
 1. **Unit tests** (fast, table-driven) — colocated with the package under test (Go convention); `tests/unit/` is reserved for cross-package suite-level tests.
 2. **Differential vs real Redis** (ADR-017: independent go-redis client, pinned Redis 7.4) — response canonicalization rules in harness config; 0 mismatches.
-3. **Official Tcl suites subset** — `unit/expire`, `unit/type/incr` (+ documented broader subset); pinned versions vendored.
+3. **Official Tcl suites subset** — `unit/expire`, `unit/type/incr` (+ documented broader subset); pinned tarball downloaded by SHA-256 at run time, never vendored (ADR-020).
 4. **Chaos** — kill -9 matrix (100×), torn-write injection, replica kill/reconnect (50×), split-brain; `chaos.yml` nightly.
 5. **DST shadow model** — randomized interleavings vs in-process HashMap reference (transactions, expiry, eviction interactions).
 6. **Fuzz** — RESP parser + frame recovery; regression corpus grows in-repo.
@@ -320,7 +320,7 @@ Tentative dates (start 2026-10-19): W1 = Oct 19–25 → W22 ends ~Mar 21, 2027.
 | Schedule overrun (20+ weeks) | Timebox S2.2 (W19 freeze rule); M1/M2 features individually droppable; M1/M2 are demo-able waypoints for applications |
 | GC pauses skew p99 / GC tuning rabbit hole | Measure first, document honestly; GOGC experiment timeboxed to 1 session max |
 | Differential canonicalization rabbit holes (SCAN order, float formats, INFO) | Canonicalization rules centralized + reviewed (ADR-017 area); per-family timebox 1 session |
-| Tcl suite version drift | Pin Redis 7.4 docker image + vendored test files commit hash |
+| Tcl suite version drift | Pin Redis 7.4 docker image + SHA-256 of the downloaded test tarball |
 | Mid-project motivation dip (P6 AOF grind) | M1 dev console exists by then; every session ends with visible progress; stories demo-able |
 | AI over-dependence ("can't defend code") | Hand-own rule on critical path |
 | Benchmark noise on macOS | Quiet runs, 3-run median, report context honestly (no CPU pinning on mac) |
@@ -368,4 +368,4 @@ antares/
 3. `make test` → confirm baseline green.
 4. Work the subphase. When exit criterion passes → phase-gate checklist (§8) → log → done.
 
-**Current position:** P9.1 complete — the differential harness is now systematic on top of P8. `tests/differential/generator_test.go` runs a reproducible PCG stream (`DIFF_SEED`/`DIFF_ITERS`) across strings, lists, hashes, sets, TTL, and keyspace operations with missing keys, wrong types, binary/empty/long values, and overflow inputs, applying every step to the pinned reference and Antares and comparing canonicalized replies. `canonical.go` centralizes the comparison rules (exact by default; sort only unordered replies; sort hash pairs; bucket live TTL durations while keeping `-1`/`-2` exact), `canonical_test.go` guards those rules, `edge_diff_test.go` adds deterministic empty/NUL/1 KiB/non-ASCII key coverage, and `surface_diff_test.go` covers PING/ECHO/HELLO and CLIENT error paths. The curated ~1,000-step corpora and the CI service container remain. Verification: 30 seeds × 1,000 generated steps plus `make diff-test` green against Redis 7.4.11. Next: P9.2 — Tcl suite wiring (`make tcl`, per-command pass report).
+**Current position:** P9.2 complete — the selected official Tcl suites now run through one target. `make tcl` invokes the suite-aware runner for `unit/expire` (39 tests) and `unit/type/incr` (26 tests), downloading the pinned Redis 7.4.11 tarball into a git-ignored cache and verifying its SHA-256 (no Redis code is vendored). `tests/tcl/harness.tcl` supplies only the `start_server`/`tags`/`test` glue over the official Tcl client, and now classifies every selected test by command to print `REPORT <command> passed=… failed=… skipped=…` lines plus the suite summary; any failure exits non-zero. Verification: `make tcl` green with 65/65 selected tests. Next: P9.3 — fuzz soak (parser + frame recovery, regression corpus, nightly CI).

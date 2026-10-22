@@ -525,3 +525,14 @@
 - QBank updated: a new Q20 covers why the generator diffs two servers instead of a local model, how canonicalization is kept narrow and audited, seed replay, and what the first sweep caught.
 - Exit evidence: `gofmt -l .`, `go vet ./...`, `go test ./... -count=1`, and `make diff-test` green against the pinned 7.4.11 container; the generator passed 30 seeds × 1,000 steps plus a 5,000-step seed-1 run; `TestDiffEdgeKeys` and `TestDiffConnectionSurface` green; `TestCanonicalRules` guards the sorting/bucketing rules.
 - Next session first task: P9.2 — Tcl suite wiring: downloaded pinned subset runner, no vendored Redis code, per-command pass report; `make tcl` green for target suites.
+
+### 2026-10-22 — P9.2: Tcl suite wiring and per-command report
+
+- Built: `make tcl` now runs both selected official suites through the suite-aware runner (`tests/tcl/run-expire.sh expire` + `run-incr.sh`), and `make tcl-expire`/`tcl-incr` remain as single-suite entry points. The runner still downloads the pinned Redis 7.4.11 tarball into the git-ignored `tests/tcl/.cache/`, verifies SHA-256, builds Antares, and starts it on an ephemeral port; no Redis test code is vendored. `tests/tcl/harness.tcl` now classifies each selected test by the uppercase command token in its name (with `No negative zero` mapped to `INCRBYFLOAT`) and reports `REPORT <command> passed=… failed=… skipped=…` for every command before the suite summary; failures are recorded per command and exit non-zero.
+- Findings: the per-command totals split cleanly: `unit/expire` → EXPIRE 28, EXPIREAT 1, PERSIST 2, PEXPIRE 2, PEXPIREAT 2, SET 4; `unit/type/incr` → DECR 2, DECRBY 3, INCR 8, INCRBY 2, INCRBYFLOAT 11. All 65 selected tests pass, with 28+7 unselected tests skipped because their commands (SETEX/GETEX, OBJECT/DEBUG, etc.) are outside the surface.
+- Issues: the first harness draft initialized the report arrays as empty scalars, so the first `set ::cmd_pass($cmd)` failed with "variable isn't array"; switched to `array set`. The official `test_helper.tcl` external mode remains unusable (it sends unsupported setup commands), so the thin harness stays.
+- Files touched: `Makefile`, `tests/tcl/harness.tcl`, `docs/{COMPATIBILITY,FILE_MANIFEST,INTERVIEW_QBANK,PLAN,PROJECT_LOG}.md`, `README.md`.
+- ADRs written: none (implementation of the ADR-020 download-not-vendor policy and the P9.2 plan).
+- QBank updated: a new Q21 covers the thin Tcl harness, why tests run via a custom `start_server`/`tags`/`test` shim, pinned download verification, and the per-command report.
+- Exit evidence: `make tcl` green: 39/39 `unit/expire` + 26/26 `unit/type/incr` = 65/65 selected tests, with per-command REPORT lines; `make tcl-expire` and `make tcl-incr` remain green individually.
+- Next session first task: P9.3 — fuzz soak: parser + frame recovery, regression corpus, nightly CI; 1-hour clean run and committed corpus.

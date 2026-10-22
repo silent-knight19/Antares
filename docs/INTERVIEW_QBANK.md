@@ -110,6 +110,12 @@ Three layers: curated corpora for edges I chose (arity/option ordering, overflow
 
 Evidence: ADR-029; `tests/differential/generator_test.go`, `canonical.go`, `edge_diff_test.go`, `surface_diff_test.go`; `make diff-test`; CI service container.
 
+### Q21. How do you run Redis's own Tcl tests against Antares without copying Redis code?
+
+`make tcl` downloads the pinned Redis 7.4.11 tarball at run time into a git-ignored cache, verifies its SHA-256, builds Antares, starts it on an ephemeral port, and runs the selected official `unit/expire` and `unit/type/incr` tests. I do not use the upstream `test_helper.tcl` runner: its external mode sends setup commands Antares does not implement (`SELECT`, `FLUSHALL`, `FUNCTION FLUSH`, `CONFIG GET *`). Instead `tests/tcl/harness.tcl` supplies only the `start_server`/`tags`/`test` glue over the official Redis Tcl client and assertion helpers, and supports `start_cluster` as a no-op so cluster-only tests can be skipped. Two allowlists name the tests whose commands exist; everything else is skipped explicitly. The harness classifies each selected test by its command token and prints `REPORT <command> passed=… failed=… skipped=…`, so a green run is a per-command claim, not just one aggregate line. Nothing from Redis is vendored or linked, which keeps the MIT repo clean.
+
+Evidence: ADR-020; `tests/tcl/{run-expire.sh,run-incr.sh,harness.tcl,expire_tests.txt,incr_tests.txt}`; `make tcl` (65/65 green); COMPATIBILITY Tcl rows.
+
 ---
 
 ## 4. Boundaries ("what does it NOT do?")

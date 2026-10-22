@@ -18,7 +18,7 @@
 |---|---|---|
 | `.gitignore` | Ignore rules: build artifacts, runtime data (aof/rdb/tap), node_modules, env files, the downloaded Tcl test cache | scaffold |
 | `LICENSE` | MIT, © 2026 Sachin Kumar Singh | scaffold |
-| `Makefile` | Canonical commands (`build test test-race vet fmt tidy run clean`, `fuzz` with `FUZZTIME`); `diff-test` starts the pinned reference and runs the command differential harness; `clock-check` enforces ADR-009 wall-clock boundaries, `tcl-expire` runs the selected official expiry subset, and `tcl-incr` the selected official incr subset; M1 adds `ui-build` (npm + Vite), `showcase-dev` (build + UI + demo runner), and `seed`, with `PORT ?= 6380`; P6 adds `crash-test` (build + 100× SIGKILL AOF harness); remaining gated targets (`verify`, `showcase`, …) fail loudly until their phase; CI calls these same targets | scaffold |
+| `Makefile` | Canonical commands (`build test test-race vet fmt tidy run clean`, `fuzz` with `FUZZTIME`); `diff-test` starts the pinned reference and runs the differential suite (corpora + seeded generator + edge/surface); `clock-check` enforces ADR-009 wall-clock boundaries; `tcl` runs both selected official subsets with per-command reports (`tcl-expire`/`tcl-incr` remain single-suite entry points); M1 adds `ui-build` (npm + Vite), `showcase-dev` (build + UI + demo runner), and `seed`, with `PORT ?= 6380`; P6 adds `crash-test` (build + 100× SIGKILL AOF harness); remaining gated targets (`verify`, `showcase`, …) fail loudly until their phase; CI calls these same targets | scaffold |
 | `README.md` | Public landing page: what/why, status, architecture, layout, getting started, roadmap, non-goals | scaffold |
 | `go.mod` | Module `github.com/silent-knight19/antares`; Go 1.27.1 pin; single direct dependency: go-redis v9 (test-only differential client, ADR-017) | scaffold |
 | `go.sum` | Module checksums for go-redis and its indirect deps | scaffold |
@@ -174,7 +174,7 @@ Entries below are populated at the phase noted; directories without files remain
 | `tests/fuzz/.gitkeep` | P9.3 (soak + committed regression corpus; the P1.6 harness itself is `internal/protocol/fuzz_test.go`) |
 | `tests/tcl/run-expire.sh` | Suite-aware runner: downloads the pinned Redis 7.4.11 tarball into a git-ignored cache, verifies SHA-256, builds/starts Antares, and runs the selected `expire` (default) or `incr` tests |
 | `tests/tcl/run-incr.sh` | Thin wrapper that runs the selected official `unit/type/incr` suite through `run-expire.sh` |
-| `tests/tcl/harness.tcl` | Thin Tcl glue (`start_server`, `tags`, `test`, `start_cluster`) over the official Redis Tcl client/assertion helpers, sourcing the selected suite (`unit/expire.tcl` or `unit/type/incr.tcl`); no Redis code copied into the repo |
+| `tests/tcl/harness.tcl` | Thin Tcl glue (`start_server`, `tags`, `test`, `start_cluster`) over the official Redis Tcl client/assertion helpers, sourcing the selected suite (`unit/expire.tcl` or `unit/type/incr.tcl`); classifies selected tests by command and prints `REPORT <command> passed/failed/skipped`; no Redis code copied into the repo |
 | `tests/tcl/expire_tests.txt` | Allowlist of 39 official expiry tests supported by the current command surface |
 | `tests/tcl/incr_tests.txt` | Allowlist of 26 official `unit/type/incr` tests; OBJECT/DEBUG/SETRANGE-dependent tests are excluded |
 | `bench/scripts/.gitkeep` | P9.4 |

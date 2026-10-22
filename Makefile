@@ -35,10 +35,11 @@ help:
 	@echo "  clock-check      enforce the ADR-009 rule: no direct wall-clock reads outside clock/server I/O"
 	@echo "  tcl-expire       run the selected official Redis unit/expire tests (downloads pinned 7.4.11 tests)"
 	@echo "  tcl-incr         run the selected official Redis unit/type/incr tests"
+	@echo "  tcl              run both selected Tcl suites with a per-command report"
 	@echo "  showcase-dev     build UI if present, then run Antares + Observatory locally"
 	@echo "  ui-build         npm install + vite build web/"
 	@echo "  seed             seed PORT (default 6380) with ~10k keys for the Keyspace view"
-	@echo "  phase-gated:     verify bench tcl showcase showcase-e2e ui-dev"
+	@echo "  phase-gated:     verify bench showcase showcase-e2e ui-dev"
 
 build:
 	@mkdir -p $(BIN)
@@ -89,6 +90,8 @@ tcl-expire:
 tcl-incr:
 	@tests/tcl/run-incr.sh
 
+tcl: tcl-expire tcl-incr
+
 ui-build:
 	@if [ -f web/package.json ]; then cd web && npm install --no-audit --no-fund && npm run build; else echo "ui-build: web/package.json not found yet; bridge serves the placeholder page"; fi
 
@@ -98,6 +101,6 @@ showcase-dev: build ui-build
 seed:
 	@deploy/demo/seed.sh $(PORT)
 
-verify bench tcl showcase showcase-e2e ui-dev:
+verify bench showcase showcase-e2e ui-dev:
 	@echo "make $@: not implemented yet — arrives at the phase marked in docs/PLAN.md §5–§7 (DoD: §2)"
 	@exit 1
