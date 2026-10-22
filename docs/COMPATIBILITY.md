@@ -39,6 +39,7 @@ Rationale for pinning strategy: ADR-020 (tooling policy, digest pinning) and PLA
 | Selected official Tcl `unit/type/incr` subset passes | `make tcl` (P4.5, extended P9.2) | verified: 26/26 selected tests pass (7 OBJECT/DEBUG/SETRANGE-dependent tests not selected) |
 | Official Tcl `unit/expire` and `unit/type/incr` fully pass | `make tcl` (P9.2) | verified: 65/65 selected tests pass (39 expire + 26 incr) with a per-command REPORT line; the pinned test source is SHA-256 verified and downloaded into a git-ignored cache, never vendored |
 | Crash test: zero acked-write loss with `fsync=always` | `make crash-test` (100× SIGKILL, P6.4) | verified: every write acknowledged before SIGKILL is present after restart; torn-write corruption matrix covers partial headers, partial payloads, checksum mismatches, bad lengths, and trailing garbage |
+| Parser and frame recovery 1h fuzz soak | `make fuzz`, nightly CI (P9.3) | verified: `FuzzReadRequest` (364M+ executions in 1h, 239 total corpus entries) and `FuzzRecoverFile` (525M+ executions in 1h, 19 total corpus entries); in-memory recovery core prevents filesystem bottlenecks, corrupt tails refused untouched, torn tails truncated to valid prefix, and 0 crashes/hangs across ~890M executions; regression corpora committed in-tree |
 | Replica dataset equality after full resync + `+CONTINUE` continuity | S1.3/S2.2 tests | pending |
 | Benchmarks ≥50–80% of real Redis on the same machine | `make bench` (P9.4) | pending |
 

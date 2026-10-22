@@ -167,7 +167,7 @@ Legend: **Session = 3h block.** Every subphase: objective exit criterion + ≥1 
 |---|---|---|---|
 | P9.1 | Differential full: generator across families, edge corpus, canonicalization rules, CI service container | CI diff job green on all commands | 1 |
 | P9.2 | Tcl suite wiring: downloaded pinned subset runner (no vendored Redis code), per-command pass report | `make tcl` green for target suites | 1 |
-| P9.3 | Fuzz soak: parser + frame recovery, regression corpus, nightly CI | 1h fuzz clean; corpus committed | 1 |
+| P9.3 | Fuzz soak: parser + recovery (in-memory core), committed regression corpus, CI smoke + nightly 1h matrix | 1h fuzz clean per target; corpus committed | 1 |
 | P9.4 | Benchmarks: script, P=1/P=16, 3 runs, `BENCHMARKS.md`, `make verify` umbrella | `make verify` green end-to-end | 1 |
 
 ### P10 — Packaging & Narrative (3 sessions)
@@ -368,4 +368,4 @@ antares/
 3. `make test` → confirm baseline green.
 4. Work the subphase. When exit criterion passes → phase-gate checklist (§8) → log → done.
 
-**Current position:** P9.2 complete — the selected official Tcl suites now run through one target. `make tcl` invokes the suite-aware runner for `unit/expire` (39 tests) and `unit/type/incr` (26 tests), downloading the pinned Redis 7.4.11 tarball into a git-ignored cache and verifying its SHA-256 (no Redis code is vendored). `tests/tcl/harness.tcl` supplies only the `start_server`/`tags`/`test` glue over the official Tcl client, and now classifies every selected test by command to print `REPORT <command> passed=… failed=… skipped=…` lines plus the suite summary; any failure exits non-zero. Verification: `make tcl` green with 65/65 selected tests. Next: P9.3 — fuzz soak (parser + frame recovery, regression corpus, nightly CI).
+**Current position:** P9.3 complete — the 1-hour fuzz soak clean run and in-memory recovery core are verified. `FuzzReadRequest` ran for 1h (364.9M executions, 239 total corpus entries) and `FuzzRecoverFile` ran for 1h (525.5M executions, 19 total corpus entries) with zero crashes, hangs, or corruptions across ~890M executions. The in-memory `recoverFrames(r, size, apply, repair)` core eliminated disk I/O bottlenecks during fuzzing, verified the input size allocation guard, and proved corrupt tails are refused while torn tails are repaired to the valid prefix. Nightly workflow `.github/workflows/fuzz-nightly.yml` runs both targets for 1h each, and CI includes a fast both-target smoke. Next: P9.4 — benchmarks: script, P=1/P=16, 3 runs, `BENCHMARKS.md`, and `make verify` umbrella.

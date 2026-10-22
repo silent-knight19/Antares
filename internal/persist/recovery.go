@@ -40,11 +40,38 @@ func RecoverFile(path string, repair bool, apply func(payload []byte) error) (Re
 	if err != nil {
 		return report, err
 	}
-	br := bufio.NewReaderSize(f, 64<<10)
+	info, err := f.Stat()
+	if err != nil {
+		f.Close()
+		return report, err
+	}
+	report, err = recoverFrames(bufio.NewReaderSize(f, 64<<10), info.Size(), apply, repair)
+	if err != nil {
+		f.Close()
+		return report, err
+	}
+	if err := f.Close(); err != nil {
+		return report, err
+	}
+	if !report.Truncated {
+		return report, nil
+	}
+	if err := os.Truncate(path, report.ValidBytes); err != nil {
+		return report, err
+	}
+	syncDir(path)
+	return report, nil
+}
+
+// recoverFrames is the in-memory recovery core. size bounds the payload
+// allocation: a header claiming more bytes than the input holds is a torn
+// write, not a reason to reserve a gigabyte.
+func recoverFrames(r io.Reader, size int64, apply func(payload []byte) error, repair bool) (RecoveryReport, error) {
+	var report RecoveryReport
 	var offset int64
 	for {
 		var header [FrameHeaderSize]byte
-		_, err := io.ReadFull(br, header[:])
+		_, err := io.ReadFull(r, header[:])
 		if errors.Is(err, io.EOF) {
 			break
 		}
@@ -53,7 +80,6 @@ func RecoverFile(path string, repair bool, apply func(payload []byte) error) (Re
 			break
 		}
 		if err != nil {
-			f.Close()
 			return report, err
 		}
 
@@ -63,13 +89,16 @@ func RecoverFile(path string, repair bool, apply func(payload []byte) error) (Re
 			report.Corrupt = true
 			break
 		}
+		if int64(n) > size-offset-FrameHeaderSize {
+			report.Reason = "partial frame payload"
+			break
+		}
 		payload := make([]byte, int(n))
-		if _, err := io.ReadFull(br, payload); err != nil {
+		if _, err := io.ReadFull(r, payload); err != nil {
 			if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
 				report.Reason = "partial frame payload"
 				break
 			}
-			f.Close()
 			return report, err
 		}
 		if crc32.ChecksumIEEE(payload) != binary.LittleEndian.Uint32(header[4:8]) {
@@ -78,7 +107,6 @@ func RecoverFile(path string, repair bool, apply func(payload []byte) error) (Re
 			break
 		}
 		if err := apply(payload); err != nil {
-			f.Close()
 			return report, fmt.Errorf("persist: replay at byte %d: %w", offset, err)
 		}
 		report.Records++
@@ -87,30 +115,12 @@ func RecoverFile(path string, repair bool, apply func(payload []byte) error) (Re
 	}
 
 	if report.Reason == "" {
-		if err := f.Close(); err != nil {
-			return report, err
-		}
 		return report, nil
 	}
-
 	if report.Corrupt && !repair {
-		f.Close()
 		return report, fmt.Errorf("persist: %s at byte %d (repair discards the tail): %w", report.Reason, offset, ErrCorrupt)
 	}
-
-	info, err := f.Stat()
-	if err != nil {
-		f.Close()
-		return report, err
-	}
 	report.Truncated = true
-	report.TruncatedBytes = info.Size() - offset
-	if err := f.Close(); err != nil {
-		return report, err
-	}
-	if err := os.Truncate(path, offset); err != nil {
-		return report, err
-	}
-	syncDir(path)
+	report.TruncatedBytes = size - offset
 	return report, nil
 }

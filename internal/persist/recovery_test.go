@@ -1,6 +1,7 @@
 package persist
 
 import (
+	"encoding/binary"
 	"errors"
 	"os"
 	"path/filepath"
@@ -34,6 +35,44 @@ func TestRecoverClean(t *testing.T) {
 	}
 	if len(got) != 3 || got[0] != "A" || got[2] != "C" {
 		t.Fatalf("records = %v", got)
+	}
+}
+
+func TestRecoverHugeDeclaredLengthIsTorn(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "huge.aof")
+	var data []byte
+	data = AppendFrame(data, []byte("A"))
+	var header [FrameHeaderSize]byte
+	binary.LittleEndian.PutUint32(header[0:4], MaxFramePayload)
+	data = append(data, header[:]...)
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	var records []string
+	report, err := RecoverFile(path, false, func(payload []byte) error {
+		records = append(records, string(payload))
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("RecoverFile: %v", err)
+	}
+	if !report.Truncated || report.Corrupt || report.Reason != "partial frame payload" {
+		t.Fatalf("report = %+v", report)
+	}
+	if report.Records != 1 || len(records) != 1 || records[0] != "A" {
+		t.Fatalf("records = %v", records)
+	}
+	if report.TruncatedBytes != FrameHeaderSize {
+		t.Fatalf("truncated bytes = %d, want %d", report.TruncatedBytes, FrameHeaderSize)
+	}
+
+	if _, err := RecoverFile(path, true, func([]byte) error { return nil }); err != nil {
+		t.Fatalf("repair: %v", err)
+	}
+	info, err := os.Stat(path)
+	if err != nil || info.Size() != report.ValidBytes {
+		t.Fatalf("repair did not truncate to the valid prefix: %v", err)
 	}
 }
 

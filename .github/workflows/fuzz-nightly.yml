@@ -1,0 +1,29 @@
+name: fuzz-nightly
+
+on:
+  schedule:
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  fuzz:
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: FuzzReadRequest
+            package: ./internal/protocol/
+          - target: FuzzRecoverFile
+            package: ./internal/persist/
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: fuzz ${{ matrix.target }} for one hour
+        run: go test -run='^$' -fuzz=${{ matrix.target }} -fuzztime=1h ${{ matrix.package }}

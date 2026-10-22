@@ -42,3 +42,5 @@ jobs:
         run: make test-race
       - name: differential
         run: REDIS_REF_ADDR=127.0.0.1:6379 go test -count=1 -run 'TestDiff' ./tests/differential/
+      - name: fuzz smoke
+        run: make fuzz FUZZTIME=20s

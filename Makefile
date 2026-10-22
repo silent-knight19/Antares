@@ -29,7 +29,7 @@ help:
 	@echo "  run              run the antares server on 127.0.0.1:6380 (flags: -port -max-conns -idle-timeout -appendonly -aof-file -appendfsync -aof-repair)"
 	@echo "  run-observatory  run the observatory bridge (defaults: antares 6380, web/dist)"
 	@echo "  clean            remove build artifacts"
-	@echo "  fuzz             run the RESP fuzzer for FUZZTIME (default 30s, e.g. FUZZTIME=15m)"
+	@echo "  fuzz             run the parser and AOF recovery fuzzers for FUZZTIME (default 30s, e.g. FUZZTIME=15m)"
 	@echo "  diff-test        run the command differential harness against reference Redis (REF_ADDR=$(REF_ADDR))"
 	@echo "  crash-test       build and run the SIGKILL acked-write harness (CRASH_ITERATIONS=100)"
 	@echo "  clock-check      enforce the ADR-009 rule: no direct wall-clock reads outside clock/server I/O"
@@ -76,6 +76,7 @@ clean:
 
 fuzz:
 	$(GO) test -run='^$$' -fuzz=FuzzReadRequest -fuzztime=$(FUZZTIME) ./internal/protocol/
+	$(GO) test -run='^$$' -fuzz=FuzzRecoverFile -fuzztime=$(FUZZTIME) ./internal/persist/
 
 diff-test:
 	docker compose up -d --wait redis-ref

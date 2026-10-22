@@ -536,3 +536,15 @@
 - QBank updated: a new Q21 covers the thin Tcl harness, why tests run via a custom `start_server`/`tags`/`test` shim, pinned download verification, and the per-command report.
 - Exit evidence: `make tcl` green: 39/39 `unit/expire` + 26/26 `unit/type/incr` = 65/65 selected tests, with per-command REPORT lines; `make tcl-expire` and `make tcl-incr` remain green individually.
 - Next session first task: P9.3 — fuzz soak: parser + frame recovery, regression corpus, nightly CI; 1-hour clean run and committed corpus.
+
+### 2026-10-22 — P9.3: fuzz soak (parser + frame recovery), regression corpus, nightly CI
+
+- Built: `internal/persist/recovery.go` refactored to separate the file wrapper from an in-memory `recoverFrames(r io.Reader, size int64, apply func([]byte) error, repair bool)` core, preventing filesystem/fsync bottlenecks during fuzzing. The `size` parameter guards allocations against large declared payload lengths in headers. `internal/persist/fuzz_test.go` adds `FuzzRecoverFile` driving the in-memory core over arbitrary bytes (invariants: no panic, corrupt tails refused with `ErrCorrupt` leaving the file untouched, torn tails repaired to valid prefix, and a second pass clean with identical payloads). Committed regression corpus added under `internal/persist/testdata/fuzz/FuzzRecoverFile/`. `Makefile`'s `fuzz` target now runs both `FuzzReadRequest` and `FuzzRecoverFile` sequentially. `.github/workflows/fuzz-nightly.yml` added for scheduled 1h nightly runs of both targets; `.github/workflows/ci.yml` updated with a short both-target fuzz smoke.
+- Findings: the initial `FuzzRecoverFile` running against temporary files was heavily bottlenecked by filesystem metadata updates and directory fsyncs (~1.3k execs/30s); refactoring to `recoverFrames` increased throughput to ~145k execs/sec.
+- Issues: none. Both fuzz targets completed 1h clean runs without failures.
+- Files touched: `internal/persist/{recovery.go,recovery_test.go,fuzz_test.go,testdata/fuzz/FuzzRecoverFile/*}`, `.github/workflows/{ci.yml,fuzz-nightly.yml}`, `Makefile`, `README.md`, `docs/{FILE_MANIFEST,INTERVIEW_QBANK,PLAN,COMPATIBILITY,PROJECT_LOG}.md`.
+- ADRs written: none (implementation of P9.3 plan).
+- QBank updated: a new Q22 covers in-memory recovery fuzzing without filesystem bottlenecks, allocation bounds via input size, and the repair invariants.
+- Exit evidence: `gofmt -l .`, `go vet ./...`, `go test ./...` green; 1-hour fuzz soak clean across both targets: `FuzzReadRequest` (364,903,987 execs in 1h, 0 failures, 239 corpus entries) and `FuzzRecoverFile` (525,541,554 execs in 1h, 0 failures, 19 corpus entries) — ~890 million total executions without panic, hang, or error.
+- Next session first task: P9.4 — benchmarks: script, P=1/P=16, 3 runs, `BENCHMARKS.md`, and `make verify` umbrella.
+
