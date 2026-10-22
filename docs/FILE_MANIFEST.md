@@ -22,7 +22,9 @@
 | `README.md` | Public landing page: what/why, status, architecture, layout, getting started, roadmap, non-goals | scaffold |
 | `go.mod` | Module `github.com/silent-knight19/antares`; Go 1.27.1 pin; single direct dependency: go-redis v9 (test-only differential client, ADR-017) | scaffold |
 | `go.sum` | Module checksums for go-redis and its indirect deps | scaffold |
-| `docker-compose.yml` | Reference Redis 7.4.11 pinned by image digest and run with Redis defaults (`appendonly no`) so `CONFIG GET save` and the CI service container agree; 127.0.0.1-only; healthchecked | scaffold |
+| `docker-compose.yml` | Multi-container setup: Antares server on port 6380 with persistent volume `/data` alongside pinned reference Redis 7.4.11 on port 6379; 127.0.0.1-only; healthchecked | scaffold |
+| `Dockerfile` | P10.1 multi-stage production Dockerfile: compiles static binaries with Go 1.27.1, runs under unprivileged `antares` user on Alpine 3.20 with healthcheck and `/data` volume | scaffold |
+| `.dockerignore` | P10.1 ignores `.git`, `bin`, node modules, test caches, and runtime files to minimize Docker build context | scaffold |
 
 ## CI
 
@@ -181,6 +183,7 @@ Entries below are populated at the phase noted; directories without files remain
 | `bench/scripts/run-bench.sh` | P9.4 benchmark runner: drives `redis-benchmark` over SET/GET/INCR/MSET at P=1/P=16 against reference Redis and Antares, computing medians across 3 runs and emitting raw metrics to `bench/results/<commit>.json` and updating `claims.json` (ADR-018) |
 | `bench/results/` | P9.4 directory containing commit-keyed raw benchmark metrics JSON files |
 | `docs/BENCHMARKS.md` | P9.4 benchmark report: methodology, target criteria (P=1: 60-100k, P=16: 400-800k or >=50%), median results, latency percentiles, and reproduction instructions |
+| `docs/RUNBOOK.md` | P10.1 operational runbook: <5 min quick starts (Docker compose and local build), configuration flags, verification commands, and troubleshooting |
 | `web/{package.json,package-lock.json,tsconfig.json,vite.config.ts,postcss.config.js,index.html}` | U3 SPA build setup: Vite + React 19 + TS + Tailwind v3; dev server proxies `/api` to `127.0.0.1:6390`; production build emitted to `web/dist` (git-ignored) |
 | `web/tailwind.config.js` | U3 Tailwind config; imports the U0 token theme from `web/tokens/tailwind.config.js` |
 | `web/tokens/tailwind.config.js` | U0 design tokens (dark theme, one accent, ok/warn/crit/info, AA contrast) |

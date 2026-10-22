@@ -207,6 +207,8 @@ From [`docs/PLAN.md`](docs/PLAN.md) §7 — roughly 20–22 weeks at 3 hours/day
 | [`docs/FILE_MANIFEST.md`](docs/FILE_MANIFEST.md) | Every tracked file, its purpose, and the hand-own commitments for the critical path |
 | [`docs/INTERVIEW_QBANK.md`](docs/INTERVIEW_QBANK.md) | Rehearsal bank: narrative, decisions, verification, and boundary questions with evidence pointers |
 | [`docs/COMPATIBILITY.md`](docs/COMPATIBILITY.md) | Pinned versions, verification claims, and deliberate divergences from real Redis |
+| [`docs/BENCHMARKS.md`](docs/BENCHMARKS.md) | Benchmark methodology, throughput results vs Redis 7.4 (P=1 and P=16), and reproducibility |
+| [`docs/RUNBOOK.md`](docs/RUNBOOK.md) | Quick start (<5 min), configuration flags, operational commands, and troubleshooting |
 
 ## License
 

@@ -1,0 +1,13 @@
+.git
+.github
+bin
+observatory
+tests/tcl/.cache
+tests/tcl/tmp
+bench/results/tmp
+claims.json
+web/node_modules
+web/dist
+*.aof
+*.rdb
+*.log

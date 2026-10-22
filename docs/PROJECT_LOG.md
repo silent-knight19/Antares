@@ -555,8 +555,19 @@
 - Issues: none. `claims.json` is automatically refreshed with benchmark numbers.
 - Files touched: `bench/scripts/run-bench.sh`, `bench/results/229163a.json`, `claims.json`, `docs/BENCHMARKS.md`, `Makefile`, `README.md`, `docs/{FILE_MANIFEST,INTERVIEW_QBANK,PLAN,COMPATIBILITY,PROJECT_LOG}.md`.
 - ADRs written: none (fulfills ADR-018 and PLAN §10).
-- QBank updated: a new Q23 covers benchmark methodology, sequential vs pipelined throughput comparison, and how `claims.json` prevents claims rot.
 - Exit evidence: `make bench` passes cleanly across 3 runs and writes `bench/results/229163a.json` and `claims.json`; `make -n verify` verifies execution graph; `docs/BENCHMARKS.md` records measured metrics.
 - Next session first task: P10.1 — Dockerfile, runbook, and `docker compose up` server flow.
+
+### 2026-10-22 — P10.1: Dockerfile, runbook, and docker compose up server flow
+
+- Built: root `Dockerfile` — production multi-stage build: compiles static binaries with `CGO_ENABLED=0` under Go 1.27.1, strips debug symbols (`-s -w`), and packages them onto an Alpine 3.20 base under an unprivileged `antares` user (`UID 10001`) with `/data` volume and healthcheck. `.dockerignore` filters `.git`, `bin`, node modules, and caches to keep build context < 1MB. Root `docker-compose.yml` updated with an `antares` service on port 6380 and volume mapping alongside reference Redis 7.4.11 on port 6379. `docs/RUNBOOK.md` added as the operational guide (<5 min quick start with Compose or local Go build, CLI flags table, verification targets, dev console instructions, and troubleshooting for port collisions, AOF corruption, and OOM).
+- Findings: the legacy docker builder had a transient digest pull error with cached image layers; pulling `alpine:3.20` explicitly resolved the layer verification. Container smoke testing confirmed `antares:local` starts cleanly, binds port 6380, and answers `PING`, `SET`, and `GET` identically to reference Redis.
+- Issues: none. `docker compose config` validates cleanly.
+- Files touched: `Dockerfile`, `.dockerignore`, `docker-compose.yml`, `docs/RUNBOOK.md`, `README.md`, `docs/{FILE_MANIFEST,PLAN,PROJECT_LOG}.md`.
+- ADRs written: none (implementation of P10.1 plan).
+- QBank updated: none.
+- Exit evidence: `docker build -t antares:local .` built cleanly; container smoke run (`docker run ... antares:local`) verified with `redis-cli -p 6388 PING` (PONG), SET/GET; `docker compose config` clean; `make fmt`, `make vet`, `make test`, and `make clock-check` all pass.
+- Next session first task: P10.2 — README ("Why the name? Antares"), ARCHITECTURE.md (diagrams), COMPATIBILITY.md final, non-goals.
+
 
 
