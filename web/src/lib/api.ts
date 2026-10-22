@@ -1,4 +1,14 @@
-import type { ExecResponse, HealthResponse, InfoResponse, KeysResponse } from './types';
+import type {
+  BenchmarksResponse,
+  ClaimsResponse,
+  DurabilitySimResponse,
+  EvictionPoolResponse,
+  ExecResponse,
+  HealthResponse,
+  InfoResponse,
+  KeysResponse,
+  LiveBenchResult,
+} from './types';
 
 export class ApiError extends Error {
   status: number;
@@ -26,6 +36,39 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 export function fetchHealth(): Promise<HealthResponse> {
   return request<HealthResponse>('/api/health');
+}
+
+export function fetchClaims(): Promise<ClaimsResponse> {
+  return request<ClaimsResponse>('/api/claims');
+}
+
+export function fetchBenchmarks(): Promise<BenchmarksResponse> {
+  return request<BenchmarksResponse>('/api/benchmarks');
+}
+
+export function runLiveBenchmark(params: {
+  command?: string;
+  pipeline?: number;
+  count?: number;
+  target?: string;
+} = {}): Promise<LiveBenchResult> {
+  return request<LiveBenchResult>('/api/benchmarks/run', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(params),
+  });
+}
+
+export function simulateDurability(count = 30): Promise<DurabilitySimResponse> {
+  return request<DurabilitySimResponse>('/api/lab/durability/simulate', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ count }),
+  });
+}
+
+export function fetchEvictionPool(): Promise<EvictionPoolResponse> {
+  return request<EvictionPoolResponse>('/api/lab/eviction-pool');
 }
 
 export function exec(args: string[], target = 'antares'): Promise<ExecResponse> {

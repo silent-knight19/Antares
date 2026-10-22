@@ -1,11 +1,13 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { loadKeyDetail } from '../lib/keyDetail';
-import { formatTTL } from '../lib/format';
+import { exec } from '../lib/api';
 import type { KeyInfo } from '../lib/types';
+import { TTLCountdownRing } from '../pages/Keyspace';
 import { Badge, ErrorState, LoadingRows } from './ui';
 
 export function KeyDrawer({ info, onClose }: { info: KeyInfo; onClose: () => void }) {
+  const [isDeleting, setIsDeleting] = useState(false);
   const detail = useQuery({ queryKey: ['key-detail', info.key], queryFn: () => loadKeyDetail(info.key) });
 
   useEffect(() => {
@@ -15,6 +17,19 @@ export function KeyDrawer({ info, onClose }: { info: KeyInfo; onClose: () => voi
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
   }, [onClose]);
+
+  const handleDelete = async () => {
+    if (!window.confirm(`Delete key "${info.key}"?`)) return;
+    setIsDeleting(true);
+    try {
+      await exec(['DEL', info.key]);
+      onClose();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Delete failed');
+    } finally {
+      setIsDeleting(false);
+    }
+  };
 
   return (
     <div className="fixed inset-0 z-20 flex justify-end">
@@ -28,9 +43,9 @@ export function KeyDrawer({ info, onClose }: { info: KeyInfo; onClose: () => voi
         <header className="flex items-start justify-between gap-3 border-b border-border p-4">
           <div className="min-w-0">
             <h2 className="break-all font-mono text-sm text-text">{info.key}</h2>
-            <div className="mt-2 flex items-center gap-2">
+            <div className="mt-2 flex items-center gap-3">
               <Badge tone="accent">{detail.data?.type ?? info.type}</Badge>
-              <span className="text-xs text-text-muted">TTL {formatTTL(info.ttl_ms)}</span>
+              <TTLCountdownRing ttlMs={info.ttl_ms} />
             </div>
           </div>
           <button
@@ -65,7 +80,17 @@ export function KeyDrawer({ info, onClose }: { info: KeyInfo; onClose: () => voi
             ))}
         </div>
 
-        <footer className="border-t border-border p-3 text-xs text-text-faint">Read-only in M1 · mutations arrive with U6b</footer>
+        <footer className="border-t border-border p-3 flex items-center justify-between">
+          <span className="text-xs text-text-faint">U6b Active Mutations</span>
+          <button
+            type="button"
+            onClick={handleDelete}
+            disabled={isDeleting}
+            className="rounded bg-crit/10 border border-crit/30 px-3 py-1 text-xs font-semibold text-crit hover:bg-crit/20 disabled:opacity-50"
+          >
+            {isDeleting ? 'Deleting...' : 'Delete Key (DEL)'}
+          </button>
+        </footer>
       </aside>
     </div>
   );

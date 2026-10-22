@@ -580,6 +580,36 @@
 - Exit evidence: `docs/ARCHITECTURE.md` complete and formatted with Mermaid diagrams; `make fmt`, `make vet`, `make test`, and `make clock-check` pass cleanly.
 - Next session first task: P10.3 — 30s/2min/10min project narratives, QBank first full pass, and resume bullets.
 
+### 2026-10-22 — P10.3: project narratives, QBank full pass, and resume bullets
+
+- Built: `docs/INTERVIEW_QBANK.md` Section 1 expanded into multi-tier rehearsed narrative walkthroughs: 30-second elevator pitch, 2-minute standard project overview, 10-minute technical deep dive covering the entire architecture from connection accept through disk commit to test pyramid, and resume-ready action/impact bullets. Full pass over the 23 technical questions in `docs/INTERVIEW_QBANK.md` verified that every decision, architectural trade-off, and verification proof is backed by concrete code and artifact references.
+- Findings: the 3-tier narrative structure (30s, 2m, 10m) allows flexible delivery for phone screens, behavioral rounds, and system design interviews without hand-waving.
+- Issues: none.
+- Files touched: `docs/INTERVIEW_QBANK.md`, `docs/PLAN.md`, `docs/PROJECT_LOG.md`.
+- ADRs written: none.
+- QBank updated: Q1 expanded to Q1 (30s), Q1a (2m), Q1b (10m), Q1c (resume bullets).
+- Exit evidence: `docs/INTERVIEW_QBANK.md` complete and reviewed; `docs/PLAN.md` marks P10 complete; `make fmt`, `make vet`, `make test`, and `make clock-check` pass cleanly.
+- Next session first task: M2 (Observatory showcase views, event tap consumers, and metrics charts) or S1.1 (Replication Core: REPLICAOF and master handshake).
+
+### 2026-10-22 — M2: Observatory Showcase (U5, U7, U8, U9, U6b)
+
+- Built:
+  - `cmd/observatory/bridge.go` & `bridge_test.go`: added `GET /api/claims` (provenance-backed claims), `GET /api/benchmarks` (serves latest `bench/results/*.json` and `claims.json`), `POST /api/benchmarks/run` (in-process live pipeline benchmark runner calculating median RPS and p50/p99 latencies), `POST /api/lab/durability/simulate` (Story 4 crash/SIGKILL simulation generating write burst, asserting deterministic WAL recovery, and reporting "0 acked writes lost"), and `GET /api/lab/eviction-pool` (16-candidate sampling pool inspection with idle times and victim election).
+  - `U5 Overview` (`web/src/pages/Overview.tsx`): Hero claims cards driven by `claims.json` provenance, interactive Guided Tour Engine running Stories 1-3 (Story 1: Side-by-side RESP differential; Story 2: Active/lazy TTL expiration lifecycle; Story 3: Approximated LRU candidate pool eviction).
+  - `U7 Metrics` (`web/src/pages/Metrics.tsx`): RED dashboard (Rate ops/s, Errors %, Duration p50/p99 latencies) with responsive SVG area charts and sparklines; USE dashboard (keyspace memory utilization, executor saturation, and eviction pressure); Pause/Freeze toggle and delta indicators.
+  - `U8 Benchmarks` (`web/src/pages/Benchmarks.tsx`): Machine-verified claims provenance, differential throughput bars comparing Antares against reference Redis 7.4.11 across sequential (P=1) and pipelined (P=16) workloads, full p50/p99 latency matrix, and an interactive live benchmark execution panel.
+  - `U9 Durability Lab` (`web/src/pages/DurabilityLab.tsx`): Story 4 crash and recovery simulation with state-machine progress indicator, AOF fsync timeline with byte offset markers, and post-recovery report with verified "0 acked writes lost" badge.
+  - `U6b Keyspace Full` (`web/src/pages/Keyspace.tsx` & `web/src/components/KeyDrawer.tsx`): Animated circular SVG TTL countdown rings with color-coded deadlines, Story 2 active sampling loop inspector, Story 3 eviction pool 16-candidate visualizer, and live DEL key mutation in the detail drawer.
+  - Shell & Routing: updated `web/src/App.tsx` and `web/src/components/Layout.tsx` to activate all Milestone M2 showcase views with default routing.
+- Findings: The React 19 + TypeScript SPA builds cleanly in <1s with a 123.5 kB gzip JS bundle, comfortably below the 250 kB limit specified in the project budget. SVG charts with Tailwind design tokens provide high-performance, lightweight telemetry rendering with zero heavy chart dependencies.
+- Issues: none.
+- Files touched: `cmd/observatory/{bridge.go,bridge_test.go}`, `web/src/App.tsx`, `web/src/components/{Layout.tsx,KeyDrawer.tsx}`, `web/src/lib/{api.ts,types.ts}`, `web/src/pages/{Overview.tsx,Metrics.tsx,Benchmarks.tsx,DurabilityLab.tsx,Keyspace.tsx}`, `docs/{PLAN.md,PROJECT_LOG.md}`.
+- ADRs written: none (implements ADR-013, ADR-014, ADR-015, ADR-018, ADR-019).
+- Exit evidence: `npm run build` inside `web/` completes cleanly with 123.48 kB gzip; `go test -v ./cmd/observatory/...` passes all 12 tests; `go test -race ./cmd/observatory/...` clean; `go test ./...` passes all unit, differential, and chaos tests across the repository.
+- Next session first task: S1.1 — Replication Core: REPLICAOF configuration and master handshake.
+
+
+
 
 
 

@@ -6,16 +6,80 @@
 
 ---
 
-## 1. Narrative
+## 1. Narrative & Interview Pitches
 
-### Q1. Walk me through this project. (30–60s)
+### Q1. Elevator Pitch (30 seconds)
 
-Antares is a Redis-compatible server I'm building from scratch in Go — RESP2, ~70 commands, TTL expiry, framed AOF persistence, approximated-LRU eviction, transactions, and replication with both full and partial resync. It ships with the Observatory: a separate process and web UI that visualizes the server's internals — fsync events, eviction decisions, expiry sampling, replication offsets — and renders only numbers produced by a verification pipeline, never hand-typed ones. Every claim in the repo is machine-verifiable: differential tests against a pinned real Redis, crash tests, fuzzing, and benchmarks in CI.
-Evidence: `README.md`, `docs/PLAN.md` §1–§3.
+Antares is a Redis-compatible in-memory store built from scratch in Go, paired with the Observatory—a dedicated telemetry and showcase UI. It implements the RESP2 protocol, 71 core commands across strings, lists, hashes, sets, and keyspace operations, with lazy and active dual-expiry, framed AOF durability with group commit, approximated-LRU eviction, and MULTI/EXEC transactions. Every claim is machine-verifiable: differential tests against pinned Redis 7.4 with zero mismatches, 65 official Redis Tcl tests passing, 100× SIGKILL crash recovery with zero write loss, and ~890 million fuzz executions clean. In benchmarks, it achieves over 200k sequential rps and over 700k pipelined rps (~80% of C Redis).
+
+Evidence: `README.md`, `docs/PLAN.md` §1–§3, `docs/BENCHMARKS.md`.
+
+### Q1a. Standard Project Overview (2 minutes)
+
+"I wanted to build a systems project that explores what makes Redis fast, reliable, and predictable under load, while holding every design decision to strict machine verification.
+
+Antares is architected around a single-executor concurrency model: concurrent client I/O runs across lightweight Go goroutines, which push parsed RESP2 requests through a bounded channel into a single keyspace executor. This delivers single-threaded sequential semantics without lock contention or data races by construction.
+
+On top of the core store and 71 Redis commands, I built three critical systems:
+1. **Durability**: A framed AOF log with 32-bit length headers and IEEE CRC32 checksums, group-commit fsync policies, and background snapshot rewrites. We verified zero acknowledged write loss across 100 SIGKILL crash iterations.
+2. **Memory & Eviction**: A logical memory model that calculates retained keyspace overhead within 10% of Go's heap, enforcing Redis's exact `CMD_DENYOOM` error gates and implementing 24-bit approximated-LRU sampling pool eviction, achieving 98–100% hot-set retention under churn.
+3. **Transactions**: ACID atomicity for MULTI/EXEC with dirty aborts and value-snapshot WATCH invalidation, committed as a single atomic AOF frame.
+
+To eliminate 'works on my machine' claims, I built the Antares Observatory—a companion service that monitors internal telemetry and renders performance numbers strictly from an automated `claims.json` pipeline. We run differential tests against pinned Redis 7.4.11 in Docker with zero mismatches, 65 official Redis Tcl test suites, and continuous 1-hour fuzz soaks exceeding 890 million iterations with zero crashes."
+
+Evidence: `docs/ARCHITECTURE.md`, `docs/DECISIONS.md`, `docs/RUNBOOK.md`.
+
+### Q1b. Technical Deep-Dive / System Walkthrough (10 minutes)
+
+When an interviewer says: *"Take 10 minutes and walk me through the entire architecture from connection accept to disk commit and testing."*
+
+1. **Connection Lifecycle & RESP2 Protocol**:
+   - Connection loop in `internal/server/server.go` accepts TCP connections and spins an I/O goroutine per client.
+   - Streaming RESP2 parser (`internal/protocol/parse.go`) processes multibulk and inline commands. We enforce a 512 MiB bulk length limit and a 1 GiB aggregate request guard. A key optimization: allocations scale with received bytes rather than declared header length, preventing allocation denial-of-service.
+   - Pipelining batches network flushes before the parser blocks on read.
+
+2. **Keyspace Serialization & Executor Engine**:
+   - Commands pass into a bounded queue (1024 slots) feeding a single executor goroutine (`internal/server/executor.go`).
+   - Before executing, requests pass through pre-dispatch gates: AOF failure MISCONF gate, maxmemory DenyOOM gate, and transaction queueing.
+   - Operations mutate Go map/slice primitives directly. To support DBSIZE in O(1), the store maintains an independent `expires` dict alongside the keyspace.
+
+3. **Dual Expiration & Injected Clock**:
+   - Dual strategy: lazy delete-on-access on every read/write, plus active sampling cycle (hz=10, 20 samples per cycle, repeats while >25% expired up to a time budget).
+   - Domain logic uses an injected `clock.Clock` interface (ADR-009). Expiry tests advance virtual timestamps instantly without sleeping, guaranteed by a CI `make clock-check` AST lint.
+
+4. **Framed AOF Durability & Rewrite Protocol**:
+   - AOF records use `[u32 len][u32 CRC32][RESP payload]` framing. Group-commit writer batches concurrent writes with `always`, `everysec`, or `no` fsync.
+   - Incomplete final frames (torn tails) are truncated on startup; corrupt frames refuse startup unless `-aof-repair` is specified.
+   - Background compaction (`BGREWRITEAOF`) serializes a point-in-time snapshot, buffers concurrent writes, fsyncs a temporary file, and atomically renames it with directory fsync.
+
+5. **Logical Memory Accounting & Approximated LRU**:
+   - We avoid `runtime.MemStats` (which fluctuates with Go GC) and calculate retained bytes via a calibrated model (entry map overhead + slice capacity + payload).
+   - Approximated LRU attaches a 24-bit access clock to each `Value`, refreshes on lookup, samples 5 keys, and inserts candidates into a 16-slot idle pool to free victims.
+
+6. **Transactions & Snapshots**:
+   - MULTI queues commands with `+QUEUED`. Arity or unknown command errors dirty the queue and trigger `EXECABORT`.
+   - `EXEC` executes all commands inside one executor turn, combining their write effects into a single atomic AOF frame.
+   - `WATCH` takes value snapshots (existence, kind, payload, expiry deadline), allowing atomic check-and-set.
+
+7. **Verification Rigor & Performance**:
+   - 6-layer pyramid: unit/race tests, clock lint, 1000+ differential tests against Docker Redis 7.4.11, 65 official Redis Tcl tests, 100× SIGKILL crash harness, and 1-hour fuzz soaks (~890M executions).
+   - Throughput: ~204k rps sequential (P=1) and ~769k rps pipelined (P=16) on Apple Silicon, matching 77%–97% of C Redis.
+   - All showcase numbers are populated through `claims.json` with commit-keyed cryptographic and benchmark provenance.
+
+Evidence: `docs/ARCHITECTURE.md`, `docs/BENCHMARKS.md`, `docs/COMPATIBILITY.md`.
+
+### Q1c. Resume Ready Bullets (SDE-1 / Systems Software Engineer)
+
+- **Engineered high-performance Redis-compatible in-memory store in Go**, implementing RESP2 protocol, 71 commands across core data structures (strings, lists, hashes, sets), and single-executor sequential concurrency model.
+- **Designed crash-resilient persistence engine** utilizing CRC32-framed AOF logs, group commit (`always`/`everysec`), and atomic snapshot rewrites, verified with zero acknowledged write loss across 100× SIGKILL chaos tests.
+- **Implemented memory accounting & approximated LRU eviction** using 24-bit access clocks and a 16-slot candidate pool, retaining 98–100% of hot working sets under continuous cold churn.
+- **Built MULTI/EXEC transaction state machine** featuring queue-time syntax validation, `EXECABORT` semantics, value-snapshot `WATCH` invalidation, and single-frame atomic AOF persistence.
+- **Established 6-layer CI verification pyramid**: differential harness (1,000+ steps vs reference Redis 7.4), 65 official Redis Tcl test suites, and continuous fuzz soaks (~890M executions with zero failures).
+- **Delivered 204k sequential rps (P=1) and 769k pipelined rps (P=16)**, reaching 77%–97% of reference C Redis throughput; developed Antares Observatory telemetry bridge for live internal visualization.
 
 ### Q2. Why the name "Antares"?
 
-α Scorpii is the red star called "the rival of Mars" — a red rival to Redis, built to be observed through its Observatory. It's a memorable hook, and every demo section (Replication Lab, Durability Lab) is named after what it actually does.
+α Scorpii is the red star called "the rival of Mars" (*Ant-Árēs*)—a red rival to Redis, built to be observed through its Observatory. It is a memorable hook, and every demo section (Replication Lab, Durability Lab) is named after what it actually does.
 Evidence: `README.md`; PLAN §name.
 
 ---

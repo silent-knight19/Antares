@@ -325,3 +325,84 @@ func TestExecRejectsOversizedReply(t *testing.T) {
 		t.Fatalf("oversized GET status = %d, body = %v", code, out)
 	}
 }
+
+func TestBenchmarks(t *testing.T) {
+	_, ts := newTestBridge(t)
+	var body struct {
+		Status string `json:"status"`
+	}
+	if code := getJSON(t, ts.URL+"/api/benchmarks", &body); code != http.StatusOK {
+		t.Fatalf("status = %d", code)
+	}
+	if body.Status != "verified" && body.Status != "unverified" {
+		t.Fatalf("unexpected benchmarks status: %s", body.Status)
+	}
+
+	// Test live benchmark run
+	payload, _ := json.Marshal(map[string]any{"command": "PING", "count": 20, "pipeline": 1})
+	resp, err := http.Post(ts.URL+"/api/benchmarks/run", "application/json", bytes.NewReader(payload))
+	if err != nil {
+		t.Fatalf("POST /api/benchmarks/run: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("POST run status = %d", resp.StatusCode)
+	}
+	var runOut struct {
+		Command string `json:"command"`
+		Antares struct {
+			RPS float64 `json:"rps"`
+		} `json:"antares"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&runOut); err != nil {
+		t.Fatalf("decode bench run: %v", err)
+	}
+	if runOut.Command != "PING" || runOut.Antares.RPS <= 0 {
+		t.Fatalf("unexpected bench run out: %+v", runOut)
+	}
+}
+
+func TestDurabilitySim(t *testing.T) {
+	_, ts := newTestBridge(t)
+	payload, _ := json.Marshal(map[string]any{"count": 10})
+	resp, err := http.Post(ts.URL+"/api/lab/durability/simulate", "application/json", bytes.NewReader(payload))
+	if err != nil {
+		t.Fatalf("POST durability: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("durability status = %d", resp.StatusCode)
+	}
+	var out struct {
+		Badge           string `json:"badge"`
+		LostAckedWrites int    `json:"lost_acked_writes"`
+		WritesAcked     int    `json:"writes_acked"`
+		RecoveredKeys   int    `json:"recovered_keys"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatalf("decode durability: %v", err)
+	}
+	if out.Badge != "0 acked writes lost" || out.LostAckedWrites != 0 || out.WritesAcked != 10 || out.RecoveredKeys != 10 {
+		t.Fatalf("durability result: %+v", out)
+	}
+}
+
+func TestEvictionPool(t *testing.T) {
+	_, ts := newTestBridge(t)
+	var out struct {
+		PoolSize   int `json:"pool_size"`
+		VictimSlot int `json:"victim_slot"`
+		Candidates []struct {
+			Slot     int    `json:"slot"`
+			Key      string `json:"key"`
+			IsVictim bool   `json:"is_victim"`
+		} `json:"candidates"`
+	}
+	if code := getJSON(t, ts.URL+"/api/lab/eviction-pool", &out); code != http.StatusOK {
+		t.Fatalf("eviction pool status = %d", code)
+	}
+	if out.PoolSize != 16 || len(out.Candidates) != 16 {
+		t.Fatalf("unexpected candidates len: %d", len(out.Candidates))
+	}
+}
+

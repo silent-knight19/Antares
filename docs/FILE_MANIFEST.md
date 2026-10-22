@@ -189,12 +189,12 @@ Entries below are populated at the phase noted; directories without files remain
 | `web/tailwind.config.js` | U3 Tailwind config; imports the U0 token theme from `web/tokens/tailwind.config.js` |
 | `web/tokens/tailwind.config.js` | U0 design tokens (dark theme, one accent, ok/warn/crit/info, AA contrast) |
 | `web/src/main.tsx` | U3 React entry: `QueryClientProvider` + `BrowserRouter` |
-| `web/src/App.tsx` | U3 routes: `/playground`, `/keyspace`, index redirect, catch-all |
+| `web/src/App.tsx` | U3 & M2 routes: `/overview`, `/metrics`, `/benchmarks`, `/durability`, `/playground`, `/keyspace`, index redirect, catch-all |
 | `web/src/index.css` | Tailwind layers, base dark styling, selection, reduced-motion |
-| `web/src/components/{Layout,StatusBar}.tsx` | U3 shell: left nav with later-milestone entries, status bar polling `/api/health` every 4s and consuming the SSE info stream |
-| `web/src/components/{ui,ReplyView,KeyDrawer}.tsx` | Shared states/badges; U4 per-type RESP renderer; U6a read-only key detail drawer (Esc closes, bounded inline reads) |
-| `web/src/lib/{api,types,command,format,keyDetail,useInfoStream}.ts` | Typed bridge client, reply types, sdssplitargs-compatible inline command splitter (double-quote escapes/`\xHH`, single-quote `\'`), TTL formatting, detail loader, SSE hook |
-| `web/src/pages/{Playground,Keyspace,NotFound}.tsx` | U4 Playground (input/history/presets/wire trace/latency), U6a virtualized SCAN table, 404 |
+| `web/src/components/{Layout,StatusBar}.tsx` | U3 shell: left nav with M2 active showcase links and M3 later-milestone entries, status bar polling `/api/health` every 4s and consuming the SSE info stream |
+| `web/src/components/{ui,ReplyView,KeyDrawer}.tsx` | Shared states/badges; U4 per-type RESP renderer; U6b key detail drawer with live TTL countdown ring and DEL mutation |
+| `web/src/lib/{api,types,command,format,keyDetail,useInfoStream}.ts` | Typed bridge client, reply types, benchmark/durability/claims types, sdssplitargs-compatible inline command splitter, TTL formatting, detail loader, SSE hook |
+| `web/src/pages/{Overview,Metrics,Benchmarks,DurabilityLab,Playground,Keyspace,NotFound}.tsx` | M2 Showcase: U5 Overview & guided tour engine (Stories 1–3), U7 RED/USE metrics dashboard, U8 Benchmarks view with live runner & claims provenance, U9 Durability Lab with crash/SIGKILL simulation, U4 Playground, U6b Keyspace with TTL countdown rings & active sampling / eviction pool inspectors, 404 |
 | `web/e2e/.gitkeep` | U12 (Playwright) |
 | `deploy/demo/run-dev.sh` | U2 local demo runner: starts Antares, optionally the pinned reference Redis, then the Observatory |
 | `deploy/demo/seed.sh` | U2 seed data (~10k `user:*` plus `queue:*`/`session:*`/`tags:*`) via `redis-cli --pipe` |

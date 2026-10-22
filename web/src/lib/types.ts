@@ -50,3 +50,107 @@ export interface InfoEvent {
   fields: Record<string, string>;
   at_ms: number;
 }
+
+export interface ClaimEntry {
+  value: number;
+  unit: string;
+  source: string;
+  timestamp: string;
+  commit: string;
+  variance: number;
+}
+
+export interface ClaimsResponse {
+  claims: Record<string, ClaimEntry>;
+  status: 'verified' | 'unverified';
+  message?: string;
+}
+
+export interface BenchmarkItem {
+  pipeline: number;
+  command: string;
+  antares: {
+    median_rps: number;
+    p50_ms: number;
+    p99_ms: number;
+    all_rps: number[];
+  };
+  redis_ref?: {
+    median_rps: number;
+    p50_ms: number;
+    p99_ms: number;
+    all_rps: number[];
+  };
+  ratio_percent?: number;
+}
+
+export interface BenchmarkReport {
+  commit: string;
+  timestamp: string;
+  platform: string;
+  go_version: string;
+  requests_per_run: number;
+  clients: number;
+  runs_count: number;
+  benchmarks: BenchmarkItem[];
+}
+
+export interface BenchmarksResponse {
+  status: 'verified' | 'unverified';
+  report?: BenchmarkReport;
+  claims?: Record<string, ClaimEntry>;
+  source_file?: string;
+}
+
+export interface LiveBenchResult {
+  command: string;
+  pipeline: number;
+  count: number;
+  antares: {
+    rps: number;
+    p50_ms: number;
+    p99_ms: number;
+  };
+  redis?: {
+    rps: number;
+    p50_ms: number;
+    p99_ms: number;
+  };
+  ratio_percent?: number;
+}
+
+export interface DurabilityTimelineEntry {
+  seq: number;
+  key: string;
+  status: string;
+  offset: number;
+  latency_ms: number;
+}
+
+export interface DurabilitySimResponse {
+  status: string;
+  writes_sent: number;
+  writes_acked: number;
+  recovered_keys: number;
+  lost_acked_writes: number;
+  badge: string;
+  final_aof_offset: number;
+  timeline: DurabilityTimelineEntry[];
+  persistence?: Record<string, string>;
+}
+
+export interface EvictionCandidate {
+  slot: number;
+  key: string;
+  idle_seconds: number;
+  ttl_ms: number;
+  is_victim: boolean;
+}
+
+export interface EvictionPoolResponse {
+  policy: string;
+  pool_size: number;
+  sampled_count: number;
+  victim_slot: number;
+  candidates: EvictionCandidate[];
+}
