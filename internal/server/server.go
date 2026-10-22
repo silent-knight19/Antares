@@ -27,7 +27,9 @@ const (
 
 // Handler executes one parsed request and writes its reply to out. The
 // executor replaces this at P2.2; P1.4 hands requests to it in arrival order.
-type Handler func(req protocol.Request, out *protocol.Encoder)
+// conn carries per-connection state (transaction queue and WATCH set) and is
+// unique for the lifetime of the TCP connection.
+type Handler func(req protocol.Request, out *protocol.Encoder, conn *ConnState)
 
 type Config struct {
 	Addr        string
@@ -225,6 +227,7 @@ func (s *Server) serveConn(conn net.Conn) {
 	br := bufio.NewReaderSize(ic, readBufferSize)
 	enc := protocol.GetEncoder()
 	defer enc.Release()
+	connState := &ConnState{}
 
 	for {
 		req, err := protocol.ReadRequest(br)
@@ -242,7 +245,7 @@ func (s *Server) serveConn(conn net.Conn) {
 		}
 		if s.handler != nil {
 			enc.Reset()
-			s.handler(req, enc)
+			s.handler(req, enc, connState)
 			bw.Write(enc.Bytes())
 		}
 		// No explicit flush here: connIO.Read flushes pending replies right

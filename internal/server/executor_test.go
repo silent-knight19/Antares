@@ -47,7 +47,7 @@ func TestExecutorSerializesCommands(t *testing.T) {
 				[]byte("SEQ"),
 				[]byte(fmt.Sprintf("key:%d", i)),
 				[]byte("value"),
-			}, enc)
+			}, enc, nil)
 		}(i)
 	}
 	wg.Wait()
@@ -82,7 +82,7 @@ func TestExecutorCloseContextDeadline(t *testing.T) {
 	go func() {
 		enc := protocol.GetEncoder()
 		defer enc.Release()
-		exec.Handle(protocol.Request{[]byte("STUCK")}, enc)
+		exec.Handle(protocol.Request{[]byte("STUCK")}, enc, nil)
 		close(handled)
 	}()
 	<-entered
@@ -216,7 +216,7 @@ func TestExecutorDispatch(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			enc := protocol.GetEncoder()
 			defer enc.Release()
-			exec.Handle(tc.req, enc)
+			exec.Handle(tc.req, enc, nil)
 			if got := string(enc.Bytes()); got != tc.want {
 				t.Fatalf("got %q, want %q", got, tc.want)
 			}

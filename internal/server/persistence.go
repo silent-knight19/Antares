@@ -136,15 +136,24 @@ func (e *Executor) captureSpopBefore(req protocol.Request) map[string]struct{} {
 }
 
 // propagate appends the command's effects when the store's mutation counter
-// moved, then opportunistically compacts. Raw commands are safe to replay;
-// random, relative-time, and precision-sensitive ones are rewritten to a
-// deterministic effect. All effects share one frame so replay sees them
-// atomically.
+// moved, then opportunistically compacts.
 func (e *Executor) propagate(req protocol.Request, mutations uint64, spopBefore map[string]struct{}) error {
+	return e.appendEffects(e.collectEffects(req, mutations, spopBefore))
+}
+
+// collectEffects returns the deterministic effect commands for one request, or
+// nil when it did not mutate the keyspace. Raw commands are safe to replay;
+// random, relative-time, and precision-sensitive ones are rewritten.
+func (e *Executor) collectEffects(req protocol.Request, mutations uint64, spopBefore map[string]struct{}) [][][]byte {
 	if e.aof == nil || len(req) == 0 || e.store.Mutations() == mutations {
 		return nil
 	}
-	effects := e.aofEffect(req, spopBefore)
+	return e.aofEffect(req, spopBefore)
+}
+
+// appendEffects writes every effect into one frame so replay applies a
+// multi-command effect (a transaction) atomically.
+func (e *Executor) appendEffects(effects [][][]byte) error {
 	if len(effects) == 0 {
 		return nil
 	}
@@ -153,7 +162,7 @@ func (e *Executor) propagate(req protocol.Request, mutations uint64, spopBefore 
 		payload = append(payload, persist.EncodeCommand(args...)...)
 	}
 	if err := e.aof.Append(payload); err != nil {
-		slog.Error("AOF append failed", "command", string(req[0]), "err", err)
+		slog.Error("AOF append failed", "err", err)
 		return err
 	}
 	if e.aof.ShouldRewrite() {

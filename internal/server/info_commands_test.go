@@ -91,8 +91,8 @@ func TestInfoStatsAndKeyspace(t *testing.T) {
 	}
 
 	body = infoBody(t, runStrings(exec, "INFO", "stats"))
-	if got := infoField(t, body, "total_commands_processed"); got != "4" {
-		t.Fatalf("total_commands_processed = %q, want 4", got)
+	if got := infoField(t, body, "total_commands_processed"); got != "5" {
+		t.Fatalf("total_commands_processed = %q, want 5", got)
 	}
 
 	runStrings(exec, "DEL", "a", "b")

@@ -10,7 +10,7 @@
 
 ### Q1. Walk me through this project. (30–60s)
 
-Antares is a Redis-compatible server I'm building from scratch in Go — RESP2, ~65 commands, TTL expiry, framed AOF persistence, approximated-LRU eviction, transactions, and replication with both full and partial resync. It ships with the Observatory: a separate process and web UI that visualizes the server's internals — fsync events, eviction decisions, expiry sampling, replication offsets — and renders only numbers produced by a verification pipeline, never hand-typed ones. Every claim in the repo is machine-verifiable: differential tests against a pinned real Redis, crash tests, fuzzing, and benchmarks in CI.
+Antares is a Redis-compatible server I'm building from scratch in Go — RESP2, ~70 commands, TTL expiry, framed AOF persistence, approximated-LRU eviction, transactions, and replication with both full and partial resync. It ships with the Observatory: a separate process and web UI that visualizes the server's internals — fsync events, eviction decisions, expiry sampling, replication offsets — and renders only numbers produced by a verification pipeline, never hand-typed ones. Every claim in the repo is machine-verifiable: differential tests against a pinned real Redis, crash tests, fuzzing, and benchmarks in CI.
 Evidence: `README.md`, `docs/PLAN.md` §1–§3.
 
 ### Q2. Why the name "Antares"?
@@ -97,6 +97,12 @@ Evidence: ADR-026; `internal/server/executor.go`; `internal/protocol/errors.go`;
 Each key carries a 24-bit access clock in seconds, refreshed on every lookup and write; idle time is `(now - lru) mod 2^24`, so the ~194-day wrap never reads as an ancient key. Under `allkeys-lru` the executor samples five keys (Go's randomized map iteration is the sample), inserts them into a 16-slot pool that keeps the most-idle candidates, evicts the most idle, and repeats until the keyspace fits `maxmemory` or nothing is evictable — emitting a versioned event per victim. `volatile-lru` samples only keys with a TTL. I rejected exact LRU: it costs about two pointers plus list maintenance per key and diverges from Redis, while the five-sample approximation keeps most of the hit rate (P7.4 measures retention). When eviction cannot free enough — `noeviction`, or `volatile-lru` with no volatile keys left — the denyoom command gets `-OOM`, while reads and deletes stay allowed. I validated the approximation: a hot set refreshed each round against 1000 rounds of cold churn retained 0.98–1.00 of its keys (the gate is 0.90), and `INFO stats` reports live `evicted_keys`.
 
 Evidence: ADR-006, ADR-027; `internal/store/store.go`; `internal/evict/evict.go`; `internal/server/executor.go`; `TestEvictAllKeysLRU`; `TestEvictVolatileLRUOnly`; `TestEvictionRetainsHotKeys`.
+
+### Q19. How do MULTI/EXEC and WATCH work on top of a single-goroutine executor?
+
+The connection goroutine owns a `ConnState` whose `txState` holds the active flag, dirty flag, command queue, and watched snapshots; the executor owns all keyspace access. Before dispatch, `execute` checks the command name and arity: while a transaction is active, a valid command is appended and answered `+QUEUED`, an unknown or wrong-arity command sets `dirty`, and `EXEC` then returns Redis's `-EXECABORT Transaction discarded because of previous errors.` A runtime error (wrong type, overflow) is not a queue-time error, so it stays inside the EXEC reply array while the other commands still run. `EXEC` dispatches the whole queue in one executor turn — no other connection's requests can interleave — writes an `ArrayHeader`, and collects the queued commands' AOF effects into a single frame, so a restart replays all of the transaction or none of it. `WATCH` captures existence, kind, payload, and the absolute expiry deadline rather than registering a per-key dirty flag; at EXEC the snapshot is compared, and a mismatch returns a null array. That value-snapshot choice is the documented divergence: same-value writes and write-then-restore do not abort, while TTL changes and expiry do; `FLUSHALL` matches Redis by aborting only for watched keys that exist.
+
+Evidence: ADR-008, ADR-028; `internal/server/transactions.go`; `internal/store/watch.go`; `TestTransactionBasics`; `TestTransactionDSTShadowModel`; `TestDiffTransactions`.
 
 ---
 

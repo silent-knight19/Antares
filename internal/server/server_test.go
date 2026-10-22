@@ -188,7 +188,7 @@ func TestShutdownDoesNotWaitForStuckHandler(t *testing.T) {
 	entered := make(chan struct{})
 	release := make(chan struct{})
 	defer close(release)
-	srv := startServerHandler(t, Config{}, func(_ protocol.Request, out *protocol.Encoder) {
+	srv := startServerHandler(t, Config{}, func(_ protocol.Request, out *protocol.Encoder, _ *ConnState) {
 		close(entered)
 		<-release
 		out.Simple("OK")
@@ -266,7 +266,7 @@ func TestStartAfterShutdownFails(t *testing.T) {
 }
 
 func TestPipelineFlushesWithoutFurtherInput(t *testing.T) {
-	srv := startServerHandler(t, Config{}, func(req protocol.Request, out *protocol.Encoder) {
+	srv := startServerHandler(t, Config{}, func(req protocol.Request, out *protocol.Encoder, _ *ConnState) {
 		out.Simple("PONG")
 	})
 	conn := dial(t, srv)
@@ -285,7 +285,7 @@ func TestPipelineFlushesWithoutFurtherInput(t *testing.T) {
 }
 
 func TestPipelineTenThousandCommands(t *testing.T) {
-	srv := startServerHandler(t, Config{}, func(req protocol.Request, out *protocol.Encoder) {
+	srv := startServerHandler(t, Config{}, func(req protocol.Request, out *protocol.Encoder, _ *ConnState) {
 		out.Bulk(req[1])
 	})
 	conn := dial(t, srv)
@@ -330,7 +330,7 @@ func TestPipelineTenThousandCommands(t *testing.T) {
 // inline command waits for the rest of its bytes, and the reply survives a
 // half-close instead of being discarded with the connection.
 func TestRepliesFlushBeforeWaitingOnPartialCommand(t *testing.T) {
-	srv := startServerHandler(t, Config{}, func(req protocol.Request, out *protocol.Encoder) {
+	srv := startServerHandler(t, Config{}, func(req protocol.Request, out *protocol.Encoder, _ *ConnState) {
 		out.Simple("PONG")
 	})
 	const input = "PING\r\nECH"
@@ -367,7 +367,7 @@ func TestRepliesFlushBeforeWaitingOnPartialCommand(t *testing.T) {
 }
 
 func TestProtocolErrorRepliesAndCloses(t *testing.T) {
-	srv := startServerHandler(t, Config{}, func(req protocol.Request, out *protocol.Encoder) {
+	srv := startServerHandler(t, Config{}, func(req protocol.Request, out *protocol.Encoder, _ *ConnState) {
 		out.Simple("PONG")
 	})
 	conn := dial(t, srv)

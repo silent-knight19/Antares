@@ -25,7 +25,7 @@ func newStringExecWithClock(t *testing.T, c clock.Clock) *Executor {
 func runCommand(exec *Executor, args ...[]byte) string {
 	enc := protocol.GetEncoder()
 	defer enc.Release()
-	exec.Handle(protocol.Request(args), enc)
+	exec.Handle(protocol.Request(args), enc, nil)
 	return string(enc.Bytes())
 }
 

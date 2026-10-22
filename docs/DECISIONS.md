@@ -681,3 +681,26 @@
   - "Why not exact LRU?" → per-key list overhead and divergence from Redis; the sample approximates it and I measure retention.
   - "What if nothing is evictable?" → eviction fails and a denyoom command gets `-OOM` (noeviction, or `volatile-lru` with no volatile keys).
 - Proof: `internal/store/store.go` (`Value.Lru`, `lruClock`, `SampleKeys`, the `live` touch), `internal/evict/evict.go` (`Policy`, `Pool`), `internal/events/events.go` (`Event`, `Sink`), `internal/server/executor.go` (`maxmemoryGate`, `performEvictions`); `TestSampleKeysIdleAndVolatile`, `TestLookupTouchesLRU`, `TestParsePolicy`, `TestPoolPopsMostIdle`, `TestPoolBoundedToMostIdle`, `TestEvictAllKeysLRU`, `TestEvictVolatileLRUOnly`. Meeting the ADR-006 retention target, `TestEvictionRetainsHotKeys` (P7.4) measured hot-set retention at 0.98–1.00 across 1000 rounds of cold churn (gate >0.90), and `INFO stats` now reports live `evicted_keys`.
+
+## ADR-028 — Transactions: per-connection queue state, one executor turn and one AOF frame per EXEC
+- Date: 2026-10-22 · Phase: P8 · Status: Accepted
+- Context: Redis executes a transaction as a unit only because its single-threaded event loop means an EXEC's queued commands cannot interleave with another client's commands. Antares has the same single-key-owner property (ADR-002), but the executor's `Handler` was stateless per request, and AOF effects were appended one command at a time with a `Mutations` counter diff observed before and after each dispatch.
+- Options:
+  - A. Global transaction registry keyed by client ID in the executor.
+  - B. Per-connection `ConnState` created by the network goroutine and passed through the `Handler`; the executor still owns all command execution.
+  - C. Execute queued commands directly on the store without going through the normal dispatch path.
+- Decision: B. `ConnState` holds `txState{active, dirty, queued, watched}`; `Handler` becomes `func(Request, *Encoder, *ConnState)`; `Handle` substitutes a fresh state for nil (tests). While active, `execute` validates arity/unknown command and appends to the queue with `+QUEUED`; an invalid queued command sets `dirty` so EXEC returns `-EXECABORT Transaction discarded because of previous errors.` At EXEC, a dirty queue aborts, a mismatching WATCH snapshot returns a null array, otherwise the queue is dispatched in order into the caller's encoder (one `ArrayHeader`), each command's AOF effects are collected and appended together as one frame, and the state resets. `DISCARD` and a completed/aborted EXEC both clear the watched set.
+- Why chosen:
+  - A duplicates connection identity in the executor and needs cleanup on disconnect; B keeps ownership in the goroutine that closes the socket, and the executor sees the same `ConnState` pointer only from that connection's serialized requests.
+  - Reusing the normal handler dispatch for queued commands keeps validation, dispatch, expiry, metrics, and AOF effect logic in one place; C would fork every command path.
+  - One frame per EXEC means a crash replays all of a transaction or none of it, matching "EXEC is atomic" at the persistence boundary too.
+- Why rejected:
+  - A: extra identity table and disconnect lifecycle for no execution benefit.
+  - C: a second implementation of every command path, guaranteed to drift.
+- Trade-offs accepted: `WATCH` compares values, not touches (ADR-008), so a write followed by restoring identical bytes does not abort; transaction state is memory-only and dies with the connection, as in Redis; the MULTI queue is unbounded, as in Redis, so a client can queue until memory runs out (a known limit, not a hidden one); the notification/TTL-change path is covered by comparing the absolute deadline, but no per-key dirty flags exist.
+- Revisit if: pub/sub or keyspace notifications need per-key change hooks, or transaction queues need a memory cap.
+- Interview Q&A:
+  - "How is EXEC atomic if the executor is one goroutine?" → the queue is dispatched inside one executor turn; clients cannot interleave commands between the queued ones, and the AOF appends the effects as a single frame.
+  - "Why per-connection state instead of a client ID table?" → the connection goroutine owns the lifetime, the executor owns execution, and no extra registry has to be cleaned up on disconnect.
+  - "What makes a transaction dirty?" → a command that fails at queue time: unknown command or wrong arity (EXEC itself has a special abort wording); control errors like nested MULTI or WATCH-inside-MULTI do not dirty it, and runtime errors inside EXEC stay in the reply array.
+- Proof: `internal/server/transactions.go`, `internal/store/watch.go`, `internal/server/executor.go` (`execute`, `run` gates dirty open transactions), `internal/server/persistence.go` (`collectEffects`/`appendEffects`); `TestTransactionBasics`, `TestTransactionQueueErrorsAbort`, `TestExecArityAbortsTransaction`, `TestTransactionDSTShadowModel`, `TestExecPersistsEffectsAsOneFrame`, `TestDiffTransactions` against Redis 7.4.11.

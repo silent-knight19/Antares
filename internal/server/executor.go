@@ -55,6 +55,7 @@ type Executor struct {
 type execRequest struct {
 	req  protocol.Request
 	out  *protocol.Encoder
+	conn *ConnState
 	done chan struct{}
 }
 
@@ -110,6 +111,7 @@ func newExecutorWithAOF(st *store.Store, reg *Registry, active bool, c clock.Clo
 		registerInfoCommands(reg, e)
 		registerConnectionCommands(reg, e)
 		registerPersistenceCommands(reg, e)
+		registerTransactionCommands(reg)
 	}
 	e.commands = reg
 	go e.loop()
@@ -123,12 +125,16 @@ func (e *Executor) Stats() *metrics.Stats { return e.stats }
 func (e *Executor) SetEventSink(sink events.Sink) { e.events = sink }
 
 // Handle implements server.Handler: it queues the request and waits for the
-// executor to write the reply into out. A closed executor drops the request
-// rather than blocking the connection goroutine forever.
-func (e *Executor) Handle(req protocol.Request, out *protocol.Encoder) {
+// executor to write the reply into out. A nil conn (direct tests) gets a fresh
+// transaction state. A closed executor drops the request rather than blocking
+// the connection goroutine forever.
+func (e *Executor) Handle(req protocol.Request, out *protocol.Encoder, conn *ConnState) {
+	if conn == nil {
+		conn = &ConnState{}
+	}
 	done := make(chan struct{})
 	select {
-	case e.requests <- execRequest{req: req, out: out, done: done}:
+	case e.requests <- execRequest{req: req, out: out, conn: conn, done: done}:
 	case <-e.quit:
 		return
 	case <-e.done:
@@ -226,7 +232,9 @@ func (e *Executor) run(req execRequest) {
 		}
 		close(req.done)
 	}()
+	tx := &req.conn.tx
 	if e.aofWriteBlocked(req.req, req.out) {
+		tx.dirty = true
 		return
 	}
 	blocked, evicted := e.maxmemoryGate(req.req, req.out)
@@ -234,22 +242,14 @@ func (e *Executor) run(req execRequest) {
 		slog.Error("AOF eviction append failed", "keys", len(evicted), "err", err)
 		req.out.Reset()
 		req.out.Error("MISCONF Errors writing to the AOF file: " + err.Error())
+		tx.dirty = true
 		return
 	}
 	if blocked {
+		tx.dirty = true
 		return
 	}
-	mutations := e.store.Mutations()
-	spopBefore := e.captureSpopBefore(req.req)
-	e.commands.Dispatch(req.req, req.out)
-	e.stats.Commands.Add(1)
-	if err := e.propagate(req.req, mutations, spopBefore); err != nil {
-		req.out.Reset()
-		req.out.Error("MISCONF Errors writing to the AOF file: " + err.Error())
-	}
-	if used := e.store.MemoryUsage().Total; used > 0 {
-		e.stats.ObserveMemory(uint64(used))
-	}
+	e.execute(req, tx)
 }
 
 // persistEvictions records one DEL for every key evicted while preparing this
