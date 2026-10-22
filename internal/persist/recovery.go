@@ -63,9 +63,15 @@ func RecoverFile(path string, repair bool, apply func(payload []byte) error) (Re
 	return report, nil
 }
 
+// RecoverReader replays valid frames in order from r through apply.
+// If size <= 0, the input is treated as a stream that ends at io.EOF.
+func RecoverReader(r io.Reader, size int64, apply func(payload []byte) error) (RecoveryReport, error) {
+	return recoverFrames(r, size, apply, false)
+}
+
 // recoverFrames is the in-memory recovery core. size bounds the payload
 // allocation: a header claiming more bytes than the input holds is a torn
-// write, not a reason to reserve a gigabyte.
+// write, not a reason to reserve a gigabyte. When size <= 0, input is streamed.
 func recoverFrames(r io.Reader, size int64, apply func(payload []byte) error, repair bool) (RecoveryReport, error) {
 	var report RecoveryReport
 	var offset int64
@@ -89,7 +95,7 @@ func recoverFrames(r io.Reader, size int64, apply func(payload []byte) error, re
 			report.Corrupt = true
 			break
 		}
-		if int64(n) > size-offset-FrameHeaderSize {
+		if size > 0 && int64(n) > size-offset-FrameHeaderSize {
 			report.Reason = "partial frame payload"
 			break
 		}

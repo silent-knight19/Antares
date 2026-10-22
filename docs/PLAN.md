@@ -368,4 +368,4 @@ antares/
 3. `make test` → confirm baseline green.
 4. Work the subphase. When exit criterion passes → phase-gate checklist (§8) → log → done.
 
-**Current position:** S1.1 (Replication handshake, role state, and read-only gating) and S1.2 (Propagation stream, master_repl_offset tracking, and 1MB backlog ring buffer) complete. Handshake verified against reference Redis 7.4.11; backlog wrapping, CanPartialResync window math, and byte-exact mutation propagation verified with race detector. Next: S1.3 (Full resync: snapshot stream + per-replica concurrent-write buffer).
+**Current position:** S1.1, S1.2, S1.3, and S1.4 (Replica apply loop, offset tracking, read-only mode) complete. Verified read-only client write rejection with exact `-READONLY` error, read-only transactions, `CONFIG GET/SET replica-read-only`, `TrackedReader` byte math, replica own-client command execution, exact `slave_repl_offset` tracking, and live continuous replication loop (`TestReplicaReadOnlyMode`, `TestReplicaApplyLoopProcessing`, `TestReplicaFullResyncAndApplyLoop`). Next: S1.5 (REPLCONF ACK every 1s, master lag tracking, INFO replication section).

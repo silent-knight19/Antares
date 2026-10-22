@@ -10,16 +10,20 @@ import (
 // excluded) and writes its reply to out.
 type CommandHandler func(args [][]byte, out *protocol.Encoder)
 
+// CommandHandlerWithConn is a CommandHandler that also accepts per-connection state (e.g. for REPLCONF/PSYNC).
+type CommandHandlerWithConn func(args [][]byte, out *protocol.Encoder, conn *ConnState)
+
 // Command is one registry entry. Arity follows Redis: positive means an exact
 // argument count including the name; negative means at least -Arity. Write
 // marks a mutation (AOF/MISCONF gate); DenyOOM marks a command that may grow
 // memory, which maxmemory rejects under pressure (Redis's CMD_DENYOOM).
 type Command struct {
-	Name    string
-	Arity   int
-	Write   bool
-	DenyOOM bool
-	Handler CommandHandler
+	Name            string
+	Arity           int
+	Write           bool
+	DenyOOM         bool
+	Handler         CommandHandler
+	HandlerWithConn CommandHandlerWithConn
 }
 
 // Registry maps case-insensitive command names to handlers. It is built once
@@ -40,8 +44,14 @@ func NewRegistry() *Registry {
 
 // Register adds cmd under its lowercased name.
 func (r *Registry) Register(cmd Command) {
-	if cmd.Name == "" || cmd.Handler == nil {
+	if cmd.Name == "" || (cmd.Handler == nil && cmd.HandlerWithConn == nil) {
 		panic("server: invalid command registration")
+	}
+	if cmd.Handler == nil && cmd.HandlerWithConn != nil {
+		hwc := cmd.HandlerWithConn
+		cmd.Handler = func(args [][]byte, out *protocol.Encoder) {
+			hwc(args, out, nil)
+		}
 	}
 	cmd.Name = strings.ToLower(cmd.Name)
 	r.commands[cmd.Name] = cmd
@@ -56,6 +66,11 @@ func (r *Registry) Lookup(name []byte) (Command, bool) {
 // Dispatch looks up the command, checks arity, and runs its handler. Unknown
 // commands and arity failures reply with the captured Redis wording.
 func (r *Registry) Dispatch(req protocol.Request, out *protocol.Encoder) {
+	r.DispatchWithConn(req, out, nil)
+}
+
+// DispatchWithConn looks up the command, checks arity, and runs its handler with connection state.
+func (r *Registry) DispatchWithConn(req protocol.Request, out *protocol.Encoder, conn *ConnState) {
 	cmd, ok := r.Lookup(req[0])
 	if !ok {
 		out.Error(protocol.UnknownCommand(string(req[0]), req[1:]...))
@@ -65,7 +80,11 @@ func (r *Registry) Dispatch(req protocol.Request, out *protocol.Encoder) {
 		out.Error(protocol.WrongArity(cmd.Name))
 		return
 	}
-	cmd.Handler(req[1:], out)
+	if cmd.HandlerWithConn != nil {
+		cmd.HandlerWithConn(req[1:], out, conn)
+	} else if cmd.Handler != nil {
+		cmd.Handler(req[1:], out)
+	}
 }
 
 func (cmd Command) accepts(argc int) bool {

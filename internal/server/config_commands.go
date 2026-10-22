@@ -121,6 +121,15 @@ func configCommand(e *Executor, args [][]byte, out *protocol.Encoder) {
 					return
 				}
 				maxclients = n
+			case "replica-read-only", "slave-read-only":
+				val := strings.ToLower(string(args[i+1]))
+				if val != "yes" && val != "no" {
+					out.Error(fmt.Sprintf("ERR CONFIG SET failed (possibly related to argument '%s') - argument must be 'yes' or 'no'", name))
+					return
+				}
+				if e.repl != nil {
+					e.repl.SetSlaveReadOnly(val == "yes")
+				}
 			default:
 				out.Error(fmt.Sprintf("ERR Unknown option or number of arguments for CONFIG SET - '%s'", name))
 				return
@@ -137,6 +146,10 @@ func configCommand(e *Executor, args [][]byte, out *protocol.Encoder) {
 }
 
 func (e *Executor) configItems() []configItem {
+	readOnly := "yes"
+	if e.repl != nil && !e.repl.SlaveReadOnly() {
+		readOnly = "no"
+	}
 	return []configItem{
 		{"hz", strconv.Itoa(e.hz)},
 		{"maxmemory", strconv.FormatInt(e.maxmemory, 10)},
@@ -148,6 +161,8 @@ func (e *Executor) configItems() []configItem {
 		{"appendonly", e.appendonlyValue()},
 		{"appendfsync", e.appendfsyncValue()},
 		{"save", "3600 1 300 100 60 10000"},
+		{"replica-read-only", readOnly},
+		{"slave-read-only", readOnly},
 	}
 }
 

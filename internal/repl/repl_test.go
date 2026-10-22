@@ -78,3 +78,103 @@ func TestOffsetsAndBacklog(t *testing.T) {
 		t.Fatalf("slave offset = %d, want 120", s.SlaveReplOffset())
 	}
 }
+
+func TestFeedBacklogSyncBuffers(t *testing.T) {
+	s := NewState("testreplid", nil)
+	buf1 := NewSyncBuffer(1024)
+	buf2 := NewSyncBuffer(1024)
+
+	s.RegisterSyncBuffer(buf1)
+	s.RegisterSyncBuffer(buf2)
+	if s.ActiveSyncBuffers() != 2 {
+		t.Fatalf("active sync buffers = %d, want 2", s.ActiveSyncBuffers())
+	}
+
+	cmd := []byte("*3\r\n$3\r\nSET\r\n$1\r\nk\r\n$1\r\nv\r\n")
+	s.FeedBacklog(cmd)
+
+	if buf1.Buffered() != int64(len(cmd)) || buf2.Buffered() != int64(len(cmd)) {
+		t.Fatalf("buffers not updated: buf1=%d, buf2=%d, want %d", buf1.Buffered(), buf2.Buffered(), len(cmd))
+	}
+
+	s.UnregisterSyncBuffer(buf1)
+	if s.ActiveSyncBuffers() != 1 {
+		t.Fatalf("active sync buffers after unregister = %d, want 1", s.ActiveSyncBuffers())
+	}
+
+	cmd2 := []byte("*2\r\n$3\r\nDEL\r\n$1\r\nk\r\n")
+	s.FeedBacklog(cmd2)
+
+	if buf1.Buffered() != int64(len(cmd)) {
+		t.Fatalf("buf1 received mutation after unregister: got %d, want %d", buf1.Buffered(), len(cmd))
+	}
+	if buf2.Buffered() != int64(len(cmd)+len(cmd2)) {
+		t.Fatalf("buf2 missing second mutation: got %d, want %d", buf2.Buffered(), len(cmd)+len(cmd2))
+	}
+}
+
+func TestSlaveManagementAndInfoFormatting(t *testing.T) {
+	clk := clock.NewFake(time.Unix(1000000, 0))
+	s := NewState("abcde12345", clk)
+
+	if s.ConnectedSlaves() != 0 {
+		t.Fatalf("connected slaves = %d, want 0", s.ConnectedSlaves())
+	}
+
+	// Register slave 0
+	sID1 := s.AddSlave("127.0.0.1", 6381)
+	if sID1 == 0 {
+		t.Fatalf("slave 1 ID = 0, want non-zero")
+	}
+	if s.ConnectedSlaves() != 1 {
+		t.Fatalf("connected slaves = %d, want 1", s.ConnectedSlaves())
+	}
+
+	info := s.FormatInfo()
+	wantSlave0 := "slave0:ip=127.0.0.1,port=6381,state=online,offset=0,lag=0"
+	if !strings.Contains(info, "connected_slaves:1") || !strings.Contains(info, wantSlave0) {
+		t.Fatalf("INFO replication missing slave0: \n%s", info)
+	}
+
+	// Advance clock by 4 seconds
+	clk.Advance(4 * time.Second)
+	infoLag := s.FormatInfo()
+	wantLag4 := "slave0:ip=127.0.0.1,port=6381,state=online,offset=0,lag=4"
+	if !strings.Contains(infoLag, wantLag4) {
+		t.Fatalf("INFO replication missing lag=4:\n%s", infoLag)
+	}
+
+	// Slave acknowledges offset 250
+	s.UpdateSlaveAck(sID1, 250)
+	infoAck := s.FormatInfo()
+	wantAck := "slave0:ip=127.0.0.1,port=6381,state=online,offset=250,lag=0"
+	if !strings.Contains(infoAck, wantAck) {
+		t.Fatalf("INFO replication missing offset=250,lag=0:\n%s", infoAck)
+	}
+
+	// Add slave 2
+	sID2 := s.AddSlave("192.168.1.50", 6382)
+	s.UpdateSlaveAck(sID2, 100)
+	clk.Advance(2 * time.Second)
+
+	info2 := s.FormatInfo()
+	if !strings.Contains(info2, "connected_slaves:2") ||
+		!strings.Contains(info2, "slave0:ip=127.0.0.1,port=6381,state=online,offset=250,lag=2") ||
+		!strings.Contains(info2, "slave1:ip=192.168.1.50,port=6382,state=online,offset=100,lag=2") {
+		t.Fatalf("INFO replication missing both slaves:\n%s", info2)
+	}
+
+	// Remove slave 1, verify remaining slave re-indexed as slave0
+	s.RemoveSlave(sID1)
+	if s.ConnectedSlaves() != 1 {
+		t.Fatalf("connected slaves after remove = %d, want 1", s.ConnectedSlaves())
+	}
+	infoAfterRemove := s.FormatInfo()
+	if strings.Contains(infoAfterRemove, "slave1:") {
+		t.Fatalf("INFO replication still contains slave1 after remove:\n%s", infoAfterRemove)
+	}
+	if !strings.Contains(infoAfterRemove, "slave0:ip=192.168.1.50,port=6382,state=online,offset=100,lag=2") {
+		t.Fatalf("INFO replication missing re-indexed slave0:\n%s", infoAfterRemove)
+	}
+}
+

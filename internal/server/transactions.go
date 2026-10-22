@@ -11,7 +11,27 @@ import (
 // lives for the lifetime of the TCP connection, so a disconnect drops an open
 // MULTI queue and any WATCH snapshots with no server-side bookkeeping.
 type ConnState struct {
-	tx txState
+	tx              txState
+	isReplicaClient bool
+	slaveID         uint64
+	remoteIP        string
+	remotePort      int
+	onClose         func()
+}
+
+// Close runs the optional close cleanup hook.
+func (c *ConnState) Close() {
+	if c != nil && c.onClose != nil {
+		fn := c.onClose
+		c.onClose = nil
+		fn()
+	}
+}
+
+// NewReplicaConnState creates connection state for the internal replication apply loop,
+// granting it write permissions on read-only replicas (ADR-017).
+func NewReplicaConnState() *ConnState {
+	return &ConnState{isReplicaClient: true}
 }
 
 // txState is the MULTI queue plus WATCH value snapshots (ADR-008). The executor
@@ -66,7 +86,7 @@ func (e *Executor) execute(req execRequest, tx *txState) {
 		if tx.active {
 			tx.dirty = true
 		}
-		e.commands.Dispatch(req.req, req.out)
+		e.commands.DispatchWithConn(req.req, req.out, req.conn)
 		return
 	}
 	name := cmd.Name
@@ -113,7 +133,7 @@ func (e *Executor) execute(req execRequest, tx *txState) {
 
 	mutations := e.store.Mutations()
 	spopBefore := e.captureSpopBefore(req.req)
-	e.commands.Dispatch(req.req, req.out)
+	e.commands.DispatchWithConn(req.req, req.out, req.conn)
 	if err := e.propagate(req.req, mutations, spopBefore); err != nil {
 		req.out.Reset()
 		req.out.Error("MISCONF Errors writing to the AOF file: " + err.Error())
@@ -169,7 +189,7 @@ func (e *Executor) execTransaction(req execRequest, tx *txState) {
 	for _, queued := range queue {
 		mutations := e.store.Mutations()
 		spopBefore := e.captureSpopBefore(queued)
-		e.commands.Dispatch(queued, req.out)
+		e.commands.DispatchWithConn(queued, req.out, req.conn)
 		effects = append(effects, e.collectEffects(queued, mutations, spopBefore)...)
 	}
 	if err := e.appendEffects(effects); err != nil {

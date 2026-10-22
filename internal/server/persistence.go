@@ -71,28 +71,34 @@ func RecoverAOFRepair(path string, st *store.Store, repair bool) (persist.Recove
 	defer enc.Release()
 
 	return persist.RecoverFile(path, repair, func(payload []byte) error {
-		br := bufio.NewReader(bytes.NewReader(payload))
-		for first := true; ; first = false {
-			req, err := protocol.ReadRequest(br)
-			if errors.Is(err, io.EOF) {
-				if first {
-					return errors.New("empty command")
-				}
-				return nil
-			}
-			if err != nil {
-				return err
-			}
-			if len(req) == 0 {
+		return ReplayPayload(reg, enc, payload)
+	})
+}
+
+// ReplayPayload executes the RESP command(s) in payload against reg, reporting
+// an error if any command fails or returns an error reply.
+func ReplayPayload(reg *Registry, enc *protocol.Encoder, payload []byte) error {
+	br := bufio.NewReader(bytes.NewReader(payload))
+	for first := true; ; first = false {
+		req, err := protocol.ReadRequest(br)
+		if errors.Is(err, io.EOF) {
+			if first {
 				return errors.New("empty command")
 			}
-			enc.Reset()
-			reg.Dispatch(req, enc)
-			if bytes.HasPrefix(enc.Bytes(), []byte("-")) {
-				return fmt.Errorf("command %q failed: %s", req[0], strings.TrimSpace(string(enc.Bytes()[1:])))
-			}
+			return nil
 		}
-	})
+		if err != nil {
+			return err
+		}
+		if len(req) == 0 {
+			return errors.New("empty command")
+		}
+		enc.Reset()
+		reg.Dispatch(req, enc)
+		if bytes.HasPrefix(enc.Bytes(), []byte("-")) {
+			return fmt.Errorf("command %q failed: %s", req[0], strings.TrimSpace(string(enc.Bytes()[1:])))
+		}
+	}
 }
 
 func (e *Executor) appendonlyValue() string {

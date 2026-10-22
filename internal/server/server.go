@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"net"
+	"strconv"
 	"sync"
 	"time"
 
@@ -227,7 +228,23 @@ func (s *Server) serveConn(conn net.Conn) {
 	br := bufio.NewReaderSize(ic, readBufferSize)
 	enc := protocol.GetEncoder()
 	defer enc.Release()
-	connState := &ConnState{}
+
+	remoteIP := "127.0.0.1"
+	remotePort := 0
+	if rAddr := conn.RemoteAddr(); rAddr != nil {
+		if host, pStr, err := net.SplitHostPort(rAddr.String()); err == nil {
+			remoteIP = host
+			if p, err := strconv.Atoi(pStr); err == nil {
+				remotePort = p
+			}
+		}
+	}
+
+	connState := &ConnState{
+		remoteIP:   remoteIP,
+		remotePort: remotePort,
+	}
+	defer connState.Close()
 
 	for {
 		req, err := protocol.ReadRequest(br)

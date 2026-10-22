@@ -130,9 +130,20 @@ Each package carries a `doc.go` charter referencing its ADR; real files land in 
 | `internal/repl/handshake_test.go` | Handshake mock replay, unreachable master, and live handshake test against reference Redis 7.4.11 | scaffold |
 | `internal/repl/backlog.go` | S1.2 1MB circular backlog ring buffer (`DefaultBacklogSize`), byte-exact wrapping, `CanPartialResync` window check, and `Slice` contiguous extractor (ADR-007/010) | **hand-own** — S1.2 |
 | `internal/repl/backlog_test.go` | Backlog ring wraparound, large writes > capacity, 1MB capacity bounds, and concurrent read/write race stress | scaffold |
+| `internal/repl/buffer.go` | S1.3 per-replica concurrent-write buffer (`SyncBuffer`, 64 MiB cap, overflow detection per ADR-010) | **hand-own** — S1.3 |
+| `internal/repl/buffer_test.go` | SyncBuffer capacity limit, overflow behavior, chunk draining, and concurrent read/write race test | scaffold |
+| `internal/repl/snapshot.go` | S1.3 snapshot streaming (`WriteSnapshotStream` with EOF-delimiter and length-prefix framing) and parsing (`ReadSnapshotStream`, `DelimiterReader` lookahead reader) | **hand-own** — S1.3 |
+| `internal/repl/snapshot_test.go` | Delimiter lookahead parsing, empty payload, framed snapshot roundtrips, and trailing command continuity | scaffold |
+| `internal/repl/reader.go` | S1.4 `TrackedReader` tracking byte-exact consumption from `bufio.Reader` for replication stream offset bookkeeping | **hand-own** — S1.4 |
+| `internal/repl/reader_test.go` | `TrackedReader` byte math across buffer refills, peek invariance, and multi-command streams | scaffold |
 | `internal/server/replication_commands.go` | S1.1 commands: `REPLICAOF`/`SLAVEOF` (host/port and `NO ONE`), `REPLCONF` (listening-port, capa, ip-address, ack), and `PSYNC` | **hand-own** — S1.1 |
 | `internal/server/replication_commands_test.go` | Role switching, port validation, read-only write rejection, `REPLCONF` options, and `PSYNC` full/continue replies | scaffold |
 | `internal/server/propagation_test.go` | S1.2 mutation effect propagation to backlog, byte-exact `master_repl_offset` tracking matching RESP command lengths, transactions, and slice verification | scaffold |
+| `internal/server/resync.go` | S1.3 full resync coordinator (`FullResyncSession` snapshot streaming + buffer drain) and replica replayer (`ApplyFullResync`) (ADR-007/010) | **hand-own** — S1.3 |
+| `internal/server/resync_test.go` | S1.3 exit criterion: replica dataset equality after full resync with concurrent mutations, buffer overflow protection, and multi-goroutine fuzz | scaffold |
+| `internal/server/apply.go` | S1.4/S1.5 `RunReplicaApplyLoop` continuous replication command consumer, dedicated replication `ConnState` (`isReplicaClient`), exact offset tracking, periodic 1s `REPLCONF ACK`, and `REPLCONF GETACK` reply handling | **hand-own** — S1.4/S1.5 |
+| `internal/server/apply_test.go` | S1.4 exit criterion: read-only mode, `-READONLY` gating, read-only transactions, `CONFIG SET replica-read-only`, offset tracking, and live replication loop | scaffold |
+| `internal/server/lag_test.go` | S1.5 exit criterion: replica registration, master lag tracking with injected fake clock (ADR-009), `INFO replication` formatting (`slave0:ip=...,port=...,state=...,offset=...,lag=...`), periodic 1s ACK, and live TCP server lag verification | scaffold |
 | `internal/events/doc.go` | Event-tap types + rotated JSONL sink (ADR-014) | scaffold |
 | `internal/events/events.go` | P7.3 versioned event schema (`Version`, `Evict`, `Event`) and the `Sink` interface the executor emits to | scaffold |
 | `internal/events/jsonl.go` | Opt-in rotated JSONL file sink (`NewJSONLSink`, 64 MiB × 2, one-line JSON per event), wired by `-event-log` and `Executor.SetEventSink` (ADR-014) | scaffold |

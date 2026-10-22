@@ -52,14 +52,28 @@ type State struct {
 	slavePriority   int
 
 	connectedSlaves int
+	slaves          []*SlaveInfo
+	slavesByID      map[uint64]*SlaveInfo
+	nextSlaveID     uint64
 	lastIO          time.Time
 	syncInProgress  bool
 
 	backlogActive bool
 	backlogSize   int64
 	backlog       *Backlog
+	syncBuffers   map[*SyncBuffer]struct{}
 
 	clock clock.Clock
+}
+
+// SlaveInfo tracks a connected replica's registration, offset, and lag (ADR-007, PLAN §5 S1.5).
+type SlaveInfo struct {
+	ID      uint64
+	IP      string
+	Port    int
+	State   string
+	Offset  int64
+	LastAck time.Time
 }
 
 // NewState creates a replication state initialized as master.
@@ -82,9 +96,11 @@ func NewState(replID string, clk clock.Clock) *State {
 		slaveReadOnly:    true,
 		slavePriority:    100,
 		connectedSlaves:  0,
+		slavesByID:       make(map[uint64]*SlaveInfo),
 		backlogActive:    true,
 		backlogSize:      DefaultBacklogSize,
 		backlog:          b,
+		syncBuffers:      make(map[*SyncBuffer]struct{}),
 		clock:            clk,
 	}
 }
@@ -97,7 +113,8 @@ func (s *State) Backlog() *Backlog {
 }
 
 // FeedBacklog appends payload bytes to the replication backlog, advancing the
-// master stream offset and updating the backlog history.
+// master stream offset, updating backlog history, and feeding all active per-replica
+// concurrent write buffers (ADR-010).
 func (s *State) FeedBacklog(p []byte) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -108,6 +125,40 @@ func (s *State) FeedBacklog(p []byte) {
 	}
 	_, _ = s.backlog.Write(p)
 	s.masterReplOffset = s.backlog.Offset()
+
+	for buf := range s.syncBuffers {
+		_ = buf.Append(p)
+	}
+}
+
+// RegisterSyncBuffer registers a per-replica concurrent write buffer to receive mutations (ADR-010).
+func (s *State) RegisterSyncBuffer(buf *SyncBuffer) {
+	if buf == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.syncBuffers == nil {
+		s.syncBuffers = make(map[*SyncBuffer]struct{})
+	}
+	s.syncBuffers[buf] = struct{}{}
+}
+
+// UnregisterSyncBuffer removes a per-replica concurrent write buffer once snapshot streaming completes.
+func (s *State) UnregisterSyncBuffer(buf *SyncBuffer) {
+	if buf == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.syncBuffers, buf)
+}
+
+// ActiveSyncBuffers reports the count of currently registered sync buffers.
+func (s *State) ActiveSyncBuffers() int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return len(s.syncBuffers)
 }
 
 // CanPartialResync checks if the replica's offset can be satisfied from backlog.
@@ -243,10 +294,126 @@ func (s *State) SlaveReadOnly() bool {
 	return s.slaveReadOnly
 }
 
+// SetSlaveReadOnly configures whether the replica rejects client writes.
+func (s *State) SetSlaveReadOnly(ro bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.slaveReadOnly = ro
+}
+
+// AddSlave registers a replica on the master node and returns its allocated ID (S1.5).
+func (s *State) AddSlave(ip string, port int) uint64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if ip == "" {
+		ip = "127.0.0.1"
+	}
+	s.nextSlaveID++
+	sl := &SlaveInfo{
+		ID:      s.nextSlaveID,
+		IP:      ip,
+		Port:    port,
+		State:   "online",
+		Offset:  0,
+		LastAck: s.clock.Now(),
+	}
+	if s.slavesByID == nil {
+		s.slavesByID = make(map[uint64]*SlaveInfo)
+	}
+	s.slavesByID[sl.ID] = sl
+	s.slaves = append(s.slaves, sl)
+	return sl.ID
+}
+
+// RemoveSlave removes a replica when its link closes (S1.5).
+func (s *State) RemoveSlave(id uint64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	delete(s.slavesByID, id)
+	for i, sl := range s.slaves {
+		if sl.ID == id {
+			copy(s.slaves[i:], s.slaves[i+1:])
+			s.slaves[len(s.slaves)-1] = nil
+			s.slaves = s.slaves[:len(s.slaves)-1]
+			break
+		}
+	}
+}
+
+// UpdateSlavePort updates a replica's reported listening port (S1.5).
+func (s *State) UpdateSlavePort(id uint64, port int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if sl, ok := s.slavesByID[id]; ok {
+		sl.Port = port
+	}
+}
+
+// UpdateSlaveIP updates a replica's reported IP address (S1.5).
+func (s *State) UpdateSlaveIP(id uint64, ip string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if sl, ok := s.slavesByID[id]; ok {
+		sl.IP = ip
+	}
+}
+
+// UpdateSlaveState updates a replica's replication state (S1.5).
+func (s *State) UpdateSlaveState(id uint64, state string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if sl, ok := s.slavesByID[id]; ok {
+		sl.State = state
+	}
+}
+
+// UpdateSlaveAck updates a replica's acknowledged offset and refreshes its last ACK timestamp (S1.5).
+func (s *State) UpdateSlaveAck(id uint64, offset int64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if sl, ok := s.slavesByID[id]; ok {
+		sl.Offset = offset
+		sl.LastAck = s.clock.Now()
+	}
+}
+
+// GetSlave returns a copy of the specified replica's info.
+func (s *State) GetSlave(id uint64) (SlaveInfo, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	sl, ok := s.slavesByID[id]
+	if !ok {
+		return SlaveInfo{}, false
+	}
+	return *sl, true
+}
+
+// Slaves returns a copy of all registered replicas.
+func (s *State) Slaves() []SlaveInfo {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	res := make([]SlaveInfo, len(s.slaves))
+	for i, sl := range s.slaves {
+		res[i] = *sl
+	}
+	return res
+}
+
 // ConnectedSlaves returns the count of active connected replicas.
 func (s *State) ConnectedSlaves() int {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	if len(s.slaves) > 0 {
+		return len(s.slaves)
+	}
 	return s.connectedSlaves
 }
 
@@ -267,7 +434,31 @@ func (s *State) FormatInfo() string {
 
 	if s.role == RoleMaster {
 		field(&b, "role", "master")
-		field(&b, "connected_slaves", fmt.Sprintf("%d", s.connectedSlaves))
+		connectedCount := len(s.slaves)
+		if connectedCount == 0 && s.connectedSlaves > 0 {
+			connectedCount = s.connectedSlaves
+		}
+		field(&b, "connected_slaves", fmt.Sprintf("%d", connectedCount))
+
+		for i, sl := range s.slaves {
+			lag := 0
+			if !sl.LastAck.IsZero() {
+				lag = int(s.clock.Since(sl.LastAck).Seconds())
+				if lag < 0 {
+					lag = 0
+				}
+			}
+			state := sl.State
+			if state == "" {
+				state = "online"
+			}
+			ip := sl.IP
+			if ip == "" {
+				ip = "127.0.0.1"
+			}
+			field(&b, fmt.Sprintf("slave%d", i), fmt.Sprintf("ip=%s,port=%d,state=%s,offset=%d,lag=%d", ip, sl.Port, state, sl.Offset, lag))
+		}
+
 		field(&b, "master_failover_state", "no-failover")
 		field(&b, "master_replid", s.masterReplID)
 		field(&b, "master_replid2", s.masterReplID2)

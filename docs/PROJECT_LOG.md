@@ -636,6 +636,118 @@
   - `REDIS_REF_ADDR=127.0.0.1:6379 go test ./tests/differential/...` passes 100%.
 - Next session first task: S1.3 — Full resync: snapshot stream (shared format) + per-replica concurrent-write buffer.
 
+---
+
+## 2026-10-22 — S1.3: Full Resync (Shared Snapshot Stream + Per-Replica Concurrent-Write Buffer)
+- Built:
+  - `internal/repl/buffer.go`: `SyncBuffer` thread-safe, bounded per-replica write buffer (`DefaultSyncBufferCap = 64 << 20`, 64 MiB cap matching `RewriteBufferMax` per ADR-010) accumulating concurrent mutations during snapshot serialization/streaming; fast memory drop on overflow; `Append`, `Drain`, `DrainChunks`, `Buffered`, `Overflow`, `Close`.
+  - `internal/repl/buffer_test.go`: unit tests for append/drain, chunks, capacity overflow detection (`ErrSyncBufferOverflow`), closed buffer rejection, and high-concurrency race test under `go test -race`.
+  - `internal/persist/recovery.go`: exported `RecoverReader(r io.Reader, size int64, apply func([]byte) error)` and adapted `recoverFrames` so `size <= 0` streams frames until `io.EOF`, allowing unified frame decoding across AOF recovery and replication snapshots (ADR-007).
+  - `internal/repl/snapshot.go`: `WriteSnapshotStream` serializing store snapshot in shared framed format (`persist.WriteSnapshot`) with `$EOF:<40-hex-delimiter>\r\n` diskless EOF framing; `WriteSnapshotLengthPrefixed` for length-prefixed alternative; `ReadSnapshotStream` skipping keepalives and reading both EOF-delimited and length-prefixed formats; `DelimiterReader` zero-allocation sliding lookahead reader matching 40-byte delimiter and returning clean `io.EOF` while leaving reader positioned at subsequent replication stream bytes.
+  - `internal/repl/snapshot_test.go`: unit tests for `DelimiterReader` lookahead, empty payload, framed snapshot roundtrips with keepalives, and trailing command continuity.
+  - `internal/repl/repl.go`: wired `syncBuffers map[*SyncBuffer]struct{}` into `repl.State`; updated `FeedBacklog` to append all mutation commands into active sync buffers; added `RegisterSyncBuffer`, `UnregisterSyncBuffer`, and `ActiveSyncBuffers`.
+  - `internal/server/persistence.go`: exported `ReplayPayload(reg *Registry, enc *protocol.Encoder, payload []byte) error` for shared command replay between AOF recovery and replication snapshot replay (ADR-007).
+  - `internal/server/resync.go`: `FullResyncSession` snapshot coordinator taking atomic point-in-time copy under executor (`store.Copy()`, ADR-010), streaming `+FULLRESYNC`, streaming framed snapshot, and draining `SyncBuffer` concurrent writes; `ApplyFullResync` replaying snapshot and live propagation stream.
+  - `internal/server/resync_test.go`: S1.3 exit criterion tests:
+    - `TestReplicaDatasetEqualityAfterFullResync`: populates master with strings, lists, hashes, sets, volatile keys; takes snapshot; injects concurrent writes during streaming (including SPOP/SREM rewrites, MULTI/EXEC transactions, list/hash/set updates, deletes); applies to replica store; asserts 100% dataset equality (`assertStoresEqual`).
+    - `TestFullResyncBufferOverflow`: asserts that exceeding configured `SyncBuffer` cap returns `ErrSyncBufferOverflow` and protects master memory (ADR-010).
+    - `TestFullResyncEmptyDataset`: asserts correct full resync on empty keyspace.
+    - `TestReplicaDatasetEqualityConcurrentFuzz`: multi-goroutine writer stress asserting replica convergence and dataset equality under concurrent mutations.
+- Findings:
+  - Reusing `persist.WriteSnapshot` and `persist.RecoverReader` for replication snapshots structurally guarantees that AOF rewrite and full resync validate the exact same frame format and replay semantics without divergence (ADR-007).
+  - Delimiter lookahead with `bufio.Reader.Peek` allows zero-copy streaming of snapshots directly to sockets without prior knowledge of total byte size or double-buffering.
+- Files touched:
+  - Modified: `internal/persist/recovery.go`, `internal/repl/repl.go`, `internal/repl/repl_test.go`, `internal/server/persistence.go`, `docs/FILE_MANIFEST.md`, `docs/PLAN.md`, `docs/PROJECT_LOG.md`.
+  - Created (uncommitted): `internal/repl/buffer.go`, `internal/repl/buffer_test.go`, `internal/repl/snapshot.go`, `internal/repl/snapshot_test.go`, `internal/server/resync.go`, `internal/server/resync_test.go`.
+- ADRs written: none (implements ADR-007, ADR-010, PLAN §5).
+- Exit evidence:
+  - `TestReplicaDatasetEqualityAfterFullResync` passes asserting byte-for-byte keyspace equality between master and replica after full resync with concurrent mutations.
+  - `TestReplicaDatasetEqualityConcurrentFuzz` passes under `-race`.
+  - `TestFullResyncBufferOverflow` passes asserting ADR-010 overflow policy.
+  - `make test` and `make test-race` 100% green across entire repository.
+  - `make clock-check` 100% green (zero direct wall-clock calls).
+- Next session first task: S1.4 — Replica apply loop (own client), offset tracking, read-only mode (`-READONLY`).
+
+---
+
+## 2026-10-22 — S1.4: Replica Apply Loop (Own Client), Offset Tracking, and Read-Only Mode
+- Built:
+  - `internal/repl/reader.go`: `TrackedReader` wrapping `io.Reader` and `bufio.Reader` calculating cumulative consumed bytes (`cr.total - int64(br.Buffered())`) with single-byte accuracy regardless of buffer capacity, buffer refills, or pipelining.
+  - `internal/repl/reader_test.go`: unit tests for `TrackedReader` asserting exact byte math across buffer refills, peek invariance, and multi-command streams.
+  - `internal/repl/repl.go`: added `SetSlaveReadOnly(ro bool)` on `repl.State`.
+  - `internal/server/transactions.go`: added `isReplicaClient bool` to `ConnState` and `NewReplicaConnState()` constructor granting internal replication consumer write authority on read-only replicas (ADR-017).
+  - `internal/server/executor.go`: updated `readOnlyBlocked` to inspect `req.conn.isReplicaClient`; replicated mutations from master bypass `-READONLY` rejection while regular client writes are strictly blocked.
+  - `internal/server/config_commands.go`: added `replica-read-only` and `slave-read-only` to `CONFIG GET` and `CONFIG SET yes|no`.
+  - `internal/server/apply.go`: `RunReplicaApplyLoop` continuous replication consumer reading from master stream via `TrackedReader`, advancing `slave_repl_offset` by exact bytes consumed, executing mutations with `isReplicaClient`, skipping `PING` keepalives, and replying to `REPLCONF GETACK *` with `REPLCONF ACK <offset>`.
+  - `internal/server/replication_commands.go`: updated `StartReplicaHandshake` to initialize `TrackedReader`, decode and apply snapshot stream on `res.IsFullResync`, transition link status to `sync` -> `up`, and launch `RunReplicaApplyLoop`.
+  - `internal/server/apply_test.go`: S1.4 exit criterion tests:
+    - `TestReplicaReadOnlyMode`: verifies `-READONLY` client write rejection across all mutation commands, read command allowance, read-only transactions, dirty queue abort at EXEC for mutating transactions, `CONFIG GET/SET replica-read-only yes/no`, and `REPLICAOF NO ONE` master promotion.
+    - `TestReplicaApplyLoopProcessing`: verifies command execution via replication client, exact `slave_repl_offset` tracking (e.g. SET 31B, LPUSH 40B, PING 14B), and `REPLCONF ACK` wire reply generation.
+    - `TestReplicaFullResyncAndApplyLoop`: verifies full resync snapshot loading followed by continuous live apply loop, byte-exact offset parity with master, and replica keyspace consistency.
+- Findings:
+  - Byte-exact offset tracking on a buffered reader is cleanly solved without custom parsers by tracking total bytes supplied by the underlying reader minus unread bytes currently in the buffer (`U - br.Buffered()`).
+  - Read-only gating cleanly decouples regular client connections from the internal replication apply loop by tagging `ConnState.isReplicaClient`.
+- Files touched:
+  - Modified: `internal/repl/repl.go`, `internal/server/config_commands.go`, `internal/server/executor.go`, `internal/server/replication_commands.go`, `internal/server/transactions.go`, `docs/FILE_MANIFEST.md`, `docs/PLAN.md`, `docs/PROJECT_LOG.md`.
+  - Created (uncommitted): `internal/repl/reader.go`, `internal/repl/reader_test.go`, `internal/server/apply.go`, `internal/server/apply_test.go`.
+- ADRs written: none (implements ADR-007, ADR-010, ADR-017, PLAN §5).
+- Exit evidence:
+  - `TestReplicaReadOnlyMode`, `TestReplicaApplyLoopProcessing`, and `TestReplicaFullResyncAndApplyLoop` pass 100% under `go test -race`.
+  - `make test` and `make test-race` 100% green across entire repository.
+  - `make clock-check` 100% green (zero direct wall-clock reads).
+- Next session first task: S1.5 — REPLCONF ACK every 1s, master lag tracking, INFO replication section.
+
+---
+
+## 2026-10-22 — S1.5: REPLCONF ACK Every 1s, Master Lag Tracking, and INFO Replication Formatting
+- Built:
+  - `internal/repl/repl.go`: `SlaveInfo` struct tracking replica metadata (`ID`, `IP`, `Port`, `State`, `Offset`, `LastAck`). Added methods `AddSlave`, `RemoveSlave`, `UpdateSlavePort`, `UpdateSlaveIP`, `UpdateSlaveState`, `UpdateSlaveAck`, `GetSlave`, and `Slaves()`. Updated `FormatInfo()` on master to render active connected slaves matching Redis 7.4.11 format: `slave<idx>:ip=...,port=...,state=...,offset=...,lag=...` with lag computed dynamically via injected `clock.Since(sl.LastAck)` (ADR-009).
+  - `internal/repl/repl_test.go`: added `TestSlaveManagementAndInfoFormatting` verifying replica registration, port/ip updates, fake-clock lag progression, offset updates on ACK resetting lag to 0, multi-slave ordering, and index re-alignment upon slave disconnection.
+  - `internal/server/registry.go`: added `CommandHandlerWithConn` and `DispatchWithConn` to `Registry`, enabling connection-aware command handlers (`REPLCONF`, `PSYNC`) without breaking existing `CommandHandler` signatures.
+  - `internal/server/transactions.go`: extended `ConnState` with `slaveID`, `remoteIP`, `remotePort`, and `onClose` cleanup callback; updated `execute` and `execTransaction` to route through `DispatchWithConn`.
+  - `internal/server/server.go`: populated `remoteIP` and `remotePort` from `conn.RemoteAddr()` into `ConnState`, and added `defer connState.Close()` to guarantee unregistered slave cleanup upon socket disconnection.
+  - `internal/server/replication_commands.go`: wired `replconf` and `psync` to `HandlerWithConn`; implemented `ensureSlave` to lazily bind connections to replicas; updated `replconfCommand` to record `listening-port`, `ip-address`, and `ack` (updating offset and refreshing lastAck with zero reply); updated `psyncCommand` to transition slave state to `online`.
+  - `internal/server/apply.go`: implemented periodic `REPLCONF ACK <offset>` every 1s in `RunReplicaApplyLoop` (and parameterized `RunReplicaApplyLoopWithInterval` for fast test suites); synchronized wire writes with a `sync.Mutex` between periodic ACKs and master `REPLCONF GETACK *` responses.
+  - `internal/server/lag_test.go`: S1.5 exit criterion tests:
+    - `TestMasterSlaveLagTrackingAndInfo`: tests replica registration, deterministic lag tracking via `clock.Fake` (advancing 3s -> lag=3), zero-reply `REPLCONF ACK` resetting lag to 0 while updating offset, multi-slave indexing, and cleanup on disconnect.
+    - `TestPeriodicReplconfAckInApplyLoop`: tests periodic ACKs over in-memory `net.Pipe`, offset progression as mutation stream is consumed, and immediate GETACK reply.
+    - `TestLiveMasterSlaveLagIntegration`: live server test on actual TCP port verifying handshake, INFO replication fields (`slave0:ip=...,port=...,state=online,offset=1234,lag=0`), live ACK offset updates, and cleanup on client close.
+- Findings:
+  - In Redis protocol, `REPLCONF ACK` generates no reply; master updates the replica's offset and timestamp silently, preventing round-trip amplification.
+  - Advancing time via injected `clock.Fake` enables testing replication lag horizons deterministically in milliseconds without sleeping or CI flakiness (ADR-009).
+- Files touched:
+  - Modified: `internal/repl/repl.go`, `internal/repl/repl_test.go`, `internal/server/registry.go`, `internal/server/transactions.go`, `internal/server/server.go`, `internal/server/replication_commands.go`, `internal/server/apply.go`, `docs/FILE_MANIFEST.md`, `docs/PLAN.md`, `docs/PROJECT_LOG.md`.
+  - Created (uncommitted): `internal/server/lag_test.go`.
+- ADRs written: none (implements ADR-007, ADR-009, ADR-010, PLAN §5).
+- Exit evidence:
+  - `TestMasterSlaveLagTrackingAndInfo`, `TestPeriodicReplconfAckInApplyLoop`, `TestLiveMasterSlaveLagIntegration`, and `TestSlaveManagementAndInfoFormatting` all pass 100%.
+  - `make test` and `make test-race` 100% green across entire repository.
+  - `make clock-check` 100% green.
+  - `make vet` 100% green.
+- Next session first task: S2.1 — +CONTINUE/+FULLRESYNC decision logic: replid match + backlog offset window math (PLAN §5).
+
+---
+
+## 2026-10-22 — S1: Senior Developer Review Fixes and Hardening (Uncommitted)
+- Built & Hardened:
+  - **Thread-safe Snapshot Replay (`internal/server/replication_commands.go`)**: Switched background snapshot stream consumer from direct `e.store` mutation (`ReplayPayload`) to serialized executor dispatch via `e.Handle(req, enc, replConn)`. Prevents concurrent map read/write races between background handshake and executor command loop (ADR-002).
+  - **Replication Client OOM Bypass (`internal/server/executor.go`)**: Added `conn != nil && conn.isReplicaClient` bypass to `maxmemoryGate`. Ensures replicas under memory pressure (e.g. `noeviction`) never drop master writes with `-OOM`, avoiding silent data divergence.
+  - **Non-blocking Write Deadlines on ACK (`internal/server/apply.go`)**: Replaced `SetWriteDeadline(time.Time{})` with bounded real-time deadline `clock.Real{}.Now().Add(5 * time.Second)` (ADR-009 compliant). Prevents hung master socket from permanently wedging the replica apply loop.
+  - **Dead Socket Unblocking on Periodic ACK Failure (`internal/server/apply.go`)**: Closes `conn` immediately when periodic ACK ticker write fails, unblocking `protocol.ReadRequest` in the main apply loop to transition link status to `down`.
+  - **REPLCONF Listening-Port Validation (`internal/server/replication_commands.go`)**: Added validation ensuring `port >= 0 && port <= 65535` before registering or updating slave metadata.
+  - **Dead Branch Removal (`internal/server/replication_commands.go`)**: Deleted dead fallback branch `else if e.repl != nil { e.repl.SetSlaveReplOffset(off) }` in master `REPLCONF ACK` handler, and enforced `off >= 0`.
+  - **Slave Struct Pointer Encapsulation (`internal/repl/repl.go`, `internal/repl/repl_test.go`)**: Changed `AddSlave` to return only the newly allocated `uint64` slave ID instead of a mutable pointer across the mutex boundary.
+  - **Slice Element Zeroing on Disconnect (`internal/repl/repl.go`)**: Explicitly zeroes trailing element in `s.slaves[len(s.slaves)-1] = nil` before truncating slice to eliminate pointer retention in backing array capacity.
+  - **Zero-Copy Resync Streaming Optimization (`internal/server/resync.go`)**: Updated `Stream` to iterate over `DrainChunks()` directly writing into buffered writer, avoiding up to 64 MiB contiguous slice concatenation during full resync.
+  - **Edge Case Tests (`internal/server/lag_test.go`)**: Added `TestReplicationEdgeCasesAndMemorySafety` testing maxmemory OOM bypass for replication clients, REPLCONF port validation, and negative ACK offset filtering.
+- Exit evidence:
+  - `make test`, `make test-race`, `make clock-check`, `make vet` 100% green.
+  - All changes remain uncommitted per user instructions.
+
+
+
+
+
 
 
 

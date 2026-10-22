@@ -263,11 +263,11 @@ func (e *Executor) run(req execRequest) {
 		tx.dirty = true
 		return
 	}
-	if e.readOnlyBlocked(req.req, req.out) {
+	if e.readOnlyBlocked(req.req, req.out, req.conn) {
 		tx.dirty = true
 		return
 	}
-	blocked, evicted := e.maxmemoryGate(req.req, req.out)
+	blocked, evicted := e.maxmemoryGate(req.req, req.out, req.conn)
 	if err := e.persistEvictions(evicted); err != nil {
 		slog.Error("AOF eviction append failed", "keys", len(evicted), "err", err)
 		req.out.Reset()
@@ -282,8 +282,12 @@ func (e *Executor) run(req execRequest) {
 	e.execute(req, tx)
 }
 
-// readOnlyBlocked rejects write commands when node is a read-only replica.
-func (e *Executor) readOnlyBlocked(req protocol.Request, out *protocol.Encoder) bool {
+// readOnlyBlocked rejects write commands from regular clients when node is a read-only replica.
+// Replicated writes from the master stream (isReplicaClient) are permitted (ADR-017).
+func (e *Executor) readOnlyBlocked(req protocol.Request, out *protocol.Encoder, conn *ConnState) bool {
+	if conn != nil && conn.isReplicaClient {
+		return false
+	}
 	if e.repl == nil || !e.repl.IsSlave() || !e.repl.SlaveReadOnly() || len(req) == 0 {
 		return false
 	}
@@ -339,8 +343,8 @@ func (e *Executor) aofWriteBlocked(req protocol.Request, out *protocol.Encoder) 
 // with Redis's reply. Unknown-command and arity failures fall through so they
 // keep their own errors, as in Redis. CONFIG SET rejects unimplemented
 // policies (LFU/random/ttl), so a stored policy always has real behavior.
-func (e *Executor) maxmemoryGate(req protocol.Request, out *protocol.Encoder) (blocked bool, evicted []string) {
-	if e.maxmemory <= 0 || len(req) == 0 {
+func (e *Executor) maxmemoryGate(req protocol.Request, out *protocol.Encoder, conn *ConnState) (blocked bool, evicted []string) {
+	if (conn != nil && conn.isReplicaClient) || e.maxmemory <= 0 || len(req) == 0 {
 		return false, nil
 	}
 	cmd, ok := e.commands.Lookup(req[0])
