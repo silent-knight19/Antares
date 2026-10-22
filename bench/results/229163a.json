@@ -1,0 +1,211 @@
+{
+  "commit": "229163a",
+  "timestamp": "2026-10-22T14:44:00Z",
+  "platform": "darwin/arm64",
+  "go_version": "go1.27.1",
+  "requests_per_run": 20000,
+  "clients": 50,
+  "runs_count": 3,
+  "benchmarks": [
+    {
+      "pipeline": 1,
+      "command": "SET",
+      "antares": {
+        "median_rps": 204081.6,
+        "p50_ms": 0.151,
+        "p99_ms": 0.319,
+        "all_rps": [
+          204081.6,
+          204081.6,
+          204081.6
+        ]
+      },
+      "redis_ref": {
+        "median_rps": 67567.6,
+        "p50_ms": 0.599,
+        "p99_ms": 1.919,
+        "all_rps": [
+          64102.6,
+          67567.6,
+          74349.4
+        ]
+      },
+      "ratio_percent": 302.0
+    },
+    {
+      "pipeline": 1,
+      "command": "GET",
+      "antares": {
+        "median_rps": 208333.3,
+        "p50_ms": 0.143,
+        "p99_ms": 0.303,
+        "all_rps": [
+          208333.3,
+          192307.7,
+          208333.3
+        ]
+      },
+      "redis_ref": {
+        "median_rps": 74349.4,
+        "p50_ms": 0.607,
+        "p99_ms": 1.319,
+        "all_rps": [
+          63897.8,
+          74349.4,
+          77220.1
+        ]
+      },
+      "ratio_percent": 280.2
+    },
+    {
+      "pipeline": 1,
+      "command": "INCR",
+      "antares": {
+        "median_rps": 208333.3,
+        "p50_ms": 0.151,
+        "p99_ms": 0.311,
+        "all_rps": [
+          208333.3,
+          204081.6,
+          208333.3
+        ]
+      },
+      "redis_ref": {
+        "median_rps": 68728.5,
+        "p50_ms": 0.647,
+        "p99_ms": 1.351,
+        "all_rps": [
+          63694.3,
+          73529.4,
+          68728.5
+        ]
+      },
+      "ratio_percent": 303.1
+    },
+    {
+      "pipeline": 1,
+      "command": "MSET",
+      "antares": {
+        "median_rps": 198019.8,
+        "p50_ms": 0.159,
+        "p99_ms": 0.431,
+        "all_rps": [
+          198019.8,
+          198019.8,
+          198019.8
+        ]
+      },
+      "redis_ref": {
+        "median_rps": 70922.0,
+        "p50_ms": 0.647,
+        "p99_ms": 1.111,
+        "all_rps": [
+          69444.4,
+          71428.6,
+          70922.0
+        ]
+      },
+      "ratio_percent": 279.2
+    },
+    {
+      "pipeline": 16,
+      "command": "SET",
+      "antares": {
+        "median_rps": 714285.7,
+        "p50_ms": 1.071,
+        "p99_ms": 1.407,
+        "all_rps": [
+          714285.7,
+          740740.8,
+          714285.7
+        ]
+      },
+      "redis_ref": {
+        "median_rps": 869565.2,
+        "p50_ms": 0.807,
+        "p99_ms": 2.535,
+        "all_rps": [
+          540540.6,
+          869565.2,
+          952380.9
+        ]
+      },
+      "ratio_percent": 82.1
+    },
+    {
+      "pipeline": 16,
+      "command": "GET",
+      "antares": {
+        "median_rps": 769230.8,
+        "p50_ms": 1.015,
+        "p99_ms": 1.423,
+        "all_rps": [
+          769230.8,
+          740740.8,
+          769230.8
+        ]
+      },
+      "redis_ref": {
+        "median_rps": 952380.9,
+        "p50_ms": 0.735,
+        "p99_ms": 2.167,
+        "all_rps": [
+          952380.9,
+          952380.9,
+          952380.9
+        ]
+      },
+      "ratio_percent": 80.8
+    },
+    {
+      "pipeline": 16,
+      "command": "INCR",
+      "antares": {
+        "median_rps": 769230.8,
+        "p50_ms": 1.007,
+        "p99_ms": 1.343,
+        "all_rps": [
+          769230.8,
+          800000.0,
+          769230.8
+        ]
+      },
+      "redis_ref": {
+        "median_rps": 1000000.0,
+        "p50_ms": 0.735,
+        "p99_ms": 2.095,
+        "all_rps": [
+          1000000.0,
+          909090.9,
+          1000000.0
+        ]
+      },
+      "ratio_percent": 76.9
+    },
+    {
+      "pipeline": 16,
+      "command": "MSET",
+      "antares": {
+        "median_rps": 571428.6,
+        "p50_ms": 1.375,
+        "p99_ms": 1.919,
+        "all_rps": [
+          588235.2,
+          540540.6,
+          571428.6
+        ]
+      },
+      "redis_ref": {
+        "median_rps": 588235.2,
+        "p50_ms": 1.231,
+        "p99_ms": 2.727,
+        "all_rps": [
+          606060.6,
+          588235.2,
+          526315.8
+        ]
+      },
+      "ratio_percent": 97.1
+    }
+  ]
+}

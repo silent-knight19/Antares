@@ -51,8 +51,8 @@ Every claim the project makes is meant to be machine-verifiable — differential
 
 | Works today | Arrives later |
 |---|---|
-| `make build` (both binaries), `make test`, `make test-race`, `make vet`, `make fmt`, `make tidy`, `make fuzz`, `make diff-test` (strings + lists + hashes + sets + transactions + TTL + keyspace + SCAN + INFO + seeded generator + edge/connection surface), `make tcl` (65 selected official expiry/incr tests + per-command report), `make crash-test` (100× SIGKILL AOF durability) | Broader Tcl subsets (documented), replication |
-| TCP server speaking RESP2 — parser with a 31-case corpus captured from real Redis + parser/recovery fuzzers, pooled reply writer, capture-exact error strings, pipeline-aware flushing; PING/ECHO/COMMAND answered through the registry and single keyspace-owning executor (case-insensitive lookup, Redis arity checks, `COMMAND` stub for redis-cli) | `make verify`, `make crash-test`, `make tcl`, `make bench`, `make showcase` |
+| `make build` (both binaries), `make test`, `make test-race`, `make vet`, `make fmt`, `make tidy`, `make fuzz`, `make diff-test` (strings + lists + hashes + sets + transactions + TTL + keyspace + SCAN + INFO + seeded generator + edge/connection surface), `make tcl` (65 selected official expiry/incr tests + per-command report), `make crash-test` (100× SIGKILL AOF durability), `make bench` (P=1/P=16 median benchmarks vs Redis 7.4), `make verify` (complete verification pyramid) | Broader Tcl subsets (documented), replication |
+| TCP server speaking RESP2 — parser with a 31-case corpus captured from real Redis + parser/recovery fuzzers, pooled reply writer, capture-exact error strings, pipeline-aware flushing; PING/ECHO/COMMAND answered through the registry and single keyspace-owning executor (case-insensitive lookup, Redis arity checks, `COMMAND` stub for redis-cli) | `make showcase` |
 | Edge-hardened string core — SET (EX/PX/NX/XX/GET/KEEPTTL), GET, DEL, EXISTS, TYPE, MSET/MGET, INCR/DECR/INCRBY/DECRBY/INCRBYFLOAT, APPEND, STRLEN, GETSET, SETNX; lists — LPUSH/RPUSH/LPOP/RPOP (with counts), LRANGE, LLEN, LINDEX, LSET, LREM, LTRIM, negative ranges, error-order parity, TTL preservation, auto-delete; hashes — HSET/HGET/HMGET/HDEL/HLEN/HGETALL/HKEYS/HVALS/HEXISTS/HRANDFIELD with insertion-order iteration; sets — SADD/SREM/SMEMBERS/SISMEMBER/SCARD/SPOP/SRANDMEMBER with unordered iteration and random pop/rand semantics; keyspace — KEYS glob matching, SCAN with MATCH/COUNT/TYPE and Redis's reverse-binary cursor, RENAME/RENAMENX with TTL transfer, RANDOMKEY, FLUSHDB/FLUSHALL; separate expires dict with lazy delete-on-access, TTL/PTTL/PERSIST, EXPIRE/PEXPIRE/EXPIREAT/PEXPIREAT incl. NX/XX/GT/LT, physical DBSIZE, active expiry (hz=10), INFO sections, CONFIG GET/SET allowlist, HELLO 2, and CLIENT stubs; empty/binary/1 MiB values, wide batches, overflow parity, 512 MiB bulk + 1 GiB request guards, pinned WRONGTYPE body; `make diff-test` green (198 string/TTL + 91 list + 71 hash + 99 set + 171 cross-type + 240 sequence + 47 keyspace steps + 32 SCAN checks + INFO diff + transactions + P9.1 generator/edge/surface + expiry + lazy reads), 1056 one-off live checks clean, and 65 selected official Tcl expiry/incr tests green via `make tcl` with per-command reports | Broader Tcl subsets, replication |
 | CI: gofmt check + `vet` + `build` + race-tested tests + differential harness | Full Observatory showcase (M2) and Playwright E2E (U12) |
 | Observatory M1 dev console — `internal/client` RESP2 client, `cmd/observatory` REST/SSE bridge, React/Vite/Tailwind SPA with Playground (history, presets, wire trace, latency) and Keyspace (SCAN table, type/TTL/size preview, read-only detail drawer); `make ui-build`, `make showcase-dev`, `make seed` | Event-tap showcase views, metrics charts, durability lab, replication lab (M2/M3) |
@@ -165,6 +165,8 @@ docker compose up -d   # Redis on 127.0.0.1:6379
 | `make tcl` | Download the pinned Redis 7.4.11 tests, run the selected official expiry and incr subsets, and print a per-command pass report |
 | `make tcl-expire` | Run only the selected official expiry subset |
 | `make tcl-incr` | Run only the selected official `unit/type/incr` subset |
+| `make bench` | Run `redis-benchmark` against Antares and reference Redis across P=1/P=16, reporting median rps, latency, and updating `claims.json` |
+| `make verify` | Complete verification pyramid: tests, race check, ADR-009 clock boundaries, diff harness, Tcl suites, crash tests, fuzz smoke, and benchmarks |
 | `make run` | Run the Antares server |
 | `make run-observatory` | Run the Observatory bridge |
 | `make ui-build` | `npm install` + Vite production build of `web/` into `web/dist` |
@@ -173,7 +175,7 @@ docker compose up -d   # Redis on 127.0.0.1:6379
 | `make clean` | Remove build artifacts |
 | `make help` | List all targets |
 
-Phase-gated targets — `verify`, `bench`, `showcase`, `showcase-e2e`, `ui-dev` — fail loudly with a pointer until the phase that implements them arrives. `make diff-test`, `make crash-test`, and `make tcl` are live.
+Phase-gated targets — `showcase`, `showcase-e2e`, `ui-dev` — fail loudly with a pointer until the phase that implements them arrives. `make diff-test`, `make crash-test`, `make tcl`, `make bench`, and `make verify` are live.
 
 ## Roadmap
 

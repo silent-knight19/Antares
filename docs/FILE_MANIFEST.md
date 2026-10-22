@@ -18,7 +18,7 @@
 |---|---|---|
 | `.gitignore` | Ignore rules: build artifacts, runtime data (aof/rdb/tap), node_modules, env files, the downloaded Tcl test cache | scaffold |
 | `LICENSE` | MIT, © 2026 Sachin Kumar Singh | scaffold |
-| `Makefile` | Canonical commands (`build test test-race vet fmt tidy run clean`, `fuzz` runs both fuzz targets for `FUZZTIME` each); `diff-test` starts the pinned reference and runs the differential suite (corpora + seeded generator + edge/surface); `clock-check` enforces ADR-009 wall-clock boundaries; `tcl` runs both selected official subsets with per-command reports (`tcl-expire`/`tcl-incr` remain single-suite entry points); M1 adds `ui-build` (npm + Vite), `showcase-dev` (build + UI + demo runner), and `seed`, with `PORT ?= 6380`; P6 adds `crash-test` (build + 100× SIGKILL AOF harness); remaining gated targets (`verify`, `showcase`, …) fail loudly until their phase; CI calls these same targets | scaffold |
+| `Makefile` | Canonical commands (`build test test-race vet fmt tidy run clean`, `fuzz` runs both fuzz targets for `FUZZTIME` each); `diff-test` starts the pinned reference and runs the differential suite (corpora + seeded generator + edge/surface); `clock-check` enforces ADR-009 wall-clock boundaries; `tcl` runs both selected official subsets with per-command reports (`tcl-expire`/`tcl-incr` remain single-suite entry points); M1 adds `ui-build` (npm + Vite), `showcase-dev` (build + UI + demo runner), and `seed`, with `PORT ?= 6380`; P6 adds `crash-test` (build + 100× SIGKILL AOF harness); P9.4 adds `bench` (`redis-benchmark` median runs vs Redis 7.4) and `verify` (full verification pyramid umbrella); remaining gated targets (`showcase`, `showcase-e2e`, `ui-dev`) fail loudly until their phase; CI calls these same targets | scaffold |
 | `README.md` | Public landing page: what/why, status, architecture, layout, getting started, roadmap, non-goals | scaffold |
 | `go.mod` | Module `github.com/silent-knight19/antares`; Go 1.27.1 pin; single direct dependency: go-redis v9 (test-only differential client, ADR-017) | scaffold |
 | `go.sum` | Module checksums for go-redis and its indirect deps | scaffold |
@@ -178,9 +178,9 @@ Entries below are populated at the phase noted; directories without files remain
 | `tests/tcl/run-incr.sh` | Thin wrapper that runs the selected official `unit/type/incr` suite through `run-expire.sh` |
 | `tests/tcl/harness.tcl` | Thin Tcl glue (`start_server`, `tags`, `test`, `start_cluster`) over the official Redis Tcl client/assertion helpers, sourcing the selected suite (`unit/expire.tcl` or `unit/type/incr.tcl`); classifies selected tests by command and prints `REPORT <command> passed/failed/skipped`; no Redis code copied into the repo |
 | `tests/tcl/expire_tests.txt` | Allowlist of 39 official expiry tests supported by the current command surface |
-| `tests/tcl/incr_tests.txt` | Allowlist of 26 official `unit/type/incr` tests; OBJECT/DEBUG/SETRANGE-dependent tests are excluded |
-| `bench/scripts/.gitkeep` | P9.4 |
-| `bench/results/.gitkeep` | P9.4 (commit-keyed raw outputs) |
+| `bench/scripts/run-bench.sh` | P9.4 benchmark runner: drives `redis-benchmark` over SET/GET/INCR/MSET at P=1/P=16 against reference Redis and Antares, computing medians across 3 runs and emitting raw metrics to `bench/results/<commit>.json` and updating `claims.json` (ADR-018) |
+| `bench/results/` | P9.4 directory containing commit-keyed raw benchmark metrics JSON files |
+| `docs/BENCHMARKS.md` | P9.4 benchmark report: methodology, target criteria (P=1: 60-100k, P=16: 400-800k or >=50%), median results, latency percentiles, and reproduction instructions |
 | `web/{package.json,package-lock.json,tsconfig.json,vite.config.ts,postcss.config.js,index.html}` | U3 SPA build setup: Vite + React 19 + TS + Tailwind v3; dev server proxies `/api` to `127.0.0.1:6390`; production build emitted to `web/dist` (git-ignored) |
 | `web/tailwind.config.js` | U3 Tailwind config; imports the U0 token theme from `web/tokens/tailwind.config.js` |
 | `web/tokens/tailwind.config.js` | U0 design tokens (dark theme, one accent, ok/warn/crit/info, AA contrast) |

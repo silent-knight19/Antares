@@ -122,6 +122,12 @@ Recovery was file-only, so the first `FuzzRecoverFile` run through real temp fil
 
 Evidence: `internal/persist/fuzz_test.go`; `internal/persist/recovery.go`; `internal/persist/testdata/fuzz/FuzzRecoverFile/`; `Makefile`; `.github/workflows/fuzz-nightly.yml`; COMPATIBILITY fuzz row.
 
+### Q23. How do you measure throughput honestly, and how do you prevent claims rot?
+
+A standard `redis-benchmark` setup comparing Antares against reference Redis 7.4.11 running on the same machine under identical concurrency (50 clients) across 3 runs. We evaluate two pipeline depths: sequential (P=1) and pipelined (P=16) over `SET`, `GET`, `INCR`, and `MSET (10 keys)`. Rather than hand-typing numbers in the showcase or docs, `bench/scripts/run-bench.sh` calculates median rps, p50/p99 latencies, variance, and the ratio vs real Redis, saving raw JSON output to `bench/results/<commit>.json` and updating `claims.json` (ADR-018). In sequential tests on macOS, Antares reaches ~200k rps (surpassing containerized Redis due to lower loopback RTT and goroutine I/O batching). Under P=16 pipelining, Antares achieves 714k–769k rps (~77%–97% of C Redis), well within our 50–80% target anchor. The `make verify` umbrella runs the entire verification pyramid and regenerates `claims.json` so the Observatory showcase only renders numbers backed by an automated verification provenance.
+
+Evidence: ADR-018; `bench/scripts/run-bench.sh`; `docs/BENCHMARKS.md`; `claims.json`; `bench/results/`; `Makefile` (`make bench`, `make verify`).
+
 ---
 
 ## 4. Boundaries ("what does it NOT do?")

@@ -102,6 +102,17 @@ showcase-dev: build ui-build
 seed:
 	@deploy/demo/seed.sh $(PORT)
 
-verify bench showcase showcase-e2e ui-dev:
+bench: build
+	@WRITE_CLAIMS=1 ./bench/scripts/run-bench.sh
+
+verify: test-race clock-check diff-test tcl crash-test
+	@echo "==> Running fuzz smoke..."
+	$(GO) test -run='^$$' -fuzz=FuzzReadRequest -fuzztime=5s ./internal/protocol/
+	$(GO) test -run='^$$' -fuzz=FuzzRecoverFile -fuzztime=5s ./internal/persist/
+	@echo "==> Running benchmarks and updating claims.json..."
+	@BENCH_REQUESTS=20000 BENCH_RUNS=3 WRITE_CLAIMS=1 ./bench/scripts/run-bench.sh
+	@echo "==> Verification complete: all tests, diffs, Tcl, crash-safety, fuzz, and benchmarks green!"
+
+showcase showcase-e2e ui-dev:
 	@echo "make $@: not implemented yet — arrives at the phase marked in docs/PLAN.md §5–§7 (DoD: §2)"
 	@exit 1
