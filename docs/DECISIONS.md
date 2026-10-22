@@ -704,3 +704,26 @@
   - "Why per-connection state instead of a client ID table?" → the connection goroutine owns the lifetime, the executor owns execution, and no extra registry has to be cleaned up on disconnect.
   - "What makes a transaction dirty?" → a command that fails at queue time: unknown command or wrong arity (EXEC itself has a special abort wording); control errors like nested MULTI or WATCH-inside-MULTI do not dirty it, and runtime errors inside EXEC stay in the reply array.
 - Proof: `internal/server/transactions.go`, `internal/store/watch.go`, `internal/server/executor.go` (`execute`, `run` gates dirty open transactions), `internal/server/persistence.go` (`collectEffects`/`appendEffects`); `TestTransactionBasics`, `TestTransactionQueueErrorsAbort`, `TestExecArityAbortsTransaction`, `TestTransactionDSTShadowModel`, `TestExecPersistsEffectsAsOneFrame`, `TestDiffTransactions` against Redis 7.4.11.
+
+## ADR-029 — Differential testing: independent clients, narrow canonicalization, seeded generator
+- Date: 2026-10-22 · Phase: P9.1 · Status: Accepted
+- Context: The differential harness had grown from a string corpus (P2.6) into ten hand-written suites covering ~1,000 steps. Hand-picked cases reach the edges we thought of, but they do not explore command interactions at scale, and comparison rules lived beside whichever suite needed them (sorted replies in the set test, exact TTL elsewhere). P9.1 must make the "0 mismatches across all commands" claim systematic without turning canonicalization into a way to hide differences.
+- Options:
+  - A. Keep growing hand-written corpora only.
+  - B. Generate commands and compare against a local shadow model of Redis semantics.
+  - C. Keep the curated corpora, add a seeded generator that runs the same command stream against both servers, and centralize canonicalization in one audited file.
+- Decision: C. `tests/differential/generator_test.go` drives a deterministic PCG stream (`DIFF_SEED`, default 1; `DIFF_ITERS`, default 500) across strings, lists, hashes, sets, TTL, and keyspace operations, mixing missing keys, shared keys, wrong-type use, binary/empty/long values, and overflow inputs. Every step applies to the reference first and then to Antares, and replies are compared exactly after the rules in `canonical.go`: default exact (values, order, errors); sort only replies Redis does not order (`SMEMBERS`, `KEYS`, `HKEYS`, `HVALS`); sort `HGETALL` field/value pairs by field; reduce a live `TTL`/`PTTL` duration to "positive" because the two calls are milliseconds apart while keeping `-1`/`-2` exact. The curated corpora stay for hand-picked edges, and `edge_diff_test.go` adds deterministic empty/NUL/1 KiB/non-ASCII key coverage. CI runs the same suite against the digest-pinned Redis 7.4.11 service container.
+- Why chosen:
+  - C needs no second implementation of Redis semantics: a shadow model would share assumptions with the server and could agree while both are wrong, the circularity ADR-017 rejects for clients.
+  - A seed makes any failure reproducible and shrinking by hand practical; printing `DIFF_SEED`/`DIFF_ITERS` turns a red CI run into one command.
+  - Canonicalization is the dangerous part of differential testing, so it is one small file with its own unit test rather than helpers spread across suites.
+- Why rejected:
+  - A: coverage stops at the author's imagination and does not exercise state-machine interactions.
+  - B: a model bug produces false confidence (both sides wrong) or false failures, and maintaining it duplicates the server.
+- Trade-offs accepted: the generator only covers deterministic semantics — `SPOP`/`SRANDMEMBER`/`HRANDFIELD`/`RANDOMKEY`, SCAN cursor batches, INFO counters, and `COMMAND` stay in property or curated tests; documented divergences are excluded from the stream (the first 30-seed sweep immediately found `LSET 9223372036854775807`, which Redis truncates to a C `int` and Antares deliberately rejects, so extreme list indices were removed from the generator and remain covered by unit tests); normalizing live TTL durations means duration bugs rely on the curated expiry corpus; the generator is not coverage-guided.
+- Revisit if: a red seed proves hard to shrink manually (add a shrinker), or the generator needs to cover random-selection commands by comparing invariants instead of bytes.
+- Interview Q&A:
+  - "How do you know a generated mismatch is real?" → the seed reproduces the exact stream; canonicalization only sorts unordered replies and buckets live TTL, so values, errors, and order still fail the diff.
+  - "Why not model Redis locally?" → a model is a second set of assumptions; diffing two running servers is the independent oracle.
+  - "What did the generator catch?" → it surfaced the known C-`int` LSET divergence on the first sweep, which validated the documented boundary and forced the exclusion list to be explicit.
+- Proof: `tests/differential/generator_test.go`, `canonical.go`, `canonical_test.go`, `edge_diff_test.go`, `surface_diff_test.go`; 30 seeds × 1,000 steps green against the pinned container; `make diff-test` green on the corpus + generator + edge + connection surface.

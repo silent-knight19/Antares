@@ -22,13 +22,13 @@
 | `README.md` | Public landing page: what/why, status, architecture, layout, getting started, roadmap, non-goals | scaffold |
 | `go.mod` | Module `github.com/silent-knight19/antares`; Go 1.27.1 pin; single direct dependency: go-redis v9 (test-only differential client, ADR-017) | scaffold |
 | `go.sum` | Module checksums for go-redis and its indirect deps | scaffold |
-| `docker-compose.yml` | Reference Redis 7.4.11 pinned by image digest; 127.0.0.1-only; healthchecked | scaffold |
+| `docker-compose.yml` | Reference Redis 7.4.11 pinned by image digest and run with Redis defaults (`appendonly no`) so `CONFIG GET save` and the CI service container agree; 127.0.0.1-only; healthchecked | scaffold |
 
 ## CI
 
 | Path | What it is | Ownership |
 |---|---|---|
-| `.github/workflows/ci.yml` | CI: gofmt check, `vet`, ADR-009 clock check, `build`, race-tested test run, differential harness; Go version read from `go.mod` | scaffold |
+| `.github/workflows/ci.yml` | CI: gofmt check, `vet`, ADR-009 clock check, `build`, race-tested test run, and the full differential suite (curated corpora + seeded generator + edge + connection surface) against the digest-pinned Redis 7.4.11 service container; Go version read from `go.mod` | scaffold |
 
 ## Binaries (`cmd/`)
 
@@ -154,7 +154,12 @@ Entries below are populated at the phase noted; directories without files remain
 | `tests/unit/.gitkeep` | reserved for cross-package suites; unit tests are colocated with their package (Go convention) |
 | `tests/differential/harness_test.go` | Shared test harness: starts an in-process Antares on an ephemeral port and builds RESP2 go-redis clients (identity disabled) (P2.6) |
 | `tests/differential/smoke_test.go` | P1.6 go-redis PING/ECHO/pipeline/unknown-command smoke against the in-process server, now using the shared harness helpers |
-| `tests/differential/diff_test.go` | Differential harness v0: 198-step string/TTL corpus + expiry scenario against the pinned reference, canonicalized reply comparison, namespaced keys, cleaned after the run; skips unless `REDIS_REF_ADDR` is set (`make diff-test`); full report at P9.1 |
+| `tests/differential/diff_test.go` | Differential harness v0: 198-step string/TTL corpus + expiry scenario against the pinned reference, canonicalized reply comparison, namespaced keys, cleaned after the run; skips unless `REDIS_REF_ADDR` is set (`make diff-test`) |
+| `tests/differential/canonical.go` | P9.1 canonicalization rules in one audited place: exact values/errors by default, unordered sort for set-ordered replies, field-pair sort for `HGETALL`, and live TTL/PTTL durations bucketed to positive while `-1`/`-2` stay exact | scaffold |
+| `tests/differential/canonical_test.go` | Unit tests pinning the canonicalization rules: byte conversion, stable unordered sorting, hash pair sorting (and odd-length passthrough), and TTL sentinels | scaffold |
+| `tests/differential/generator_test.go` | P9.1 seeded PCG generator (`DIFF_SEED`/`DIFF_ITERS`): weighted string/list/hash/set/keyspace-TTL stream over shared, missing, wrong-type, binary, long, and overflow inputs; applies each step to both servers and prints the seed on mismatch; excludes nondeterministic replies and documented divergences | scaffold |
+| `tests/differential/edge_diff_test.go` | P9.1 cross-family edge corpus: empty, NUL/CRLF, 1 KiB, and non-ASCII keys through string, list, hash, set, TYPE, EXISTS, and TTL operations | scaffold |
+| `tests/differential/surface_diff_test.go` | P9.1 connection-surface diff: PING/ECHO values and arity, HELLO protocol/option/name/auth paths with the dynamic connection id normalized, and CLIENT arity/setname/setinfo success and error replies | scaffold |
 | `tests/differential/list_diff_test.go` | 91-step list corpus: push/pop order and counts, ranges/indexing, LSET/LREM/LTRIM, error-order and wrong-type interactions, binary elements, auto-delete |
 | `tests/differential/hash_diff_test.go` | 71-step hash corpus: get/set/delete/all/keys/values, overwrite counts, error-order and wrong-type interactions, deterministic HRANDFIELD forms, binary fields/values, auto-delete |
 | `tests/differential/set_diff_test.go` | 99-step set corpus: add/remove/cardinality/membership, random-count parsing and errors, auto-delete, cross-type interactions, binary members; unordered replies sorted before comparison |

@@ -2,7 +2,6 @@ package differential
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"reflect"
@@ -346,32 +345,4 @@ func TestDiffStrings(t *testing.T) {
 			}
 		}
 	})
-}
-
-func outcome(ctx context.Context, rdb *redis.Client, args ...any) any {
-	v, err := rdb.Do(ctx, args...).Result()
-	if err != nil {
-		if errors.Is(err, redis.Nil) {
-			return nil
-		}
-		return "error: " + err.Error()
-	}
-	return canonical(v)
-}
-
-func canonical(v any) any {
-	switch x := v.(type) {
-	case nil, string, int64:
-		return x
-	case []byte:
-		return string(x)
-	case []any:
-		out := make([]any, len(x))
-		for i := range x {
-			out[i] = canonical(x[i])
-		}
-		return out
-	default:
-		return fmt.Sprintf("%T(%v)", v, v)
-	}
 }

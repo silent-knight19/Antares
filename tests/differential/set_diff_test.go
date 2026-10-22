@@ -5,24 +5,9 @@ import (
 	"fmt"
 	"os"
 	"reflect"
-	"sort"
 	"testing"
 	"time"
-
-	"github.com/redis/go-redis/v9"
 )
-
-func setOutcome(ctx context.Context, rdb *redis.Client, args ...any) any {
-	v := outcome(ctx, rdb, args...)
-	if arr, ok := v.([]any); ok {
-		sorted := append([]any(nil), arr...)
-		sort.Slice(sorted, func(i, j int) bool {
-			return fmt.Sprint(sorted[i]) < fmt.Sprint(sorted[j])
-		})
-		return sorted
-	}
-	return v
-}
 
 func TestDiffSets(t *testing.T) {
 	refAddr := os.Getenv("REDIS_REF_ADDR")

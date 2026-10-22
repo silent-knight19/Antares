@@ -104,6 +104,12 @@ The connection goroutine owns a `ConnState` whose `txState` holds the active fla
 
 Evidence: ADR-008, ADR-028; `internal/server/transactions.go`; `internal/store/watch.go`; `TestTransactionBasics`; `TestTransactionDSTShadowModel`; `TestDiffTransactions`.
 
+### Q20. How do you differential-test 71 commands without flaky tests?
+
+Three layers: curated corpora for edges I chose (arity/option ordering, overflow, WRONGTYPE, binary and empty keys), a seeded generator for interactions I did not enumerate, and property tests for replies that are random by contract. Every comparison uses `go-redis` (an independent implementation, ADR-017) against the digest-pinned Redis 7.4.11 container, and the generator prints its seed so `DIFF_SEED=n DIFF_ITERS=m go test ./tests/differential -run TestDiffGenerated` reproduces a failure exactly. The part that usually rots is canonicalization, so it lives in one small file with its own unit test: values, errors, and order are exact by default; only `SMEMBERS`/`KEYS`/`HKEYS`/`HVALS` are sorted, `HGETALL` pairs are sorted by field, and live `TTL`/`PTTL` durations are bucketed to positive because the reference and Antares are called milliseconds apart (`-1`/`-2` stay exact). Random commands and documented divergences are excluded deliberately and covered elsewhere, so a green run means behaviour matches rather than "the harness ignored it." The first 30-seed sweep still found a real boundary: `LSET` with a max-int64 index, where Redis truncates to a C `int` and Antares rejects by design.
+
+Evidence: ADR-029; `tests/differential/generator_test.go`, `canonical.go`, `edge_diff_test.go`, `surface_diff_test.go`; `make diff-test`; CI service container.
+
 ---
 
 ## 4. Boundaries ("what does it NOT do?")
