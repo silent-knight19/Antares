@@ -637,7 +637,7 @@ func (b *Bridge) handleBenchmarkRun(w http.ResponseWriter, r *http.Request) {
 		defer cancel()
 
 		var latencies []float64
-		start := time.Now()
+		start := b.clock.Now()
 
 		if pipe == 1 {
 			for i := 0; i < count; i++ {
@@ -652,12 +652,12 @@ func (b *Bridge) handleBenchmarkRun(w http.ResponseWriter, r *http.Request) {
 				default:
 					args = []string{"PING"}
 				}
-				t0 := time.Now()
+				t0 := b.clock.Now()
 				_, err := t.exec(ctx, args...)
 				if err != nil {
 					return nil, err
 				}
-				latencies = append(latencies, ms(time.Since(t0)))
+				latencies = append(latencies, ms(b.clock.Since(t0)))
 			}
 		} else {
 			batchCount := (count + pipe - 1) / pipe
@@ -676,19 +676,19 @@ func (b *Bridge) handleBenchmarkRun(w http.ResponseWriter, r *http.Request) {
 						cmds = append(cmds, []string{"PING"})
 					}
 				}
-				t0 := time.Now()
+				t0 := b.clock.Now()
 				_, err := t.execMany(ctx, cmds...)
 				if err != nil {
 					return nil, err
 				}
-				avgLat := ms(time.Since(t0)) / float64(len(cmds))
+				avgLat := ms(b.clock.Since(t0)) / float64(len(cmds))
 				for range cmds {
 					latencies = append(latencies, avgLat)
 				}
 			}
 		}
 
-		totalDur := time.Since(start)
+		totalDur := b.clock.Since(start)
 		sort.Float64s(latencies)
 		p50 := latencies[len(latencies)*50/100]
 		p99 := latencies[len(latencies)*99/100]
@@ -748,15 +748,15 @@ func (b *Bridge) handleDurabilitySim(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	timeline := make([]durabilityTimelineEntry, 0, count)
-	tsPrefix := time.Now().UnixNano()
+	tsPrefix := b.clock.Now().UnixNano()
 	var simulatedOffset int64 = 4096
 
 	for i := 1; i <= count; i++ {
 		key := fmt.Sprintf("durability:sim:%d:%d", tsPrefix, i)
 		val := fmt.Sprintf("state_checkpoint_%d", i)
-		t0 := time.Now()
+		t0 := b.clock.Now()
 		res, err := b.antares.exec(ctx, "SET", key, val)
-		lat := ms(time.Since(t0))
+		lat := ms(b.clock.Since(t0))
 		simulatedOffset += int64(len(res.Raw) + len(key) + len(val) + 24)
 
 		if err != nil {
