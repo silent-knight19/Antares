@@ -405,4 +405,3 @@ func TestEvictionPool(t *testing.T) {
 		t.Fatalf("unexpected candidates len: %d", len(out.Candidates))
 	}
 }
-
