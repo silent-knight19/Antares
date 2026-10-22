@@ -1,6 +1,7 @@
 package store
 
 import (
+	"fmt"
 	"sort"
 	"testing"
 	"time"
@@ -169,5 +170,16 @@ func TestStoreScanSortIsStableForTestNames(t *testing.T) {
 	sort.Strings(names)
 	if names[0] != "stable:a0" {
 		t.Fatal("unexpected sort order")
+	}
+}
+
+func TestStoreScanHugeCountCompletes(t *testing.T) {
+	s := New()
+	for i := range 2000 {
+		s.Set(fmt.Sprintf("key:%d", i), []byte("v"))
+	}
+	cursor, keys := s.Scan(0, int(^uint(0)>>1), nil, "", false)
+	if cursor != 0 || len(keys) != 2000 {
+		t.Fatalf("huge COUNT = cursor %d, %d keys; want one full cycle", cursor, len(keys))
 	}
 }

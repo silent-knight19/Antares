@@ -6,7 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -24,6 +26,7 @@ const (
 	probeTimeout        = 500 * time.Millisecond
 	maxBodyBytes        = 1 << 20
 	maxScanCount        = 1000
+	maxReplyBytes       = 8 << 20
 )
 
 // Config is the bridge's process configuration.
@@ -32,7 +35,6 @@ type Config struct {
 	AntaresAddr  string
 	RedisAddr    string
 	WebDir       string
-	EventLog     string
 	Version      string
 	PollInterval time.Duration
 }
@@ -104,7 +106,46 @@ func (b *Bridge) routes() http.Handler {
 	mux.HandleFunc("GET /api/info", b.handleInfo)
 	mux.HandleFunc("GET /api/events/stream", b.handleEvents)
 	mux.Handle("/", http.HandlerFunc(b.serveStatic))
-	return mux
+	return b.guard(mux)
+}
+
+// guard keeps the local console out of reach of DNS rebinding and cross-site
+// form posts: the Host must be loopback (or the host the bridge was told to
+// bind), and a mutating request with an Origin must come from the same host.
+func (b *Bridge) guard(next http.Handler) http.Handler {
+	allowedHost := ""
+	if host, _, err := net.SplitHostPort(b.cfg.Addr); err == nil {
+		allowedHost = strings.Trim(host, "[]")
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		host := r.Host
+		if h, _, err := net.SplitHostPort(host); err == nil {
+			host = h
+		}
+		host = strings.Trim(host, "[]")
+		if !loopbackHost(host) && host != allowedHost {
+			writeError(w, http.StatusForbidden, errors.New("forbidden host"))
+			return
+		}
+		if r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions {
+			if origin := r.Header.Get("Origin"); origin != "" {
+				u, err := url.Parse(origin)
+				if err != nil || u.Host != r.Host {
+					writeError(w, http.StatusForbidden, errors.New("forbidden origin"))
+					return
+				}
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func loopbackHost(host string) bool {
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 // target is a lazily connected client. A transport failure drops the
@@ -127,19 +168,59 @@ func (t *target) exec(ctx context.Context, args ...string) (client.Result, error
 	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	c, err := t.conn(ctx)
+	if err != nil {
+		return client.Result{}, err
+	}
+	res, err := c.Do(ctx, args...)
+	if err != nil {
+		t.drop()
+	}
+	return res, err
+}
+
+// execMany sends all commands in one pipeline and returns their replies in
+// order, saving one round trip per command.
+func (t *target) execMany(ctx context.Context, commands ...[]string) ([]client.Reply, error) {
+	if len(commands) == 0 {
+		return nil, nil
+	}
+	batch := make([][][]byte, len(commands))
+	for i, args := range commands {
+		batch[i] = make([][]byte, len(args))
+		for j, arg := range args {
+			batch[i][j] = []byte(arg)
+		}
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	c, err := t.conn(ctx)
+	if err != nil {
+		return nil, err
+	}
+	replies, err := c.Pipeline(ctx, batch...)
+	if err != nil {
+		t.drop()
+	}
+	return replies, err
+}
+
+func (t *target) conn(ctx context.Context) (*client.Client, error) {
 	if t.c == nil {
 		c, err := client.Dial(ctx, t.addr, client.WithTimeout(t.timeout), client.WithClock(t.clock))
 		if err != nil {
-			return client.Result{}, err
+			return nil, err
 		}
 		t.c = c
 	}
-	res, err := t.c.Do(ctx, args...)
-	if err != nil {
+	return t.c, nil
+}
+
+func (t *target) drop() {
+	if t.c != nil {
 		_ = t.c.Close()
 		t.c = nil
 	}
-	return res, err
 }
 
 func (t *target) close() {
@@ -266,6 +347,10 @@ func (b *Bridge) handleExec(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadGateway, err)
 		return
 	}
+	if len(res.Raw) > maxReplyBytes {
+		writeError(w, http.StatusRequestEntityTooLarge, fmt.Errorf("reply is %d bytes, limit %d; use a narrower command", len(res.Raw), maxReplyBytes))
+		return
+	}
 	name := strings.ToLower(body.Target)
 	if name == "" {
 		name = "antares"
@@ -326,31 +411,54 @@ func (b *Bridge) handleKeys(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadGateway, errors.New("malformed SCAN reply"))
 		return
 	}
-	keys := make([]keyInfo, 0, len(res.Reply.Array[1].Array))
-	for _, item := range res.Reply.Array[1].Array {
+	items := res.Reply.Array[1].Array
+	keys := make([]keyInfo, 0, len(items))
+	commands := make([][]string, 0, len(items)*2)
+	for _, item := range items {
 		if item.Kind != client.KindBulk {
 			writeError(w, http.StatusBadGateway, errors.New("malformed SCAN key"))
 			return
 		}
-		info := keyInfo{Key: item.Text, Type: "none", TTLMS: -2}
-		typ, err := b.antares.exec(ctx, "TYPE", item.Text)
-		if err != nil {
-			writeError(w, http.StatusBadGateway, err)
-			return
+		keys = append(keys, keyInfo{Key: item.Text, Type: "none", TTLMS: -2})
+		commands = append(commands, []string{"TYPE", item.Text}, []string{"PTTL", item.Text})
+	}
+
+	replies, err := b.antares.execMany(ctx, commands...)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, err)
+		return
+	}
+	if len(replies) != len(commands) {
+		writeError(w, http.StatusBadGateway, errors.New("malformed pipeline reply"))
+		return
+	}
+	sized := make([]int, 0, len(keys))
+	commands = commands[:0]
+	for i := range keys {
+		if replies[2*i].Kind == client.KindSimple {
+			keys[i].Type = replies[2*i].Text
 		}
-		if typ.Reply.Kind == client.KindSimple {
-			info.Type = typ.Reply.Text
+		if replies[2*i+1].Kind == client.KindInteger {
+			keys[i].TTLMS = replies[2*i+1].Int
 		}
-		ttl, err := b.antares.exec(ctx, "PTTL", item.Text)
-		if err != nil {
-			writeError(w, http.StatusBadGateway, err)
-			return
+		if command, ok := previewCommand(keys[i].Type); ok {
+			sized = append(sized, i)
+			commands = append(commands, []string{command, keys[i].Key})
 		}
-		if ttl.Reply.Kind == client.KindInteger {
-			info.TTLMS = ttl.Reply.Int
+	}
+	replies, err = b.antares.execMany(ctx, commands...)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, err)
+		return
+	}
+	if len(replies) != len(commands) {
+		writeError(w, http.StatusBadGateway, errors.New("malformed pipeline reply"))
+		return
+	}
+	for i, index := range sized {
+		if replies[i].Kind == client.KindInteger {
+			keys[index].Preview = fmt.Sprintf("%d %s", replies[i].Int, previewUnit(keys[index].Type))
 		}
-		info.Preview = keyPreview(ctx, b.antares, item.Text, info.Type)
-		keys = append(keys, info)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"cursor": res.Reply.Array[0].Text,
@@ -358,26 +466,34 @@ func (b *Bridge) handleKeys(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func keyPreview(ctx context.Context, t *target, key, kind string) string {
-	var command string
-	var unit string
+func previewCommand(kind string) (string, bool) {
 	switch kind {
 	case "string":
-		command, unit = "STRLEN", "B"
+		return "STRLEN", true
 	case "list":
-		command, unit = "LLEN", "items"
+		return "LLEN", true
 	case "hash":
-		command, unit = "HLEN", "fields"
+		return "HLEN", true
 	case "set":
-		command, unit = "SCARD", "members"
+		return "SCARD", true
+	default:
+		return "", false
+	}
+}
+
+func previewUnit(kind string) string {
+	switch kind {
+	case "string":
+		return "B"
+	case "list":
+		return "items"
+	case "hash":
+		return "fields"
+	case "set":
+		return "members"
 	default:
 		return ""
 	}
-	res, err := t.exec(ctx, command, key)
-	if err != nil || res.Reply.Kind != client.KindInteger {
-		return ""
-	}
-	return fmt.Sprintf("%d %s", res.Reply.Int, unit)
 }
 
 func (b *Bridge) handleInfo(w http.ResponseWriter, r *http.Request) {

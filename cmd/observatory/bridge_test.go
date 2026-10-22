@@ -265,3 +265,63 @@ func TestStaticPlaceholder(t *testing.T) {
 		t.Fatalf("missing asset status = %d", resp.StatusCode)
 	}
 }
+
+func TestBridgeRejectsForeignHost(t *testing.T) {
+	_, ts := newTestBridge(t)
+	req, err := http.NewRequest(http.MethodGet, ts.URL+"/api/health", nil)
+	if err != nil {
+		t.Fatalf("NewRequest: %v", err)
+	}
+	req.Host = "evil.example"
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET with foreign Host: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("foreign Host status = %d, want 403", resp.StatusCode)
+	}
+}
+
+func TestBridgeRejectsCrossOriginWrite(t *testing.T) {
+	_, ts := newTestBridge(t)
+	payload, _ := json.Marshal(execBody{Args: []string{"PING"}})
+
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/exec", bytes.NewReader(payload))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Origin", "http://evil.example")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("cross-origin POST: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("cross-origin status = %d, want 403", resp.StatusCode)
+	}
+
+	req, _ = http.NewRequest(http.MethodPost, ts.URL+"/api/exec", bytes.NewReader(payload))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Origin", ts.URL)
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("same-origin POST: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("same-origin status = %d, want 200", resp.StatusCode)
+	}
+}
+
+func TestExecRejectsOversizedReply(t *testing.T) {
+	b, ts := newTestBridge(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	big := strings.Repeat("x", maxReplyBytes+1)
+	if _, err := b.antares.exec(ctx, "SET", "big", big); err != nil {
+		t.Fatalf("set big value: %v", err)
+	}
+	code, out := postExec(t, ts.URL, execBody{Args: []string{"GET", "big"}})
+	if code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("oversized GET status = %d, body = %v", code, out)
+	}
+}

@@ -136,6 +136,16 @@ func TestInfoMemoryAccounting(t *testing.T) {
 	}
 }
 
+func TestInfoMemoryPeakTracksCommands(t *testing.T) {
+	exec := newStringExec(t)
+	runStrings(exec, "SET", "big", strings.Repeat("x", 100000))
+	runStrings(exec, "SET", "big", "small")
+	body := infoBody(t, runStrings(exec, "INFO", "memory"))
+	if peak, _ := strconv.Atoi(infoField(t, body, "used_memory_peak")); peak < 100000 {
+		t.Fatalf("used_memory_peak = %d, want at least the transient 100000-byte value", peak)
+	}
+}
+
 func TestInfoHzAndMaxmemory(t *testing.T) {
 	exec := newStringExec(t)
 	runStrings(exec, "CONFIG", "SET", "hz", "20")

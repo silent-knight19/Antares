@@ -135,6 +135,50 @@ func (c *Client) Execute(ctx context.Context, args ...[]byte) (Result, error) {
 	}, nil
 }
 
+// Pipeline sends commands back-to-back in one write and reads their replies in
+// order. It holds the connection for the whole batch; a transport error leaves
+// the stream unusable, so callers should close the client.
+func (c *Client) Pipeline(ctx context.Context, commands ...[][]byte) ([]Reply, error) {
+	if len(commands) == 0 {
+		return nil, nil
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	var request []byte
+	for _, args := range commands {
+		if len(args) == 0 {
+			return nil, errors.New("client: empty command")
+		}
+		request = append(request, encodeRequest(args)...)
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.closed {
+		return nil, errors.New("client: closed")
+	}
+	deadline := c.clock.Now().Add(c.timeout)
+	if d, ok := ctx.Deadline(); ok && d.Before(deadline) {
+		deadline = d
+	}
+	if err := c.conn.SetDeadline(deadline); err != nil {
+		return nil, fmt.Errorf("client: set deadline: %w", err)
+	}
+	if _, err := c.conn.Write(request); err != nil {
+		return nil, fmt.Errorf("client: write: %w", err)
+	}
+	replies := make([]Reply, len(commands))
+	for i := range replies {
+		reply, err := parseReply(c.r, 0)
+		if err != nil {
+			return nil, err
+		}
+		replies[i] = reply
+	}
+	return replies, nil
+}
+
 // Do runs one command with string arguments, convenient for HTTP handlers.
 func (c *Client) Do(ctx context.Context, args ...string) (Result, error) {
 	buf := make([][]byte, len(args))

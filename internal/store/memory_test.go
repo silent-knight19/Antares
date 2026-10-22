@@ -5,6 +5,9 @@ import (
 	"fmt"
 	"runtime"
 	"testing"
+	"time"
+
+	"github.com/silent-knight19/antares/internal/clock"
 )
 
 func TestMemoryUsageEmptyAndPerKey(t *testing.T) {
@@ -71,4 +74,52 @@ func TestMemoryUsageTracksRuntime(t *testing.T) {
 		t.Fatalf("MemoryUsage = %d, runtime heap = %d (%.1f%%, want within 10%%)", got, actual, diff*100)
 	}
 	runtime.KeepAlive(s)
+}
+
+func TestMemoryUsageTracksMutations(t *testing.T) {
+	fake := clock.NewFake(time.UnixMilli(1000))
+	s := NewWithClock(fake)
+	check := func() {
+		t.Helper()
+		want := Usage{}
+		for key, value := range s.data {
+			u := usageOf(key, value)
+			want.Total += u.Total
+			want.Dataset += u.Dataset
+		}
+		if got := s.MemoryUsage(); got != want {
+			t.Fatalf("MemoryUsage = %+v, want %+v", got, want)
+		}
+	}
+
+	s.Set("a", []byte("1"))
+	check()
+	s.SetWithTTL("b", []byte("22"), 1100)
+	check()
+	s.Set("a", []byte("333"))
+	check()
+	s.SetPreservingTTL("list", Value{Kind: KindList, List: [][]byte{[]byte("x")}})
+	check()
+	v, _ := s.Lookup("list")
+	v.List = append(v.List, []byte("yy"))
+	s.SetPreservingTTL("list", v)
+	check()
+	s.Rename("a", "b")
+	check()
+	s.Delete("list")
+	check()
+
+	fake.Advance(200 * time.Millisecond)
+	s.Lookup("b")
+	check()
+	s.SetWithTTL("c", []byte("3333"), 1100)
+	check()
+	s.ExpireSample(fake.Now().UnixMilli(), 10)
+	check()
+
+	if cp := s.Copy(); cp.MemoryUsage() != s.MemoryUsage() {
+		t.Fatalf("copy MemoryUsage = %+v, want %+v", cp.MemoryUsage(), s.MemoryUsage())
+	}
+	s.Flush()
+	check()
 }

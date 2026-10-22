@@ -119,6 +119,9 @@ func newExecutorWithAOF(st *store.Store, reg *Registry, active bool, c clock.Clo
 // Stats exposes the process counters INFO reports.
 func (e *Executor) Stats() *metrics.Stats { return e.stats }
 
+// SetEventSink installs the opt-in event tap. Call it before serving.
+func (e *Executor) SetEventSink(sink events.Sink) { e.events = sink }
+
 // Handle implements server.Handler: it queues the request and waits for the
 // executor to write the reply into out. A closed executor drops the request
 // rather than blocking the connection goroutine forever.
@@ -226,14 +229,41 @@ func (e *Executor) run(req execRequest) {
 	if e.aofWriteBlocked(req.req, req.out) {
 		return
 	}
-	if e.maxmemoryGate(req.req, req.out) {
+	blocked, evicted := e.maxmemoryGate(req.req, req.out)
+	if err := e.persistEvictions(evicted); err != nil {
+		slog.Error("AOF eviction append failed", "keys", len(evicted), "err", err)
+		req.out.Reset()
+		req.out.Error("MISCONF Errors writing to the AOF file: " + err.Error())
+		return
+	}
+	if blocked {
 		return
 	}
 	mutations := e.store.Mutations()
 	spopBefore := e.captureSpopBefore(req.req)
 	e.commands.Dispatch(req.req, req.out)
 	e.stats.Commands.Add(1)
-	e.propagate(req.req, mutations, spopBefore)
+	if err := e.propagate(req.req, mutations, spopBefore); err != nil {
+		req.out.Reset()
+		req.out.Error("MISCONF Errors writing to the AOF file: " + err.Error())
+	}
+	if used := e.store.MemoryUsage().Total; used > 0 {
+		e.stats.ObserveMemory(uint64(used))
+	}
+}
+
+// persistEvictions records one DEL for every key evicted while preparing this
+// command, so a restart cannot resurrect them.
+func (e *Executor) persistEvictions(keys []string) error {
+	if e.aof == nil || len(keys) == 0 {
+		return nil
+	}
+	args := make([][]byte, 0, len(keys)+1)
+	args = append(args, []byte("DEL"))
+	for _, key := range keys {
+		args = append(args, []byte(key))
+	}
+	return e.aof.Append(persist.EncodeCommand(args...))
 }
 
 // aofWriteBlocked refuses a write command once the AOF has failed, so the
@@ -257,54 +287,53 @@ func (e *Executor) aofWriteBlocked(req protocol.Request, out *protocol.Encoder) 
 // maxmemoryGate runs before dispatch. While over maxmemory under an LRU policy
 // it evicts victims, then refuses a still-over memory-growing command (DenyOOM)
 // with Redis's reply. Unknown-command and arity failures fall through so they
-// keep their own errors, as in Redis. An unimplemented policy (LFU/random/ttl)
-// parses as noeviction and so rejects rather than evicts.
-func (e *Executor) maxmemoryGate(req protocol.Request, out *protocol.Encoder) bool {
+// keep their own errors, as in Redis. CONFIG SET rejects unimplemented
+// policies (LFU/random/ttl), so a stored policy always has real behavior.
+func (e *Executor) maxmemoryGate(req protocol.Request, out *protocol.Encoder) (blocked bool, evicted []string) {
 	if e.maxmemory <= 0 || len(req) == 0 {
-		return false
+		return false, nil
 	}
 	cmd, ok := e.commands.Lookup(req[0])
 	if !ok || !cmd.accepts(len(req)) {
-		return false
+		return false, nil
 	}
 	if e.store.MemoryUsage().Total <= e.maxmemory {
-		return false
+		return false, nil
 	}
 	policy := evict.ParsePolicy(e.maxmemoryPolicy)
-	if policy.Evicts() {
-		e.performEvictions(policy)
+	if policy.Evicts() && (e.aof == nil || e.aof.Failed() == nil) {
+		evicted = e.performEvictions(policy)
 		if e.store.MemoryUsage().Total <= e.maxmemory {
-			return false
+			return false, evicted
 		}
 	}
 	if !cmd.DenyOOM {
-		return false
+		return false, evicted
 	}
 	out.Error(protocol.OutOfMemory)
-	return true
+	return true, evicted
 }
 
 // performEvictions removes least-recently-used keys until the keyspace fits
-// maxmemory or nothing is evictable. Each round samples evict.Samples keys into
-// a bounded pool and evicts the most idle, as Redis's approximated LRU does.
-//
-// shortcut: MemoryUsage and the sampling are O(n) scans, so eviction is
-// O(n) per victim; maintain an incremental total if eviction under load becomes
-// measurable.
-func (e *Executor) performEvictions(policy evict.Policy) {
+// maxmemory or nothing is evictable, returning the evicted keys. Each round
+// samples evict.Samples keys into a bounded pool and evicts the most idle, as
+// Redis's approximated LRU does.
+func (e *Executor) performEvictions(policy evict.Policy) []string {
 	volatileOnly := policy.Volatile()
 	e.evictPool = evict.Pool{}
+	var evicted []string
 	for e.store.MemoryUsage().Total > e.maxmemory {
 		for _, s := range e.store.SampleKeys(volatileOnly, evict.Samples) {
 			e.evictPool.Insert(s.Key, s.Idle)
 		}
 		key, idle, ok := e.evictPool.PopBest()
 		if !ok {
-			return
+			return evicted
 		}
 		if !e.store.Delete(key) {
 			continue
 		}
+		evicted = append(evicted, key)
 		e.stats.EvictedKeys.Add(1)
 		if e.events != nil {
 			e.events.Emit(events.Event{
@@ -317,4 +346,5 @@ func (e *Executor) performEvictions(policy evict.Policy) {
 			})
 		}
 	}
+	return evicted
 }

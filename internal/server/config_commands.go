@@ -23,6 +23,10 @@ var memoryPolicies = map[string]bool{
 	"allkeys-random": true, "noeviction": true,
 }
 
+var implementedPolicies = map[string]bool{
+	"volatile-lru": true, "allkeys-lru": true, "noeviction": true,
+}
+
 type configItem struct {
 	name  string
 	value string
@@ -99,6 +103,10 @@ func configCommand(e *Executor, args [][]byte, out *protocol.Encoder) {
 				p := strings.ToLower(string(args[i+1]))
 				if !memoryPolicies[p] {
 					out.Error(maxMemoryPolicyError)
+					return
+				}
+				if !implementedPolicies[p] {
+					out.Error(fmt.Sprintf("ERR CONFIG SET failed (possibly related to argument 'maxmemory-policy') - policy '%s' is not implemented; use allkeys-lru, volatile-lru, or noeviction", p))
 					return
 				}
 				policy = p

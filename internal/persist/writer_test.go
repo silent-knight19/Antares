@@ -263,6 +263,43 @@ func TestWriterRefusesAfterSyncFailure(t *testing.T) {
 	}
 }
 
+func TestFinishRewriteKeepsWriteFailureSticky(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "rewritefail.aof")
+	wantErr := errors.New("fsync refused")
+	var fail atomic.Bool
+	syncFn := func(*os.File) error {
+		if fail.Load() {
+			return wantErr
+		}
+		return nil
+	}
+	w, err := openWriter(path, FsyncAlways, syncFn, time.Hour)
+	if err != nil {
+		t.Fatalf("openWriter: %v", err)
+	}
+	defer w.Close()
+
+	if err := w.Append([]byte("before")); err != nil {
+		t.Fatalf("Append before: %v", err)
+	}
+	if err := w.BeginRewrite(); err != nil {
+		t.Fatalf("BeginRewrite: %v", err)
+	}
+	fail.Store(true)
+	if err := w.Append([]byte("during")); !errors.Is(err, wantErr) {
+		t.Fatalf("Append during rewrite = %v, want %v", err, wantErr)
+	}
+	if err := w.FinishRewrite(filepath.Join(t.TempDir(), "tail.aof")); !errors.Is(err, wantErr) {
+		t.Fatalf("FinishRewrite = %v, want %v", err, wantErr)
+	}
+	if !errors.Is(w.Failed(), wantErr) {
+		t.Fatalf("Failed() = %v, want the sticky failure", w.Failed())
+	}
+	if records := readRecords(t, path); len(records) == 0 || records[0] != "before" {
+		t.Fatalf("original AOF was replaced after a failed rewrite: %q", records)
+	}
+}
+
 func TestWriterShouldRewrite(t *testing.T) {
 	w, err := openWriter(filepath.Join(t.TempDir(), "grow.aof"), FsyncNo, nil, time.Hour)
 	if err != nil {

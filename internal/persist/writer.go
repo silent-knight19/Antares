@@ -386,6 +386,13 @@ func (w *Writer) finishRewrite(tempPath string) error {
 		w.mu.Unlock()
 		return ErrNoRewrite
 	}
+	failed := w.writeErr
+	if failed != nil {
+		w.rewriting = false
+		w.rewriteBuf = nil
+		w.mu.Unlock()
+		return failed
+	}
 	buffered := append([]byte(nil), w.rewriteBuf...)
 	w.mu.Unlock()
 

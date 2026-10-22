@@ -3,6 +3,9 @@ package server
 import (
 	"bufio"
 	"bytes"
+	"errors"
+	"fmt"
+	"io"
 	"path/filepath"
 	"slices"
 	"sort"
@@ -34,15 +37,11 @@ func newAOFExec(t *testing.T, c clock.Clock) (*Executor, *persist.Writer, *store
 	return exec, aof, st, path
 }
 
-func readAOFCommands(t *testing.T, path string) [][][]byte {
+func readAOFFrames(t *testing.T, path string) [][]byte {
 	t.Helper()
-	var commands [][][]byte
+	var frames [][]byte
 	report, err := persist.RecoverFile(path, false, func(payload []byte) error {
-		req, err := protocol.ReadRequest(bufio.NewReader(bytes.NewReader(payload)))
-		if err != nil {
-			return err
-		}
-		commands = append(commands, req)
+		frames = append(frames, append([]byte(nil), payload...))
 		return nil
 	})
 	if err != nil {
@@ -50,6 +49,25 @@ func readAOFCommands(t *testing.T, path string) [][][]byte {
 	}
 	if report.Truncated {
 		t.Fatalf("unexpected truncation: %+v", report)
+	}
+	return frames
+}
+
+func readAOFCommands(t *testing.T, path string) [][][]byte {
+	t.Helper()
+	var commands [][][]byte
+	for _, payload := range readAOFFrames(t, path) {
+		br := bufio.NewReader(bytes.NewReader(payload))
+		for {
+			req, err := protocol.ReadRequest(br)
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			if err != nil {
+				t.Fatalf("parse AOF frame: %v", err)
+			}
+			commands = append(commands, req)
+		}
 	}
 	return commands
 }
@@ -206,6 +224,53 @@ func TestAOFWriteBlockedAfterFailure(t *testing.T) {
 	if got := runStrings(exec, "GET", "before"); got != "$2\r\nok\r\n" {
 		t.Fatalf("read after AOF failure = %q, want the value", got)
 	}
+}
+
+func TestAOFEffectIsOneFrame(t *testing.T) {
+	clk := clock.NewFake(time.UnixMilli(1_000_000))
+	exec, aof, _, path := newAOFExec(t, clk)
+	runStrings(exec, "SET", "k", "v", "EX", "100")
+	if err := aof.Close(); err != nil {
+		t.Fatalf("aof.Close: %v", err)
+	}
+
+	if frames := readAOFFrames(t, path); len(frames) != 1 {
+		t.Fatalf("SET EX wrote %d frames, want one atomic frame", len(frames))
+	}
+	commands := readAOFCommands(t, path)
+	if set := findCommand(commands, "SET", "k"); set == nil {
+		t.Fatalf("missing SET effect in %q", commands)
+	}
+	if at := findCommand(commands, "PEXPIREAT", "k"); at == nil {
+		t.Fatalf("missing PEXPIREAT effect in %q", commands)
+	}
+}
+
+func TestAOFEvictionPersistsDelete(t *testing.T) {
+	clk := clock.NewFake(time.UnixMilli(1_000_000))
+	exec, aof, want, path := newAOFExec(t, clk)
+
+	value := strings.Repeat("x", 1024)
+	for i := 0; i < 20; i++ {
+		runStrings(exec, "SET", fmt.Sprintf("k%d", i), value)
+	}
+	runStrings(exec, "CONFIG", "SET", "maxmemory-policy", "allkeys-lru")
+	runStrings(exec, "CONFIG", "SET", "maxmemory", "20000")
+	if got := runStrings(exec, "SET", "new", value); got != "+OK\r\n" {
+		t.Fatalf("SET under allkeys-lru = %q, want OK", got)
+	}
+	if got := runStrings(exec, "DBSIZE"); got == ":21\r\n" {
+		t.Fatalf("DBSIZE after eviction = %q, want a smaller keyspace", got)
+	}
+	if err := aof.Close(); err != nil {
+		t.Fatalf("aof.Close: %v", err)
+	}
+
+	got := store.NewWithClock(clk)
+	if _, err := RecoverAOF(path, got); err != nil {
+		t.Fatalf("RecoverAOF: %v", err)
+	}
+	assertStoresEqual(t, want, got)
 }
 
 func TestStoreCopyIsIndependent(t *testing.T) {

@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/silent-knight19/antares/internal/clock"
+	"github.com/silent-knight19/antares/internal/events"
 	"github.com/silent-knight19/antares/internal/persist"
 	"github.com/silent-knight19/antares/internal/server"
 	"github.com/silent-knight19/antares/internal/store"
@@ -37,6 +38,7 @@ func main() {
 	aofFile := flag.String("aof-file", "appendonly.aof", "AOF path (used with -appendonly)")
 	appendFsync := flag.String("appendfsync", "everysec", "AOF fsync policy: always|everysec|no")
 	aofRepair := flag.Bool("aof-repair", false, "on a corrupt AOF frame, discard the tail instead of refusing to start")
+	eventLog := flag.String("event-log", "", "write internal events as rotated JSONL to this path (empty = disabled, ADR-014)")
 	flag.Parse()
 
 	if *showVersion {
@@ -78,6 +80,20 @@ func main() {
 	if aof != nil {
 		exec = server.NewExecutorWithAOF(st, nil, clk, aof)
 	}
+	var eventSink *events.JSONLSink
+	if *eventLog != "" {
+		sink, err := events.NewJSONLSink(*eventLog)
+		if err != nil {
+			logger.Error("opening event log failed", "path", *eventLog, "err", err)
+			exec.Close()
+			if aof != nil {
+				_ = aof.Close()
+			}
+			os.Exit(1)
+		}
+		eventSink = sink
+		exec.SetEventSink(eventSink)
+	}
 	srv := server.New(server.Config{
 		Addr:        addr,
 		MaxConns:    *maxConns,
@@ -87,6 +103,9 @@ func main() {
 	if err := srv.Start(); err != nil {
 		logger.Error("listen failed", "addr", addr, "err", err)
 		exec.Close()
+		if eventSink != nil {
+			_ = eventSink.Close()
+		}
 		if aof != nil {
 			_ = aof.Close()
 		}
@@ -106,6 +125,11 @@ func main() {
 	}
 	if err := exec.CloseContext(shutdownCtx); err != nil {
 		logger.Warn("executor shutdown deadline expired", "err", err)
+	}
+	if eventSink != nil {
+		if err := eventSink.Close(); err != nil {
+			logger.Warn("event log close failed", "err", err)
+		}
 	}
 	if aof != nil {
 		if err := aof.Close(); err != nil {

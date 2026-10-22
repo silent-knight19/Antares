@@ -89,13 +89,10 @@ func listStorage(base [][]byte, head, length int) ([][]byte, int) {
 func pushList(st *store.Store, args [][]byte, left bool, out *protocol.Encoder) {
 	key := string(args[0])
 	elements := args[1:]
-	v, exists, errMsg := listValue(st, key)
+	v, _, errMsg := listValue(st, key)
 	if errMsg != "" {
 		out.Error(errMsg)
 		return
-	}
-	if exists {
-		v.List = v.List[:v.ListHead+len(listView(v))]
 	}
 	length := len(v.List) - v.ListHead
 

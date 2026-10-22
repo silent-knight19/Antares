@@ -104,6 +104,8 @@ func TestConfigAllowlistErrors(t *testing.T) {
 		{"CONFIG SET maxmemory abc", "-ERR CONFIG SET failed (possibly related to argument 'maxmemory') - argument must be a memory value\r\n"},
 		{"CONFIG SET maxmemory 1tb", "-ERR CONFIG SET failed (possibly related to argument 'maxmemory') - argument must be a memory value\r\n"},
 		{"CONFIG SET maxmemory-policy bogus", "-ERR CONFIG SET failed (possibly related to argument 'maxmemory-policy') - argument(s) must be one of the following: volatile-lru, volatile-lfu, volatile-random, volatile-ttl, allkeys-lru, allkeys-lfu, allkeys-random, noeviction\r\n"},
+		{"CONFIG SET maxmemory-policy volatile-lfu", "-ERR CONFIG SET failed (possibly related to argument 'maxmemory-policy') - policy 'volatile-lfu' is not implemented; use allkeys-lru, volatile-lru, or noeviction\r\n"},
+		{"CONFIG SET maxmemory-policy allkeys-random", "-ERR CONFIG SET failed (possibly related to argument 'maxmemory-policy') - policy 'allkeys-random' is not implemented; use allkeys-lru, volatile-lru, or noeviction\r\n"},
 		{"CONFIG SET maxclients 0", "-ERR CONFIG SET failed (possibly related to argument 'maxclients') - argument must be between 1 and 4294967295 inclusive\r\n"},
 		{"CONFIG SET maxclients -1", "-ERR CONFIG SET failed (possibly related to argument 'maxclients') - argument must be between 1 and 4294967295 inclusive\r\n"},
 		{"CONFIG SET maxclients abc", "-ERR CONFIG SET failed (possibly related to argument 'maxclients') - argument couldn't be parsed into an integer\r\n"},

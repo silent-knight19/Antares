@@ -35,6 +35,7 @@ type Value struct {
 	Set       [][]byte
 	SetIndex  map[string]int
 	Lru       uint32
+	Usage     Usage
 }
 
 // LRU clock: 24 bits of seconds, as in Redis. It wraps every ~194 days, and the
@@ -64,6 +65,7 @@ type Store struct {
 	scanSeed    maphash.Seed
 	expiredKeys uint64
 	mutations   uint64
+	usage       Usage
 }
 
 func New() *Store { return NewWithClock(clock.Real{}) }
@@ -129,6 +131,7 @@ func (s *Store) Copy() *Store {
 	cp := NewWithClock(s.clock)
 	cp.expiredKeys = s.expiredKeys
 	cp.mutations = s.mutations
+	cp.usage = s.usage
 	for key, value := range s.data {
 		cp.data[key] = cloneValue(value)
 	}
@@ -144,6 +147,7 @@ func cloneValue(v Value) Value {
 		Str:      bytes.Clone(v.Str),
 		ListHead: v.ListHead,
 		Lru:      v.Lru,
+		Usage:    v.Usage,
 	}
 	if v.List != nil {
 		out.List = make([][]byte, len(v.List))
@@ -183,16 +187,35 @@ func (s *Store) Type(key string) string {
 
 // Set stores value under key and clears any previous expiry.
 func (s *Store) Set(key string, value []byte) {
-	s.data[key] = Value{Kind: KindString, Str: value, Lru: s.lruClock()}
+	v := Value{Kind: KindString, Str: value, Lru: s.lruClock()}
+	s.storeValue(key, v)
 	delete(s.expires, key)
 	s.mutations++
 }
 
 // SetWithTTL stores value under key with an absolute Unix-millisecond expiry.
 func (s *Store) SetWithTTL(key string, value []byte, expiresAtMs int64) {
-	s.data[key] = Value{Kind: KindString, Str: value, Lru: s.lruClock()}
+	v := Value{Kind: KindString, Str: value, Lru: s.lruClock()}
+	s.storeValue(key, v)
 	s.expires[key] = expiresAtMs
 	s.mutations++
+}
+
+// storeValue replaces key's value and updates the incremental memory total.
+func (s *Store) storeValue(key string, value Value) {
+	s.removeValue(key)
+	value.Usage = usageOf(key, value)
+	s.data[key] = value
+	s.usage.Total += value.Usage.Total
+	s.usage.Dataset += value.Usage.Dataset
+}
+
+// removeValue subtracts key's accounted bytes without touching the maps.
+func (s *Store) removeValue(key string) {
+	if old, ok := s.data[key]; ok {
+		s.usage.Total -= old.Usage.Total
+		s.usage.Dataset -= old.Usage.Dataset
+	}
 }
 
 // SetPreservingTTL overwrites key without changing its expiry. Callers must
@@ -208,7 +231,7 @@ func (s *Store) SetPreservingTTL(key string, value Value) {
 	// Stamp the access clock here so a freshly created value never reads as
 	// maximally idle (handlers build Value literals with Lru unset).
 	value.Lru = s.lruClock()
-	s.data[key] = value
+	s.storeValue(key, value)
 	s.mutations++
 }
 
@@ -233,6 +256,7 @@ func (s *Store) Delete(key string) bool {
 	if _, ok := s.live(key); !ok {
 		return false
 	}
+	s.removeValue(key)
 	delete(s.data, key)
 	delete(s.expires, key)
 	s.mutations++
@@ -245,11 +269,13 @@ func (s *Store) Delete(key string) bool {
 func (s *Store) Rename(src, dst string) {
 	value := s.data[src]
 	expiresAt, hasExpiry := s.expires[src]
+	s.removeValue(src)
+	s.removeValue(dst)
 	delete(s.data, src)
 	delete(s.expires, src)
 	delete(s.data, dst)
 	delete(s.expires, dst)
-	s.data[dst] = value
+	s.storeValue(dst, value)
 	if hasExpiry {
 		s.expires[dst] = expiresAt
 	}
@@ -304,6 +330,7 @@ func (s *Store) RandomKey() (string, bool) {
 func (s *Store) Flush() {
 	clear(s.data)
 	clear(s.expires)
+	s.usage = Usage{}
 	s.mutations++
 }
 
@@ -319,6 +346,7 @@ func (s *Store) ExpireSample(nowMs int64, limit int) (expired, sampled int) {
 		}
 		sampled++
 		if nowMs > at {
+			s.removeValue(key)
 			delete(s.data, key)
 			delete(s.expires, key)
 			s.expiredKeys++
@@ -384,6 +412,7 @@ func (s *Store) live(key string) (Value, bool) {
 		return Value{}, false
 	}
 	if at, ok := s.expires[key]; ok && s.NowMs() > at {
+		s.removeValue(key)
 		delete(s.data, key)
 		delete(s.expires, key)
 		s.expiredKeys++

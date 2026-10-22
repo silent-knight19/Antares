@@ -72,22 +72,26 @@ func RecoverAOFRepair(path string, st *store.Store, repair bool) (persist.Recove
 
 	return persist.RecoverFile(path, repair, func(payload []byte) error {
 		br := bufio.NewReader(bytes.NewReader(payload))
-		req, err := protocol.ReadRequest(br)
-		if err != nil {
-			return err
+		for first := true; ; first = false {
+			req, err := protocol.ReadRequest(br)
+			if errors.Is(err, io.EOF) {
+				if first {
+					return errors.New("empty command")
+				}
+				return nil
+			}
+			if err != nil {
+				return err
+			}
+			if len(req) == 0 {
+				return errors.New("empty command")
+			}
+			enc.Reset()
+			reg.Dispatch(req, enc)
+			if bytes.HasPrefix(enc.Bytes(), []byte("-")) {
+				return fmt.Errorf("command %q failed: %s", req[0], strings.TrimSpace(string(enc.Bytes()[1:])))
+			}
 		}
-		if len(req) == 0 {
-			return errors.New("empty command")
-		}
-		if _, err := br.ReadByte(); !errors.Is(err, io.EOF) {
-			return errors.New("trailing bytes after AOF command")
-		}
-		enc.Reset()
-		reg.Dispatch(req, enc)
-		if bytes.HasPrefix(enc.Bytes(), []byte("-")) {
-			return fmt.Errorf("command %q failed: %s", req[0], strings.TrimSpace(string(enc.Bytes()[1:])))
-		}
-		return nil
 	})
 }
 
@@ -134,21 +138,30 @@ func (e *Executor) captureSpopBefore(req protocol.Request) map[string]struct{} {
 // propagate appends the command's effects when the store's mutation counter
 // moved, then opportunistically compacts. Raw commands are safe to replay;
 // random, relative-time, and precision-sensitive ones are rewritten to a
-// deterministic effect.
-func (e *Executor) propagate(req protocol.Request, mutations uint64, spopBefore map[string]struct{}) {
+// deterministic effect. All effects share one frame so replay sees them
+// atomically.
+func (e *Executor) propagate(req protocol.Request, mutations uint64, spopBefore map[string]struct{}) error {
 	if e.aof == nil || len(req) == 0 || e.store.Mutations() == mutations {
-		return
+		return nil
 	}
-	for _, args := range e.aofEffect(req, spopBefore) {
-		if err := e.aof.Append(persist.EncodeCommand(args...)); err != nil {
-			slog.Error("AOF append failed", "command", string(req[0]), "err", err)
-		}
+	effects := e.aofEffect(req, spopBefore)
+	if len(effects) == 0 {
+		return nil
+	}
+	var payload []byte
+	for _, args := range effects {
+		payload = append(payload, persist.EncodeCommand(args...)...)
+	}
+	if err := e.aof.Append(payload); err != nil {
+		slog.Error("AOF append failed", "command", string(req[0]), "err", err)
+		return err
 	}
 	if e.aof.ShouldRewrite() {
 		if err := e.startRewrite(); err != nil && !errors.Is(err, errRewriteInProgress) {
 			slog.Error("AOF automatic rewrite failed", "err", err)
 		}
 	}
+	return nil
 }
 
 func (e *Executor) aofEffect(req protocol.Request, spopBefore map[string]struct{}) [][][]byte {

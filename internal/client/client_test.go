@@ -110,3 +110,36 @@ func TestClientReportsClosedConnection(t *testing.T) {
 		t.Fatal("command after close succeeded")
 	}
 }
+
+func TestClientPipeline(t *testing.T) {
+	addr := startServer(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	c, err := client.Dial(ctx, addr)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	t.Cleanup(func() { _ = c.Close() })
+
+	replies, err := c.Pipeline(ctx,
+		[][]byte{[]byte("PING")},
+		[][]byte{[]byte("SET"), []byte("k"), []byte("v")},
+		[][]byte{[]byte("GET"), []byte("k")},
+	)
+	if err != nil {
+		t.Fatalf("Pipeline: %v", err)
+	}
+	if len(replies) != 3 {
+		t.Fatalf("pipeline replies = %d, want 3", len(replies))
+	}
+	if replies[0].Kind != client.KindSimple || replies[0].Text != "PONG" {
+		t.Fatalf("PING reply = %+v", replies[0])
+	}
+	if replies[1].Kind != client.KindSimple || replies[1].Text != "OK" {
+		t.Fatalf("SET reply = %+v", replies[1])
+	}
+	if replies[2].Kind != client.KindBulk || replies[2].Text != "v" {
+		t.Fatalf("GET reply = %+v", replies[2])
+	}
+}
