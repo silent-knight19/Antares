@@ -29,9 +29,8 @@ type FullResyncSession struct {
 // Must be called under the executor goroutine or when executor is paused.
 func (e *Executor) PrepareFullResync() *FullResyncSession {
 	snap := e.store.Copy()
-	snapOffset := e.repl.MasterReplOffset()
-	syncBuf := repl.NewSyncBuffer(0) // Default 64 MiB limit (ADR-010)
-	e.repl.RegisterSyncBuffer(syncBuf)
+	syncBuf := repl.NewSyncBuffer(e.repl.SyncBufferLimit())
+	snapOffset := e.repl.RegisterSyncBufferWithOffset(syncBuf)
 
 	return &FullResyncSession{
 		MasterReplID:   e.repl.MasterReplID(),
@@ -45,9 +44,8 @@ func (e *Executor) PrepareFullResync() *FullResyncSession {
 // PrepareFullResyncWithCap is PrepareFullResync with a custom buffer limit for tests.
 func (e *Executor) PrepareFullResyncWithCap(maxBytes int64) *FullResyncSession {
 	snap := e.store.Copy()
-	snapOffset := e.repl.MasterReplOffset()
 	syncBuf := repl.NewSyncBuffer(maxBytes)
-	e.repl.RegisterSyncBuffer(syncBuf)
+	snapOffset := e.repl.RegisterSyncBufferWithOffset(syncBuf)
 
 	return &FullResyncSession{
 		MasterReplID:   e.repl.MasterReplID(),
@@ -63,7 +61,13 @@ func (e *Executor) PrepareFullResyncWithCap(maxBytes int64) *FullResyncSession {
 // It unregisters the SyncBuffer when done.
 func (s *FullResyncSession) Stream(w io.Writer) error {
 	defer s.repl.UnregisterSyncBuffer(s.SyncBuffer)
+	return s.StreamOpen(w)
+}
 
+// StreamOpen writes +FULLRESYNC, the snapshot, and the mutations buffered
+// during snapshot streaming, but keeps the SyncBuffer registered so the caller
+// can continue streaming live writes through it (S2.2).
+func (s *FullResyncSession) StreamOpen(w io.Writer) error {
 	bw := bufio.NewWriterSize(w, 64<<10)
 
 	// 1. Emit +FULLRESYNC <replid> <offset>\r\n
@@ -78,6 +82,7 @@ func (s *FullResyncSession) Stream(w io.Writer) error {
 	if _, err := repl.WriteSnapshotStream(bw, s.Snapshot, ""); err != nil {
 		return err
 	}
+	s.Snapshot = nil
 	if err := bw.Flush(); err != nil {
 		return err
 	}

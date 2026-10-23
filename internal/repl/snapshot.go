@@ -144,6 +144,9 @@ func ReadSnapshotStream(r io.Reader, apply func(payload []byte) error) error {
 	if report.Corrupt {
 		return fmt.Errorf("snapshot stream corrupt: %s", report.Reason)
 	}
+	if report.Truncated {
+		return fmt.Errorf("snapshot stream truncated: %s", report.Reason)
+	}
 	return nil
 }
 

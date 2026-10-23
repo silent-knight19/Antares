@@ -754,3 +754,103 @@
 
 
 
+
+### 2026-10-23 — S2.1: PSYNC +CONTINUE/+FULLRESYNC Decision Logic
+
+- Built:
+  - `internal/repl/repl.go`: added `CanPartialResyncWithID(reqReplID, reqOffset)` — one locked decision point that requires the requested replid to match `master_replid` (rejecting empty and `?`) and delegates the offset to the existing backlog window math.
+  - `internal/server/replication_commands.go`: `PSYNC` now parses the offset first and replies `+CONTINUE <replid>` or `+FULLRESYNC <replid> <offset>` exclusively through that decision point; malformed offsets and every failed match fall back to full resync.
+  - `internal/server/replication_commands_test.go`: table-driven `TestPSyncDecisionPath` pinning eleven decision paths against a wrapped 1 MB backlog: lower window boundary, inside window, caught up, window-edge-minus-one, before window, ahead of master, negative offset, fresh replica (`?`), wrong replid, empty replid, and malformed offset.
+- Findings:
+  - The meaningful lower boundary is `first_byte_offset - 1`: the replica's next needed byte is exactly the first retained byte. `first_byte_offset - 2` is the first offset that forces a full resync. The initial test asserted the wrong boundary and the table caught it.
+- Files touched: `internal/repl/repl.go`, `internal/server/replication_commands.go`, `internal/server/replication_commands_test.go`, `docs/PLAN.md`, `docs/PROJECT_LOG.md`.
+- ADRs written: none (implements ADR-007, PLAN §5 S2.1).
+- Exit evidence:
+  - `go test -race ./internal/repl/... ./internal/server/...` green, including `TestPSyncDecisionPath` and the pre-existing `TestReplconfAndPsyncCommands`.
+  - `gofmt -l` clean on touched Go files.
+- Next session first task: S2.2 — reconnect with partial resync after link break; prove `+CONTINUE` and offset continuity with no data gap.
+
+### 2026-10-23 — S2.2: Partial Resync on Reconnect and Offset Continuity
+
+- Built:
+  - `internal/repl/buffer.go`: `SyncBuffer` now signals appends through a buffered `Wait()` channel and closes a `Done()` channel exactly once, so a live stream pump can block without polling.
+  - `internal/repl/repl.go`: `StartPartialResync` atomically captures the backlog tail after the replica's offset and registers the live write buffer under the same state lock, eliminating the gap between catch-up bytes and ongoing writes. Added `PSyncArgs` (replica asks `? -1` until the first successful sync, then sends its stored replid and `slave_repl_offset`) and a `masterReplIDSet` flag.
+  - `internal/server/replica_stream.go`: master-side streaming. Partial resync writes `+CONTINUE <replid>` plus the backlog slice, then pumps live mutations; full resync streams `+FULLRESYNC`, the snapshot, and mutations buffered during the snapshot, then pumps live writes. Write deadlines bound every chunk and connection-close hooks unregister/close the buffer.
+  - `internal/server/replication_commands.go`: `PSYNC` now starts real streamed sessions on live connections; replicas reconnect automatically every 100 ms with the stored replid/offset, fall back to full resync when the window is lost, replay snapshots through the executor, and flush stale replica keys before a full snapshot. Fixed the handshake reader handoff: the `TrackedReader` now wraps `res.Reader`, so snapshot/backlog bytes already buffered during the `+FULLRESYNC`/`+CONTINUE` line read are not discarded.
+  - `internal/server/transactions.go` + `server.go`: `ConnState` carries the raw connection, a streaming flag (server stops writing ordinary replies once a stream starts), and mutex-protected, once-only close hooks.
+  - `internal/metrics/stats.go` + `internal/server/info_commands.go`: live `sync_full` and `sync_partial_ok` counters in `INFO stats`.
+  - `internal/server/reconnect_test.go`: TCP cut-proxy kill-link test. Initial full resync, cut every live connection, write two keys on the master while disconnected, then assert the replica catches up, `sync_full` stayed at 1, `sync_partial_ok` advanced, and replica/master offsets match.
+- Findings:
+  - `PerformHandshake` reads the PSYNC reply through its own `bufio.Reader`; any snapshot or backlog bytes read ahead stay in that buffer. Creating a new reader on the raw socket silently dropped them. Wrapping `res.Reader` fixes both full and partial paths.
+  - A reconnect can legitimately fall back to `+FULLRESYNC` when the backlog window is gone; replaying a snapshot without clearing the replica left deleted keys alive. The replica now flushes before applying a full snapshot.
+  - The live stream needs an atomic backlog-slice + buffer-registration step; doing them separately lets a mutation land between the slice and registration and vanish.
+- Files touched: `internal/repl/{repl.go,buffer.go}`, `internal/server/{replica_stream.go,replication_commands.go,transactions.go,server.go,resync.go,info_commands.go,reconnect_test.go}`, `internal/metrics/stats.go`, `docs/{PLAN.md,PROJECT_LOG.md,COMPATIBILITY.md,FILE_MANIFEST.md}`, `README.md`.
+- ADRs written: none (implements ADR-007, ADR-009, ADR-010, ADR-017, PLAN §5 S2.2).
+- Exit evidence:
+  - `TestReplicaReconnectUsesPartialResync` passes under `-race` (10 consecutive runs): cut link → automatic reconnect → `+CONTINUE` → both gap keys present → `sync_full=1`, `sync_partial_ok>=1`, replica offset equals master offset.
+  - `TestApplySnapshotStreamClearsStaleKeys` proves a full-resync fallback flushes the replica before replaying the snapshot.
+  - `go test ./...` green; `go test -race ./internal/server/... ./internal/repl/...` green; `go vet ./...`, `gofmt -l`, and `make clock-check` clean.
+- Next session first task: S2.3 — slow-replica protection: output buffer caps, disconnect policy, and proof the master never blocks.
+
+### 2026-10-23 — S2.3: Slow-Replica Protection
+
+- Built:
+  - `internal/repl/buffer.go`: an overflow now wakes a waiting stream pump; a single command larger than the cap can no longer leave the pump asleep while the buffer is already dropped.
+  - `internal/repl/repl.go`: `SetSyncBufferLimit`/`SyncBufferLimit` give the state one per-replica output cap (default 64 MiB), used by both partial-resync and full-resync buffers.
+  - `internal/server/resync.go`: full-resync buffers take the configured cap instead of a hardcoded default.
+  - `internal/server/replica_stream.go`: snapshot writes now go through `deadlineWriter`, applying the same 5 s write deadline as live chunks. A stalled replica is disconnected instead of pinning a stream goroutine.
+  - `internal/server/replica_stream_test.go`: overflow pump disconnect, 200 master writes completing while a replica is stalled, and stalled full-resync disconnect via a shortened write deadline.
+  - `internal/repl/buffer_test.go`: oversized append notifies a waiting pump.
+- Findings:
+  - Overflow previously returned without signaling `Wait()`; a command bigger than the buffer cap would set overflow but never wake the pump, leaving the replica connected but permanently stale. The wake-up is now sent on every overflow path.
+  - The full-resync snapshot path had no write deadline. A replica that stopped reading could pin the stream goroutine and its snapshot memory indefinitely. The deadline writer closes that hole.
+- Files touched: `internal/repl/{buffer.go,buffer_test.go,repl.go}`, `internal/server/{replica_stream.go,replica_stream_test.go,resync.go}`, `docs/{PLAN.md,PROJECT_LOG.md,COMPATIBILITY.md,FILE_MANIFEST.md}`, `README.md`.
+- ADRs written: none (implements ADR-010, PLAN §5 S2.3).
+- Exit evidence:
+  - `TestSlowReplicaDoesNotBlockMaster`: PSYNC starts a full-resync stream to a `net.Pipe` nobody reads; 200 `SET` commands complete within 2 s, proving the executor never waits on the replica socket.
+  - `TestSlowFullResyncDisconnectsOnWriteTimeout`: with the write deadline shortened to 50 ms, a stalled full-resync connection is closed and its sync buffer unregistered.
+  - `TestPumpReplicaStreamDisconnectsOnOverflow` and `TestSyncBufferOverflowNotifiesPump` cover the cap and wake-up paths.
+  - `go test ./...`, `go test -race ./internal/server/... ./internal/repl/...`, `go vet ./...`, `gofmt -l`, and `make clock-check` all clean.
+- Next session first task: S2.4 — chaos suite: 50× kill replica mid-stream, split-brain simulation, and post-reconnect equality fuzz.
+
+### 2026-10-23 — S2.4: Replication Chaos and Split-Brain Safety
+
+- Built:
+  - `internal/repl/repl.go`: `PromoteToMaster` now starts a new replication history. It keeps the old replid as `master_replid2`, generates a fresh 40-hex replid, and resets the backlog and offsets to 0 so the promoted node is internally consistent. Promotion of a node that is already master is a no-op.
+  - `internal/repl/repl_test.go`: `TestPromotionShiftsReplicationHistory` pins the replid shift, `master_replid2`, `second_repl_offset`, offset reset, and the no-op case.
+  - `internal/server/replication_chaos_test.go`: `TestReplicaChaos50Kills` cuts the link 50 times mid-stream while writing deterministic pseudo-random payload lengths, then proves the full dataset (MGET over every key) and offsets match after every reconnect, with `sync_full=1` and `sync_partial_ok>=50`. `TestSplitBrainPromotionForcesFullResync` promotes a disconnected replica, writes divergent data on both sides, reconnects it, and proves the divergent key is gone, the master's values win, and the promoted replica adopts the master replid after a second full resync.
+- Findings:
+  - Before this change, promotion left the replica holding its old master's replid. Reconnecting to that master would match the replid and fall inside the backlog window, so the master would answer `+CONTINUE` and replay only the gap, silently preserving divergent split-brain writes. Shifting the replid on promotion makes the reconnect a `+FULLRESYNC`, whose pre-snapshot `FLUSHALL` discards the divergence.
+  - Resetting the promoted node's stream offset and backlog keeps snapshots, offsets, and the new history aligned. Redis instead continues its offset and can serve the old replid through `second_repl_offset`; the safer, simpler behavior is documented as a divergence in `COMPATIBILITY.md`.
+- Files touched: `internal/repl/{repl.go,repl_test.go}`, `internal/server/replication_chaos_test.go`, `docs/{PLAN.md,PROJECT_LOG.md,COMPATIBILITY.md,FILE_MANIFEST.md}`, `README.md`.
+- ADRs written: none (implements ADR-007, PLAN §5 S2.4).
+- Exit evidence:
+  - `TestReplicaChaos50Kills` passes under `-race` in ~5 s: 50 link cuts, full MGET equality and offset parity after each reconnect, exactly one full resync.
+  - `TestSplitBrainPromotionForcesFullResync` passes: `sync_full=2`, `sync_partial_ok=0`, divergent key removed, replid adopted.
+  - `go test ./...`, `go test -race ./internal/server/... ./internal/repl/...`, `go vet ./...`, `gofmt -l`, and `make clock-check` clean.
+
+### 2026-10-23 — S2 Review Follow-up: Correctness and Liveness Hardening
+
+- Built:
+  - `internal/repl/repl.go`: sync epochs (`BeginSync`, `SyncGeneration`, `BeginFullResync`, guarded `SetMasterReplIDForSync`/`SetSlaveReplOffsetForSync`/`SetLinkStatusForSync`) so canceled or superseded loops cannot overwrite newer state or a promotion; `PromoteToMaster` now checks the role instead of an empty master host; `FeedReplicationPing` injects a keepalive only while a replica or sync buffer exists; full-resync offset capture and buffer registration are atomic so a PING cannot leave the replica permanently behind.
+  - `internal/server/replication_commands.go`: a failed full resync invalidates the resume point before `FLUSHALL`; reconnect waits for the previous sync to exit, uses 100 ms→2 s backoff that resets after a link is up, and rejects a second concurrent full resync with `ERR full resync already in progress`.
+  - `internal/server/executor.go` + `apply.go`: context-aware `HandleContext`/`HandleReplicated`; replica offsets advance only after a command applies successfully; a failed apply invalidates the sync and forces a full resync; a 30 s read deadline detects a silent master; the master PINGs every 10 s while replicas exist; full-resync streams are capped at one.
+  - `internal/server/resync.go` + `replica_stream.go`: snapshot copies are released after streaming, and full-resync slots are released on every exit path.
+  - `internal/repl/snapshot.go`: truncated snapshot streams are rejected instead of being accepted as a clean prefix.
+  - Tests: epoch/promotion/PING gating in `repl_test.go`; failed-resync invalidation and snapshot release in `resync_test.go`; timeout and failed-apply offset safety in `apply_test.go`; concurrency/slot tests in `replica_stream_test.go`; idle-master PING in `reconnect_test.go`; truncated-stream rejection in `snapshot_test.go`; chaos cuts now include deletes, overwrites, 32 KB values, and exact `DBSIZE`.
+- Findings:
+  - A canceled full resync could leave the old replid/offset in place after `FLUSHALL`; the next reconnect could then `+CONTINUE` against a flushed dataset. Invalidation now happens before the flush.
+  - A queued apply could run after promotion because cancellation was only checked before enqueue; `HandleContext` now drops it, and epoch guards reject stale state writes.
+  - The replica advanced its offset before knowing whether a command applied; a rejected write could move it past an unapplied command. The executor now advances only on a non-error reply.
+  - A silent master left the replica blocked forever; the 30 s read deadline and 10 s master PING keepalive close that hole.
+  - The reconnect loop had no backoff, and the first version reset only after a 2 s sleep; the chaos suite took ~94 s. Resetting on `LinkStatusUp` brings it to ~6 s.
+  - A truncated EOF-framed snapshot was treated as a valid prefix because only checksum/length corruption was rejected. `ReadSnapshotStream` now rejects any truncated report.
+  - Keepalive PINGs run outside the executor, so a PING could land between the snapshot offset capture and sync-buffer registration. `RegisterSyncBufferWithOffset` now captures both under one state lock.
+- Files touched: `internal/repl/{repl.go,repl_test.go,snapshot.go,snapshot_test.go}`, `internal/server/{executor.go,apply.go,apply_test.go,replication_commands.go,resync.go,resync_test.go,replica_stream.go,replica_stream_test.go,reconnect_test.go,replication_chaos_test.go}`, `docs/{PLAN.md,PROJECT_LOG.md,COMPATIBILITY.md,FILE_MANIFEST.md}`, `README.md`.
+- ADRs written: none (hardens ADR-007/009/010 and PLAN §5 S2).
+- Exit evidence:
+  - `go test ./...` green (`internal/server` ~9 s).
+  - `go test -race ./...` green.
+  - `go vet ./...`, `gofmt -l internal cmd`, and `make clock-check` clean.
+  - `TestReplicaChaos50Kills` runs in ~6 s with delete/overwrite/large-value cuts and exact `DBSIZE` parity; `TestMasterPingsIdleReplica`, `TestReplicaApplyLoopTimesOutSilentMaster`, `TestFailedFullResyncInvalidatesPSyncState`, `TestReplicaApplyFailureDoesNotAdvanceOffset`, `TestFullResyncConcurrencyLimit`, `TestFullResyncSlotReleasedOnStreamFailure`, `TestSnapshotStreamRejectsTruncated`, `TestNextReplicaReconnectDelay`, and `TestRegisterSyncBufferCapturesOffsetAtomically` pin the new behavior.
+- Next session first task: S3.1 (optional, timeboxed Porcupine linearizability check) or S3.2 (replication benchmarks).

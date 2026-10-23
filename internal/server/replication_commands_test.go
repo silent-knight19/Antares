@@ -1,6 +1,8 @@
 package server
 
 import (
+	"bytes"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -170,5 +172,46 @@ func TestReplconfAndPsyncCommands(t *testing.T) {
 	gotMalformed := runStrings(exec, "PSYNC", replID, "not-a-number")
 	if gotMalformed != wantPrefix {
 		t.Fatalf("PSYNC malformed = %q, want %q", gotMalformed, wantPrefix)
+	}
+}
+
+func TestPSyncDecisionPath(t *testing.T) {
+	exec := NewExecutor(nil, nil)
+	defer exec.Close()
+
+	replID := exec.Repl().MasterReplID()
+	backlogSize := exec.Repl().Backlog().Size()
+	exec.Repl().FeedBacklog(bytes.Repeat([]byte("x"), int(backlogSize)+10))
+
+	current := exec.Repl().MasterReplOffset()
+	firstByte := current - backlogSize + 1
+	fullResync := fmt.Sprintf("+FULLRESYNC %s %d\r\n", replID, current)
+	continueReply := "+CONTINUE " + replID + "\r\n"
+
+	tests := []struct {
+		name   string
+		replID string
+		offset string
+		want   string
+	}{
+		{"window lower boundary", replID, fmt.Sprint(firstByte), continueReply},
+		{"inside window", replID, fmt.Sprint(firstByte + 1), continueReply},
+		{"caught up with master", replID, fmt.Sprint(current), continueReply},
+		{"before window", replID, fmt.Sprint(firstByte - 2), fullResync},
+		{"window edge minus one", replID, fmt.Sprint(firstByte - 1), continueReply},
+		{"ahead of master", replID, fmt.Sprint(current + 1), fullResync},
+		{"negative offset", replID, "-1", fullResync},
+		{"fresh replica", "?", "-1", fullResync},
+		{"wrong replid", replID + "0", fmt.Sprint(firstByte), fullResync},
+		{"empty replid", "", fmt.Sprint(firstByte), fullResync},
+		{"malformed offset", replID, "not-a-number", fullResync},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := runStrings(exec, "PSYNC", tt.replID, tt.offset); got != tt.want {
+				t.Fatalf("PSYNC %q %q = %q, want %q", tt.replID, tt.offset, got, tt.want)
+			}
+		})
 	}
 }

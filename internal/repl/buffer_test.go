@@ -6,6 +6,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func TestSyncBufferAppendAndDrain(t *testing.T) {
@@ -171,5 +172,19 @@ func TestSyncBufferConcurrent(t *testing.T) {
 
 	if drainedTotal.Load() != wantTotal {
 		t.Fatalf("drained total = %d, want %d", drainedTotal.Load(), wantTotal)
+	}
+}
+
+// TestSyncBufferOverflowNotifiesPump ensures a single oversized write wakes a
+// waiting stream so it can disconnect the slow replica (S2.3).
+func TestSyncBufferOverflowNotifiesPump(t *testing.T) {
+	buf := NewSyncBuffer(8)
+	if err := buf.Append([]byte("0123456789")); !errors.Is(err, ErrSyncBufferOverflow) {
+		t.Fatalf("append = %v, want ErrSyncBufferOverflow", err)
+	}
+	select {
+	case <-buf.Wait():
+	case <-time.After(time.Second):
+		t.Fatal("overflow did not notify a waiting pump")
 	}
 }

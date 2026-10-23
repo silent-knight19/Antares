@@ -241,8 +241,10 @@ func (s *Server) serveConn(conn net.Conn) {
 	}
 
 	connState := &ConnState{
+		conn:       conn,
 		remoteIP:   remoteIP,
 		remotePort: remotePort,
+		flush:      bw.Flush,
 	}
 	defer connState.Close()
 
@@ -252,7 +254,7 @@ func (s *Server) serveConn(conn net.Conn) {
 			// Protocol errors get Redis's reply before the close; I/O errors
 			// (EOF, idle timeout, reset) close silently, as Redis does.
 			var pe *protocol.ProtocolError
-			if errors.As(err, &pe) {
+			if errors.As(err, &pe) && !connState.streaming {
 				enc.Reset()
 				enc.Error(protocol.ProtocolErrorReply(pe.Msg))
 				bw.Write(enc.Bytes())
@@ -263,7 +265,9 @@ func (s *Server) serveConn(conn net.Conn) {
 		if s.handler != nil {
 			enc.Reset()
 			s.handler(req, enc, connState)
-			bw.Write(enc.Bytes())
+			if !connState.streaming {
+				bw.Write(enc.Bytes())
+			}
 		}
 		// No explicit flush here: connIO.Read flushes pending replies right
 		// before the parser blocks on the socket, so a burst of fully

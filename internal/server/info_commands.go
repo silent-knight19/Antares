@@ -294,8 +294,10 @@ func (e *Executor) statsInfo(b *strings.Builder) {
 	field(b, "total_net_output_bytes", strconv.FormatUint(e.stats.NetOut.Load(), 10))
 	field(b, "instantaneous_input_kbps", "0.00")
 	field(b, "instantaneous_output_kbps", "0.00")
+	field(b, "sync_full", strconv.FormatUint(e.stats.SyncFull.Load(), 10))
+	field(b, "sync_partial_ok", strconv.FormatUint(e.stats.SyncPartialOK.Load(), 10))
 	for _, name := range []string{
-		"rejected_connections", "sync_full", "sync_partial_ok", "sync_partial_err",
+		"rejected_connections", "sync_partial_err",
 		"expired_stale_perc", "expired_time_cap_reached_count",
 		"expire_cycle_cpu_milliseconds", "keyspace_hits",
 		"keyspace_misses", "pubsub_channels", "pubsub_patterns", "latest_fork_usec",

@@ -2,6 +2,8 @@ package server
 
 import (
 	"bufio"
+	"bytes"
+	"context"
 	"errors"
 	"io"
 	"strings"
@@ -265,4 +267,86 @@ func TestReplicaDatasetEqualityConcurrentFuzz(t *testing.T) {
 	}
 
 	assertStoresEqual(t, masterStore, replicaStore)
+}
+
+// TestApplySnapshotStreamClearsStaleKeys guards the reconnect fallback: a full
+// resync must replace the replica dataset, not merge into it (S2.2).
+func TestApplySnapshotStreamClearsStaleKeys(t *testing.T) {
+	clk := clock.NewFake(time.UnixMilli(1_000_000))
+	masterStore := store.NewWithClock(clk)
+	masterExec := NewExecutorWithClock(masterStore, nil, clk)
+	defer masterExec.Close()
+
+	if got := runStrings(masterExec, "SET", "fresh", "value"); got != "+OK\r\n" {
+		t.Fatalf("master SET fresh = %q", got)
+	}
+
+	var snapshot bytes.Buffer
+	if _, err := repl.WriteSnapshotStream(&snapshot, masterStore, ""); err != nil {
+		t.Fatalf("WriteSnapshotStream: %v", err)
+	}
+
+	replicaExec := NewExecutorWithClock(store.NewWithClock(clk), nil, clk)
+	defer replicaExec.Close()
+	if got := runStrings(replicaExec, "SET", "stale", "old"); got != "+OK\r\n" {
+		t.Fatalf("replica SET stale = %q", got)
+	}
+
+	tr := repl.NewTrackedReader(bytes.NewReader(snapshot.Bytes()), 64<<10)
+	if err := replicaExec.applySnapshotStream(context.Background(), nil, tr, replicaExec.Repl().BeginSync()); err != nil {
+		t.Fatalf("applySnapshotStream: %v", err)
+	}
+
+	if got := runStrings(replicaExec, "GET", "stale"); got != "$-1\r\n" {
+		t.Fatalf("stale key survived full resync: %q", got)
+	}
+	if got := runStrings(replicaExec, "GET", "fresh"); got != "$5\r\nvalue\r\n" {
+		t.Fatalf("fresh key missing after full resync: %q", got)
+	}
+}
+
+func TestFailedFullResyncInvalidatesPSyncState(t *testing.T) {
+	clk := clock.NewFake(time.UnixMilli(1_000_000))
+	masterStore := store.NewWithClock(clk)
+	masterExec := NewExecutorWithClock(masterStore, nil, clk)
+	defer masterExec.Close()
+	if got := runStrings(masterExec, "SET", "key", "value"); got != "+OK\r\n" {
+		t.Fatalf("master SET = %q", got)
+	}
+	var snapshot bytes.Buffer
+	if _, err := repl.WriteSnapshotStream(&snapshot, masterStore, ""); err != nil {
+		t.Fatalf("WriteSnapshotStream: %v", err)
+	}
+	raw := snapshot.Bytes()
+	truncated := raw[:len(raw)-1]
+
+	replicaExec := NewExecutorWithClock(store.NewWithClock(clk), nil, clk)
+	defer replicaExec.Close()
+	replicaExec.Repl().SetMaster("127.0.0.1", 6379)
+	replicaExec.Repl().SetMasterReplID("oldmaster")
+	replicaExec.Repl().SetSlaveReplOffset(42)
+
+	gen := replicaExec.Repl().BeginSync()
+	tr := repl.NewTrackedReader(bytes.NewReader(truncated), 64<<10)
+	if err := replicaExec.applySnapshotStream(context.Background(), nil, tr, gen); err == nil {
+		t.Fatal("truncated snapshot was accepted")
+	}
+	if id, off := replicaExec.Repl().PSyncArgs(); id != "?" || off != -1 {
+		t.Fatalf("PSyncArgs after failed full resync = %q %d, want ? -1", id, off)
+	}
+}
+
+func TestStreamOpenReleasesSnapshot(t *testing.T) {
+	exec := NewExecutor(nil, nil)
+	defer exec.Close()
+	session := exec.PrepareFullResync()
+	if session.Snapshot == nil {
+		t.Fatal("snapshot was not captured")
+	}
+	if err := session.Stream(io.Discard); err != nil {
+		t.Fatalf("Stream: %v", err)
+	}
+	if session.Snapshot != nil {
+		t.Fatal("snapshot retained after streaming")
+	}
 }

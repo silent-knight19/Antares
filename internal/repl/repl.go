@@ -3,6 +3,7 @@
 package repl
 
 import (
+	"crypto/rand"
 	"fmt"
 	"strings"
 	"sync"
@@ -33,6 +34,10 @@ const (
 // DefaultBacklogSize is the 1MB replication backlog size specified in PLAN §5.
 const DefaultBacklogSize = 1048576
 
+// replicationPing is the keepalive command masters inject into the replication
+// stream so replicas can detect a silent link.
+var replicationPing = []byte("*1\r\n$4\r\nPING\r\n")
+
 // State tracks replication role, master/replica offsets, and link state.
 type State struct {
 	mu sync.RWMutex
@@ -44,6 +49,7 @@ type State struct {
 
 	masterReplID     string
 	masterReplID2    string
+	masterReplIDSet  bool
 	masterReplOffset int64
 	secondReplOffset int64
 
@@ -57,11 +63,13 @@ type State struct {
 	nextSlaveID     uint64
 	lastIO          time.Time
 	syncInProgress  bool
+	syncEpoch       uint64
 
-	backlogActive bool
-	backlogSize   int64
-	backlog       *Backlog
-	syncBuffers   map[*SyncBuffer]struct{}
+	backlogActive   bool
+	backlogSize     int64
+	backlog         *Backlog
+	syncBuffers     map[*SyncBuffer]struct{}
+	syncBufferLimit int64
 
 	clock clock.Clock
 }
@@ -101,6 +109,7 @@ func NewState(replID string, clk clock.Clock) *State {
 		backlogSize:      DefaultBacklogSize,
 		backlog:          b,
 		syncBuffers:      make(map[*SyncBuffer]struct{}),
+		syncBufferLimit:  DefaultSyncBufferCap,
 		clock:            clk,
 	}
 }
@@ -118,7 +127,22 @@ func (s *State) Backlog() *Backlog {
 func (s *State) FeedBacklog(p []byte) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.feedBacklogLocked(p)
+}
 
+// FeedReplicationPing appends a keepalive PING when at least one replica is
+// connected or syncing. It returns false when there was nothing to feed.
+func (s *State) FeedReplicationPing() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.slaves) == 0 && len(s.syncBuffers) == 0 {
+		return false
+	}
+	s.feedBacklogLocked(replicationPing)
+	return true
+}
+
+func (s *State) feedBacklogLocked(p []byte) {
 	if s.backlog == nil {
 		s.backlog = NewBacklog(s.backlogSize)
 		s.backlogActive = true
@@ -138,6 +162,23 @@ func (s *State) RegisterSyncBuffer(buf *SyncBuffer) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.registerSyncBufferLocked(buf)
+}
+
+// RegisterSyncBufferWithOffset registers buf and returns the master offset under
+// the same lock. A keepalive PING cannot slip between the offset capture and
+// buffer registration and leave the replica permanently behind.
+func (s *State) RegisterSyncBufferWithOffset(buf *SyncBuffer) int64 {
+	if buf == nil {
+		return s.MasterReplOffset()
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.registerSyncBufferLocked(buf)
+	return s.masterReplOffset
+}
+
+func (s *State) registerSyncBufferLocked(buf *SyncBuffer) {
 	if s.syncBuffers == nil {
 		s.syncBuffers = make(map[*SyncBuffer]struct{})
 	}
@@ -152,6 +193,22 @@ func (s *State) UnregisterSyncBuffer(buf *SyncBuffer) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.syncBuffers, buf)
+}
+
+// SetSyncBufferLimit caps each replica's pending output buffer. A limit <= 0
+// restores DefaultSyncBufferCap. The cap bounds master memory; exceeding it
+// disconnects the slow replica instead of blocking the executor (S2.3).
+func (s *State) SetSyncBufferLimit(limit int64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.syncBufferLimit = limit
+}
+
+// SyncBufferLimit returns the per-replica output buffer cap in bytes.
+func (s *State) SyncBufferLimit() int64 {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.syncBufferLimit
 }
 
 // ActiveSyncBuffers reports the count of currently registered sync buffers.
@@ -169,6 +226,58 @@ func (s *State) CanPartialResync(reqOffset int64) bool {
 		return false
 	}
 	return s.backlog.CanPartialResync(reqOffset)
+}
+
+// CanPartialResyncWithID decides PSYNC between +CONTINUE and +FULLRESYNC:
+// the requested replication ID must match ours and the offset must fall inside
+// the backlog window (S2.1).
+func (s *State) CanPartialResyncWithID(reqReplID string, reqOffset int64) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.canPartialResyncLocked(reqReplID, reqOffset)
+}
+
+func (s *State) canPartialResyncLocked(reqReplID string, reqOffset int64) bool {
+	if !s.backlogActive || s.backlog == nil {
+		return false
+	}
+	if reqReplID == "" || reqReplID == "?" || reqReplID != s.masterReplID {
+		return false
+	}
+	return s.backlog.CanPartialResync(reqOffset)
+}
+
+// StartPartialResync atomically captures the backlog tail after reqOffset and
+// registers a live write buffer, so no mutation can slip between the catch-up
+// slice and the ongoing stream (S2.2). The caller owns the returned buffer and
+// must unregister and close it when the link ends.
+func (s *State) StartPartialResync(reqReplID string, reqOffset int64) ([]byte, *SyncBuffer, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.canPartialResyncLocked(reqReplID, reqOffset) {
+		return nil, nil, false
+	}
+	backlog, err := s.backlog.Slice(reqOffset)
+	if err != nil {
+		return nil, nil, false
+	}
+	buf := NewSyncBuffer(s.syncBufferLimit)
+	if s.syncBuffers == nil {
+		s.syncBuffers = make(map[*SyncBuffer]struct{})
+	}
+	s.syncBuffers[buf] = struct{}{}
+	return backlog, buf, true
+}
+
+// PSyncArgs returns the replication ID and offset a replica should send on its
+// next PSYNC. Before the first successful sync it asks for a full resync.
+func (s *State) PSyncArgs() (string, int64) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if !s.masterReplIDSet {
+		return "?", -1
+	}
+	return s.masterReplID, s.slaveReplOffset
 }
 
 // BacklogSlice extracts the replication stream from reqOffset + 1 to current offset.
@@ -191,19 +300,46 @@ func (s *State) SetMaster(host string, port int) {
 	s.masterPort = port
 	s.linkStatus = LinkStatusConnecting
 	s.syncInProgress = false
+	s.syncEpoch++
 	s.lastIO = s.clock.Now()
 }
 
 // PromoteToMaster transitions a replica back to master (REPLICAOF NO ONE).
+// Promotion starts a new replication history: the old replid is kept as replid2
+// and a fresh replid is generated, so the old master cannot answer +CONTINUE
+// from a history that has diverged (split-brain safety, S2.4).
 func (s *State) PromoteToMaster() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	if s.role == RoleMaster {
+		return
+	}
+
+	s.syncEpoch++
+	s.masterReplID2 = s.masterReplID
+	s.secondReplOffset = s.slaveReplOffset + 1
+	s.masterReplID = newReplID()
+	s.masterReplIDSet = true
+
+	// New history starts at zero so offsets, snapshots, and the backlog agree.
+	s.backlog = NewBacklog(s.backlogSize)
+	s.masterReplOffset = 0
+	s.slaveReplOffset = 0
 
 	s.role = RoleMaster
 	s.masterHost = ""
 	s.masterPort = 0
 	s.linkStatus = LinkStatusDown
 	s.syncInProgress = false
+}
+
+func newReplID() string {
+	var b [20]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return strings.Repeat("0", 40)
+	}
+	return fmt.Sprintf("%x", b[:])
 }
 
 // Role returns the current role (RoleMaster or RoleSlave).
@@ -245,6 +381,71 @@ func (s *State) SetLinkStatus(status LinkStatus) {
 	s.lastIO = s.clock.Now()
 }
 
+// BeginSync starts a new replica sync attempt and returns its epoch. State
+// writes from an older epoch are rejected so a canceled or superseded loop
+// cannot overwrite a newer sync or a promotion.
+func (s *State) BeginSync() uint64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.syncEpoch++
+	return s.syncEpoch
+}
+
+// SyncGeneration returns the current replica sync epoch.
+func (s *State) SyncGeneration() uint64 {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.syncEpoch
+}
+
+// BeginFullResync invalidates the current resume point for epoch gen. The next
+// PSYNC asks for a full resync even if the snapshot stream then fails.
+func (s *State) BeginFullResync(gen uint64) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.syncEpoch != gen {
+		return false
+	}
+	s.masterReplIDSet = false
+	s.slaveReplOffset = 0
+	return true
+}
+
+// SetMasterReplIDForSync records a master replid only for the current epoch.
+func (s *State) SetMasterReplIDForSync(id string, gen uint64) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.syncEpoch != gen {
+		return false
+	}
+	s.masterReplID = id
+	s.masterReplIDSet = true
+	return true
+}
+
+// SetSlaveReplOffsetForSync records a processed offset only for the current epoch.
+func (s *State) SetSlaveReplOffsetForSync(offset int64, gen uint64) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.syncEpoch != gen {
+		return false
+	}
+	s.slaveReplOffset = offset
+	return true
+}
+
+// SetLinkStatusForSync updates link status only for the current epoch.
+func (s *State) SetLinkStatusForSync(status LinkStatus, gen uint64) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.syncEpoch != gen {
+		return false
+	}
+	s.linkStatus = status
+	s.lastIO = s.clock.Now()
+	return true
+}
+
 // MasterReplID returns the primary 40-hex replication ID.
 func (s *State) MasterReplID() string {
 	s.mu.RLock()
@@ -252,11 +453,12 @@ func (s *State) MasterReplID() string {
 	return s.masterReplID
 }
 
-// SetMasterReplID updates the master replication ID.
+// SetMasterReplID records the master replication ID learned during sync.
 func (s *State) SetMasterReplID(id string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.masterReplID = id
+	s.masterReplIDSet = true
 }
 
 // MasterReplOffset returns the current master replication stream offset.

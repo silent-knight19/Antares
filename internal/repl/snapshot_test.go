@@ -168,3 +168,23 @@ func TestSnapshotStreamCorruptHeader(t *testing.T) {
 		}
 	}
 }
+
+func TestSnapshotStreamRejectsTruncated(t *testing.T) {
+	clk := clock.NewFake(time.UnixMilli(1_000_000))
+	st := store.NewWithClock(clk)
+	st.Set("hello", []byte("world"))
+
+	var stream bytes.Buffer
+	delim, err := WriteSnapshotStream(&stream, st, "")
+	if err != nil {
+		t.Fatalf("WriteSnapshotStream: %v", err)
+	}
+	raw := stream.Bytes()
+	// Drop the final delimiter byte so the EOF frame never closes.
+	raw = raw[:len(raw)-len(delim)+1]
+
+	err = ReadSnapshotStream(bufio.NewReader(bytes.NewReader(raw)), func([]byte) error { return nil })
+	if err == nil {
+		t.Fatal("truncated snapshot stream was accepted")
+	}
+}

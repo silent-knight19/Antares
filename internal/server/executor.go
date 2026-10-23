@@ -30,14 +30,16 @@ type Executor struct {
 	quit     chan struct{}
 	done     chan struct{}
 
-	active    bool
-	hz        int
-	hzChanged chan struct{}
-	clock     clock.Clock
-	expiry    *expire.Cycle
-	store     *store.Store
-	stats     *metrics.Stats
-	start     time.Time
+	active bool
+	hz     int
+	// replicaReadTimeout bounds how long a replica waits for master traffic.
+	replicaReadTimeout time.Duration
+	hzChanged          chan struct{}
+	clock              clock.Clock
+	expiry             *expire.Cycle
+	store              *store.Store
+	stats              *metrics.Stats
+	start              time.Time
 
 	maxmemory       int64
 	maxmemoryPolicy string
@@ -53,15 +55,21 @@ type Executor struct {
 	replMu     sync.Mutex
 	repl       *repl.State
 	replCancel context.CancelFunc
+	replDone   chan struct{}
+
+	fullResyncs atomic.Int32
 
 	closeOnce sync.Once
 }
 
 type execRequest struct {
-	req  protocol.Request
-	out  *protocol.Encoder
-	conn *ConnState
-	done chan struct{}
+	req       protocol.Request
+	out       *protocol.Encoder
+	conn      *ConnState
+	done      chan struct{}
+	ctx       context.Context
+	syncGen   uint64
+	replBytes int64
 }
 
 // NewExecutor starts the single command-execution goroutine. A nil store or
@@ -88,6 +96,12 @@ func newExecutor(st *store.Store, reg *Registry, active bool, c clock.Clock) *Ex
 }
 
 func newExecutorWithAOF(st *store.Store, reg *Registry, active bool, c clock.Clock, aof *persist.Writer) *Executor {
+	return newExecutorWithPing(st, reg, active, c, aof, defaultReplicaPingInterval)
+}
+
+// newExecutorWithPing lets tests shorten the keepalive without racing the
+// production default.
+func newExecutorWithPing(st *store.Store, reg *Registry, active bool, c clock.Clock, aof *persist.Writer, pingInterval time.Duration) *Executor {
 	if c == nil {
 		c = clock.Real{}
 	}
@@ -95,19 +109,20 @@ func newExecutorWithAOF(st *store.Store, reg *Registry, active bool, c clock.Clo
 		st = store.NewWithClock(c)
 	}
 	e := &Executor{
-		requests:        make(chan execRequest, requestQueueSize),
-		quit:            make(chan struct{}),
-		done:            make(chan struct{}),
-		active:          active,
-		hz:              defaultHz,
-		hzChanged:       make(chan struct{}, 1),
-		clock:           c,
-		expiry:          expire.New(st, c),
-		store:           st,
-		stats:           metrics.New(DefaultMaxConns),
-		start:           c.Now(),
-		maxmemoryPolicy: "noeviction",
-		aof:             aof,
+		requests:           make(chan execRequest, requestQueueSize),
+		quit:               make(chan struct{}),
+		done:               make(chan struct{}),
+		active:             active,
+		hz:                 defaultHz,
+		hzChanged:          make(chan struct{}, 1),
+		replicaReadTimeout: 30 * time.Second,
+		clock:              c,
+		expiry:             expire.New(st, c),
+		store:              st,
+		stats:              metrics.New(DefaultMaxConns),
+		start:              c.Now(),
+		maxmemoryPolicy:    "noeviction",
+		aof:                aof,
 	}
 	e.repl = repl.NewState(e.stats.ReplID, c)
 	if reg == nil {
@@ -122,7 +137,40 @@ func newExecutorWithAOF(st *store.Store, reg *Registry, active bool, c clock.Clo
 	}
 	e.commands = reg
 	go e.loop()
+	if active {
+		go e.replicationPingLoop(pingInterval)
+	}
 	return e
+}
+
+// defaultReplicaPingInterval is the master keepalive period (Redis defaults to 10s).
+const defaultReplicaPingInterval = 10 * time.Second
+
+func (e *Executor) replicationPingLoop(interval time.Duration) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			e.repl.FeedReplicationPing()
+		case <-e.quit:
+			return
+		}
+	}
+}
+
+const maxConcurrentFullResyncs = 1
+
+func (e *Executor) beginFullResync() bool {
+	if e.fullResyncs.Add(1) > maxConcurrentFullResyncs {
+		e.fullResyncs.Add(-1)
+		return false
+	}
+	return true
+}
+
+func (e *Executor) endFullResync() {
+	e.fullResyncs.Add(-1)
 }
 
 // Stats exposes the process counters INFO reports.
@@ -136,12 +184,31 @@ func (e *Executor) SetEventSink(sink events.Sink) { e.events = sink }
 // transaction state. A closed executor drops the request rather than blocking
 // the connection goroutine forever.
 func (e *Executor) Handle(req protocol.Request, out *protocol.Encoder, conn *ConnState) {
+	e.HandleContext(context.Background(), req, out, conn)
+}
+
+// HandleContext queues a request that is dropped if ctx is canceled before the
+// executor runs it.
+func (e *Executor) HandleContext(ctx context.Context, req protocol.Request, out *protocol.Encoder, conn *ConnState) {
+	e.handle(ctx, req, out, conn, 0, 0)
+}
+
+// HandleReplicated applies one command from the master stream. The offset is
+// advanced on the executor turn only after the command succeeds, so a failed
+// apply cannot move the replica past a command it did not execute.
+func (e *Executor) HandleReplicated(ctx context.Context, req protocol.Request, out *protocol.Encoder, conn *ConnState, syncGen uint64, bytesRead int64) {
+	e.handle(ctx, req, out, conn, syncGen, bytesRead)
+}
+
+func (e *Executor) handle(ctx context.Context, req protocol.Request, out *protocol.Encoder, conn *ConnState, syncGen uint64, bytesRead int64) {
 	if conn == nil {
 		conn = &ConnState{}
 	}
 	done := make(chan struct{})
 	select {
-	case e.requests <- execRequest{req: req, out: out, conn: conn, done: done}:
+	case e.requests <- execRequest{req: req, out: out, conn: conn, done: done, ctx: ctx, syncGen: syncGen, replBytes: bytesRead}:
+	case <-ctx.Done():
+		return
 	case <-e.quit:
 		return
 	case <-e.done:
@@ -258,6 +325,9 @@ func (e *Executor) run(req execRequest) {
 		}
 		close(req.done)
 	}()
+	if req.ctx != nil && req.ctx.Err() != nil {
+		return
+	}
 	tx := &req.conn.tx
 	if e.aofWriteBlocked(req.req, req.out) {
 		tx.dirty = true
@@ -280,6 +350,15 @@ func (e *Executor) run(req execRequest) {
 		return
 	}
 	e.execute(req, tx)
+	if req.replBytes <= 0 || (len(req.out.Bytes()) > 0 && req.out.Bytes()[0] == '-') {
+		return
+	}
+	offset := e.repl.SlaveReplOffset() + req.replBytes
+	if req.syncGen != 0 {
+		e.repl.SetSlaveReplOffsetForSync(offset, req.syncGen)
+		return
+	}
+	e.repl.SetSlaveReplOffset(offset)
 }
 
 // readOnlyBlocked rejects write commands from regular clients when node is a read-only replica.

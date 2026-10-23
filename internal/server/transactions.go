@@ -1,7 +1,9 @@
 package server
 
 import (
+	"net"
 	"strings"
+	"sync"
 
 	"github.com/silent-knight19/antares/internal/protocol"
 	"github.com/silent-knight19/antares/internal/store"
@@ -13,19 +15,65 @@ import (
 type ConnState struct {
 	tx              txState
 	isReplicaClient bool
+	streaming       bool
+	conn            net.Conn
 	slaveID         uint64
 	remoteIP        string
 	remotePort      int
-	onClose         func()
+
+	mu      sync.Mutex
+	onClose func()
+	closed  bool
+	flush   func() error
 }
 
-// Close runs the optional close cleanup hook.
+// flushPending pushes replies buffered before a streaming switch so the
+// replication stream cannot overtake them.
+func (c *ConnState) flushPending() {
+	if c != nil && c.flush != nil {
+		_ = c.flush()
+	}
+}
+
+// Close runs the registered close cleanup hooks exactly once.
 func (c *ConnState) Close() {
-	if c != nil && c.onClose != nil {
-		fn := c.onClose
-		c.onClose = nil
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	if c.closed {
+		c.mu.Unlock()
+		return
+	}
+	c.closed = true
+	fn := c.onClose
+	c.onClose = nil
+	c.mu.Unlock()
+	if fn != nil {
 		fn()
 	}
+}
+
+// addCloseHook registers cleanup that runs when the connection closes. If the
+// connection already closed, the hook runs immediately.
+func (c *ConnState) addCloseHook(fn func()) {
+	if c == nil || fn == nil {
+		return
+	}
+	c.mu.Lock()
+	if c.closed {
+		c.mu.Unlock()
+		fn()
+		return
+	}
+	prev := c.onClose
+	c.onClose = func() {
+		fn()
+		if prev != nil {
+			prev()
+		}
+	}
+	c.mu.Unlock()
 }
 
 // NewReplicaConnState creates connection state for the internal replication apply loop,

@@ -177,3 +177,107 @@ func TestSlaveManagementAndInfoFormatting(t *testing.T) {
 		t.Fatalf("INFO replication missing re-indexed slave0:\n%s", infoAfterRemove)
 	}
 }
+
+func TestPromotionShiftsReplicationHistory(t *testing.T) {
+	s := NewState("masterA", nil)
+	s.SetMaster("127.0.0.1", 6379)
+	s.SetMasterReplID("masterA")
+	s.SetMasterReplOffset(42)
+	s.SetSlaveReplOffset(42)
+
+	s.PromoteToMaster()
+
+	if s.MasterReplID() == "masterA" {
+		t.Fatal("promotion kept the old master replid; split-brain history was not shifted")
+	}
+	if s.masterReplID2 != "masterA" {
+		t.Fatalf("master_replid2 = %q, want masterA", s.masterReplID2)
+	}
+	if s.secondReplOffset != 43 {
+		t.Fatalf("second_repl_offset = %d, want 43", s.secondReplOffset)
+	}
+	if id, off := s.PSyncArgs(); id != s.MasterReplID() || off != 0 {
+		t.Fatalf("PSyncArgs after promotion = %q %d, want new replid and offset 0", id, off)
+	}
+
+	before := s.MasterReplID()
+	s.PromoteToMaster()
+	if s.MasterReplID() != before {
+		t.Fatal("promotion of an existing master changed its replid")
+	}
+}
+
+func TestFeedReplicationPingOnlyWithReplicas(t *testing.T) {
+	s := NewState("pingtest", nil)
+	if s.FeedReplicationPing() {
+		t.Fatal("ping fed with no replicas")
+	}
+	if s.MasterReplOffset() != 0 {
+		t.Fatalf("offset = %d, want 0", s.MasterReplOffset())
+	}
+
+	s.AddSlave("127.0.0.1", 6380)
+	if !s.FeedReplicationPing() {
+		t.Fatal("ping not fed with a connected replica")
+	}
+	if s.MasterReplOffset() != int64(len(replicationPing)) {
+		t.Fatalf("offset = %d, want %d", s.MasterReplOffset(), len(replicationPing))
+	}
+}
+
+func TestPromoteEmptyHostSlave(t *testing.T) {
+	s := NewState("emptyhost", nil)
+	s.SetMaster("", 6379)
+	s.PromoteToMaster()
+	if !s.IsMaster() {
+		t.Fatalf("role = %s, want master", s.Role())
+	}
+}
+
+func TestStaleSyncCannotOverwritePromotion(t *testing.T) {
+	s := NewState("oldmaster", nil)
+	s.SetMaster("127.0.0.1", 6379)
+	gen := s.BeginSync()
+	s.PromoteToMaster()
+	promotedID := s.MasterReplID()
+
+	if s.BeginFullResync(gen) {
+		t.Fatal("stale full-resync invalidation was accepted")
+	}
+	if s.SetMasterReplIDForSync("oldmaster", gen) {
+		t.Fatal("stale replid write was accepted")
+	}
+	if s.SetSlaveReplOffsetForSync(99, gen) {
+		t.Fatal("stale offset write was accepted")
+	}
+	if s.SetLinkStatusForSync(LinkStatusUp, gen) {
+		t.Fatal("stale link-status write was accepted")
+	}
+	if s.MasterReplID() != promotedID {
+		t.Fatalf("replid = %q, want promoted %q", s.MasterReplID(), promotedID)
+	}
+	if s.SlaveReplOffset() != 0 {
+		t.Fatalf("slave offset = %d, want 0", s.SlaveReplOffset())
+	}
+	if s.LinkStatus() != LinkStatusDown {
+		t.Fatalf("link status = %s, want down", s.LinkStatus())
+	}
+}
+
+func TestRegisterSyncBufferCapturesOffsetAtomically(t *testing.T) {
+	s := NewState("atomic", nil)
+	buf := NewSyncBuffer(1024)
+	off := s.RegisterSyncBufferWithOffset(buf)
+	if off != 0 {
+		t.Fatalf("offset = %d, want 0", off)
+	}
+	if !s.FeedReplicationPing() {
+		t.Fatal("ping not fed to registered buffer")
+	}
+	if buf.Buffered() != int64(len(replicationPing)) {
+		t.Fatalf("buffered = %d, want %d", buf.Buffered(), len(replicationPing))
+	}
+	if s.MasterReplOffset() != off+int64(len(replicationPing)) {
+		t.Fatalf("offset = %d, want %d", s.MasterReplOffset(), off+int64(len(replicationPing)))
+	}
+}

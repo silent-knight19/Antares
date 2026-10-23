@@ -29,6 +29,8 @@ type SyncBuffer struct {
 	maxBytes int64
 	overflow bool
 	closed   bool
+	notify   chan struct{}
+	done     chan struct{}
 }
 
 // NewSyncBuffer creates a SyncBuffer with the specified byte capacity limit.
@@ -40,6 +42,8 @@ func NewSyncBuffer(maxBytes int64) *SyncBuffer {
 	return &SyncBuffer{
 		maxBytes: maxBytes,
 		chunks:   make([][]byte, 0, 16),
+		notify:   make(chan struct{}, 1),
+		done:     make(chan struct{}),
 	}
 }
 
@@ -56,11 +60,13 @@ func (b *SyncBuffer) Append(p []byte) error {
 		return ErrSyncBufferClosed
 	}
 	if b.overflow {
+		b.notifyLocked()
 		return ErrSyncBufferOverflow
 	}
 	if b.buffered+int64(len(p)) > b.maxBytes {
 		b.overflow = true
 		b.chunks = nil // free memory immediately on overflow
+		b.notifyLocked()
 		return ErrSyncBufferOverflow
 	}
 
@@ -68,7 +74,15 @@ func (b *SyncBuffer) Append(p []byte) error {
 	copy(chunk, p)
 	b.chunks = append(b.chunks, chunk)
 	b.buffered += int64(len(p))
+	b.notifyLocked()
 	return nil
+}
+
+func (b *SyncBuffer) notifyLocked() {
+	select {
+	case b.notify <- struct{}{}:
+	default:
+	}
 }
 
 // Drain extracts all buffered chunks, resetting the buffer to empty.
@@ -126,11 +140,21 @@ func (b *SyncBuffer) Overflow() bool {
 	return b.overflow
 }
 
+// Wait returns a channel that receives a token when bytes are appended.
+func (b *SyncBuffer) Wait() <-chan struct{} { return b.notify }
+
+// Done returns a channel closed when the buffer is closed.
+func (b *SyncBuffer) Done() <-chan struct{} { return b.done }
+
 // Close marks the buffer as closed and frees all buffered chunks.
 func (b *SyncBuffer) Close() {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	if b.closed {
+		return
+	}
 	b.closed = true
 	b.chunks = nil
 	b.buffered = 0
+	close(b.done)
 }

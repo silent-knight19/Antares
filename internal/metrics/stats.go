@@ -25,6 +25,9 @@ type Stats struct {
 	PeakMemory  atomic.Uint64
 	EvictedKeys atomic.Uint64
 
+	SyncFull      atomic.Uint64
+	SyncPartialOK atomic.Uint64
+
 	addr atomic.Value
 }
 

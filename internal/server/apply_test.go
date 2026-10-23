@@ -402,3 +402,60 @@ func TestReplicaFullResyncAndApplyLoop(t *testing.T) {
 	_ = pw.Close()
 	_ = <-loopErrCh
 }
+
+func TestReplicaApplyLoopTimesOutSilentMaster(t *testing.T) {
+	exec := NewExecutor(nil, nil)
+	defer exec.Close()
+	exec.replicaReadTimeout = 50 * time.Millisecond
+
+	masterConn, replicaConn := net.Pipe()
+	defer masterConn.Close()
+	tr := repl.NewTrackedReader(replicaConn, 1024)
+
+	start := time.Now()
+	err := exec.RunReplicaApplyLoopWithInterval(context.Background(), replicaConn, tr, 0)
+	if err == nil {
+		t.Fatal("silent master did not time out")
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Fatalf("timeout took %v, want < 1s", elapsed)
+	}
+}
+
+func TestReplicaApplyFailureDoesNotAdvanceOffset(t *testing.T) {
+	exec := NewExecutor(nil, nil)
+	defer exec.Close()
+	exec.Repl().SetMaster("127.0.0.1", 6379)
+	exec.Repl().SetMasterReplID("master")
+	exec.Repl().SetSlaveReplOffset(10)
+	gen := exec.Repl().BeginSync()
+
+	masterConn, replicaConn := net.Pipe()
+	defer masterConn.Close()
+	tr := repl.NewTrackedReader(replicaConn, 1024)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- exec.runReplicaApplyLoop(ctx, replicaConn, tr, 0, gen)
+	}()
+
+	if _, err := masterConn.Write(persist.EncodeCommand([]byte("SET"), []byte("onlykey"))); err != nil {
+		t.Fatalf("write invalid command: %v", err)
+	}
+	select {
+	case err := <-errCh:
+		if err == nil {
+			t.Fatal("apply failure was not reported")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("apply loop did not return after a failed command")
+	}
+	if off := exec.Repl().SlaveReplOffset(); off != 0 {
+		t.Fatalf("slave offset = %d, want 0 after invalidation", off)
+	}
+	if id, off := exec.Repl().PSyncArgs(); id != "?" || off != -1 {
+		t.Fatalf("PSyncArgs = %q %d, want ? -1", id, off)
+	}
+}

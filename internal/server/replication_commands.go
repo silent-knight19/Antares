@@ -60,12 +60,41 @@ func (e *Executor) handleReplicaof(cmdName string, args [][]byte, out *protocol.
 	out.Simple("OK")
 }
 
-// StartReplicaHandshake initiates an asynchronous handshake with the master.
+// Replica reconnect backoff: fast first retry, capped exponential growth.
+const (
+	replicaReconnectMinDelay = 100 * time.Millisecond
+	replicaReconnectMaxDelay = 2 * time.Second
+)
+
+var errSyncSuperseded = errors.New("replication sync superseded")
+
+func nextReplicaReconnectDelay(current time.Duration) time.Duration {
+	if current <= 0 {
+		return replicaReconnectMinDelay
+	}
+	if current >= replicaReconnectMaxDelay {
+		return replicaReconnectMaxDelay
+	}
+	next := current * 2
+	if next > replicaReconnectMaxDelay {
+		return replicaReconnectMaxDelay
+	}
+	return next
+}
+
+// StartReplicaHandshake connects to the master, retrying with partial resync
+// from the last processed offset after a link break (S2.2).
 func (e *Executor) StartReplicaHandshake(host string, port int) {
 	e.cancelReplica()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	e.setReplCancel(cancel)
+
+	e.replMu.Lock()
+	oldDone := e.replDone
+	done := make(chan struct{})
+	e.replDone = done
+	e.replMu.Unlock()
 
 	listeningPort := 6380
 	if addr := e.stats.Addr(); addr != "" {
@@ -79,81 +108,162 @@ func (e *Executor) StartReplicaHandshake(host string, port int) {
 	masterAddr := net.JoinHostPort(host, strconv.Itoa(port))
 
 	go func() {
+		defer close(done)
 		defer cancel()
-		cfg := repl.HandshakeConfig{
-			MasterAddr:    masterAddr,
-			ListeningPort: listeningPort,
-			ReplID:        "?",
-			Offset:        -1,
-			Timeout:       3 * time.Second,
+		if oldDone != nil {
+			<-oldDone
 		}
-
-		res, err := repl.PerformHandshake(ctx, cfg)
-		if err != nil {
-			if ctx.Err() == nil {
-				e.repl.SetLinkStatus(repl.LinkStatusDown)
-			}
-			return
-		}
-
-		if ctx.Err() != nil {
-			_ = res.Close()
-			return
-		}
-
-		if res.MasterReplID != "" {
-			e.repl.SetMasterReplID(res.MasterReplID)
-		}
-
-		tr := repl.NewTrackedReader(res.Conn, 64<<10)
-
-		if res.IsFullResync {
-			e.repl.SetLinkStatus(repl.LinkStatusSync)
-			e.repl.SetSlaveReplOffset(res.MasterReplOffset)
-
-			// Decode and apply snapshot stream safely under the executor (ADR-002, ADR-017)
-			replConn := NewReplicaConnState()
-			enc := protocol.GetEncoder()
-			defer enc.Release()
-
-			if sErr := repl.ReadSnapshotStream(tr.Reader(), func(payload []byte) error {
-				br := bufio.NewReader(bytes.NewReader(payload))
-				for first := true; ; first = false {
-					req, pErr := protocol.ReadRequest(br)
-					if errors.Is(pErr, io.EOF) {
-						if first {
-							return errors.New("empty command in snapshot frame")
-						}
-						return nil
-					}
-					if pErr != nil {
-						return pErr
-					}
-					if len(req) == 0 {
-						continue
-					}
-					enc.Reset()
-					e.Handle(req, enc, replConn)
-					if bytes.HasPrefix(enc.Bytes(), []byte("-")) {
-						return fmt.Errorf("snapshot command %q failed: %s", req[0], strings.TrimSpace(string(enc.Bytes()[1:])))
-					}
-				}
-			}); sErr != nil {
-				if ctx.Err() == nil {
-					e.repl.SetLinkStatus(repl.LinkStatusDown)
-				}
-				_ = res.Close()
+		delay := replicaReconnectMinDelay
+		for {
+			if ctx.Err() != nil {
 				return
 			}
-		}
-
-		e.repl.SetLinkStatus(repl.LinkStatusUp)
-		if aErr := e.RunReplicaApplyLoop(ctx, res.Conn, tr); aErr != nil {
-			if ctx.Err() == nil {
-				e.repl.SetLinkStatus(repl.LinkStatusDown)
+			_ = e.replicaSyncOnce(ctx, masterAddr, listeningPort)
+			if ctx.Err() != nil {
+				return
 			}
+			if e.repl.LinkStatus() == repl.LinkStatusUp {
+				delay = replicaReconnectMinDelay
+			}
+			e.repl.SetLinkStatus(repl.LinkStatusDown)
+			if !sleepContext(ctx, delay) {
+				return
+			}
+			delay = nextReplicaReconnectDelay(delay)
 		}
 	}()
+}
+
+// replicaSyncOnce runs one handshake and, on success, the apply loop until the
+// link breaks. It returns the link error so the caller can retry.
+func (e *Executor) replicaSyncOnce(ctx context.Context, masterAddr string, listeningPort int) error {
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	syncGen := e.repl.BeginSync()
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	reqReplID, reqOffset := e.repl.PSyncArgs()
+	if !e.repl.SetLinkStatusForSync(repl.LinkStatusConnecting, syncGen) {
+		return errSyncSuperseded
+	}
+
+	cfg := repl.HandshakeConfig{
+		MasterAddr:    masterAddr,
+		ListeningPort: listeningPort,
+		ReplID:        reqReplID,
+		Offset:        reqOffset,
+		Timeout:       3 * time.Second,
+	}
+
+	res, err := repl.PerformHandshake(ctx, cfg)
+	if err != nil {
+		return err
+	}
+	defer res.Close()
+
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+
+	// Cancellation (REPLICAOF NO ONE or shutdown) must unblock a silent read.
+	stopClose := context.AfterFunc(ctx, func() { _ = res.Conn.Close() })
+	defer stopClose()
+
+	tr := repl.NewTrackedReader(res.Reader, 64<<10)
+
+	if res.IsFullResync {
+		if !e.repl.SetLinkStatusForSync(repl.LinkStatusSync, syncGen) {
+			return errSyncSuperseded
+		}
+		if err := e.applySnapshotStream(ctx, res.Conn, tr, syncGen); err != nil {
+			return err
+		}
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if res.MasterReplID != "" {
+			if !e.repl.SetMasterReplIDForSync(res.MasterReplID, syncGen) {
+				return errSyncSuperseded
+			}
+		}
+		if !e.repl.SetSlaveReplOffsetForSync(res.MasterReplOffset, syncGen) {
+			return errSyncSuperseded
+		}
+	} else if res.MasterReplID != "" {
+		if !e.repl.SetMasterReplIDForSync(res.MasterReplID, syncGen) {
+			return errSyncSuperseded
+		}
+	}
+
+	if !e.repl.SetLinkStatusForSync(repl.LinkStatusUp, syncGen) {
+		return errSyncSuperseded
+	}
+	return e.runReplicaApplyLoop(ctx, res.Conn, tr, time.Second, syncGen)
+}
+
+// applySnapshotStream replays a FULLRESYNC snapshot through the executor. The
+// resume point is invalidated before FLUSHALL, so a failed snapshot cannot be
+// followed by a partial resync against a flushed dataset.
+func (e *Executor) applySnapshotStream(ctx context.Context, conn net.Conn, tr *repl.TrackedReader, syncGen uint64) error {
+	replConn := NewReplicaConnState()
+	enc := protocol.GetEncoder()
+	defer enc.Release()
+
+	if !e.repl.BeginFullResync(syncGen) {
+		return errSyncSuperseded
+	}
+	resetReplicaReadDeadline(conn, e.replicaReadTimeout)
+
+	// A full resync replaces the dataset; stale keys from an older link must go.
+	enc.Reset()
+	e.HandleContext(ctx, protocol.Request{[]byte("FLUSHALL")}, enc, replConn)
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	if bytes.HasPrefix(enc.Bytes(), []byte("-")) {
+		return fmt.Errorf("FLUSHALL before snapshot failed: %s", strings.TrimSpace(string(enc.Bytes()[1:])))
+	}
+
+	return repl.ReadSnapshotStream(tr.Reader(), func(payload []byte) error {
+		resetReplicaReadDeadline(conn, e.replicaReadTimeout)
+		br := bufio.NewReader(bytes.NewReader(payload))
+		for first := true; ; first = false {
+			req, pErr := protocol.ReadRequest(br)
+			if errors.Is(pErr, io.EOF) {
+				if first {
+					return errors.New("empty command in snapshot frame")
+				}
+				return nil
+			}
+			if pErr != nil {
+				return pErr
+			}
+			if len(req) == 0 {
+				continue
+			}
+			enc.Reset()
+			e.HandleContext(ctx, req, enc, replConn)
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			if bytes.HasPrefix(enc.Bytes(), []byte("-")) {
+				return fmt.Errorf("snapshot command %q failed: %s", req[0], strings.TrimSpace(string(enc.Bytes()[1:])))
+			}
+		}
+	})
+}
+
+func sleepContext(ctx context.Context, d time.Duration) bool {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
+	}
 }
 
 func (e *Executor) ensureSlave(conn *ConnState) uint64 {
@@ -169,11 +279,11 @@ func (e *Executor) ensureSlave(conn *ConnState) uint64 {
 	}
 	slID := e.repl.AddSlave(ip, conn.remotePort)
 	conn.slaveID = slID
-	conn.onClose = func() {
+	conn.addCloseHook(func() {
 		if e.repl != nil {
 			e.repl.RemoveSlave(slID)
 		}
-	}
+	})
 	return slID
 }
 
@@ -233,19 +343,43 @@ func (e *Executor) psyncCommand(args [][]byte, out *protocol.Encoder, conn *Conn
 	}
 
 	reqReplID := string(args[0])
-	masterReplID := e.repl.MasterReplID()
-	masterOffset := e.repl.MasterReplOffset()
-
-	if reqReplID == "?" || reqReplID != masterReplID {
-		out.Simple(fmt.Sprintf("FULLRESYNC %s %d", masterReplID, masterOffset))
-		return
-	}
-
 	reqOffset, err := strconv.ParseInt(string(args[1]), 10, 64)
-	if err != nil || !e.repl.CanPartialResync(reqOffset) {
-		out.Simple(fmt.Sprintf("FULLRESYNC %s %d", masterReplID, masterOffset))
+
+	// Real connections get the streamed protocol; direct unit tests without a
+	// socket fall back to the decision header only.
+	if conn != nil && conn.conn != nil {
+		if err == nil {
+			if backlog, buf, ok := e.repl.StartPartialResync(reqReplID, reqOffset); ok {
+				e.stats.SyncPartialOK.Add(1)
+				e.attachReplicaStream(conn, buf)
+				conn.flushPending()
+				conn.streaming = true
+				out.Reset()
+				go e.streamPartialResync(conn.conn, buf, backlog, e.repl.MasterReplID())
+				return
+			}
+		}
+
+		if !e.beginFullResync() {
+			out.Error("ERR full resync already in progress")
+			return
+		}
+		e.stats.SyncFull.Add(1)
+		session := e.PrepareFullResync()
+		e.attachReplicaStream(conn, session.SyncBuffer)
+		conn.flushPending()
+		conn.streaming = true
+		out.Reset()
+		go e.streamFullResync(conn.conn, session)
 		return
 	}
 
-	out.Simple(fmt.Sprintf("CONTINUE %s", masterReplID))
+	if err != nil || !e.repl.CanPartialResyncWithID(reqReplID, reqOffset) {
+		e.stats.SyncFull.Add(1)
+		out.Simple(fmt.Sprintf("FULLRESYNC %s %d", e.repl.MasterReplID(), e.repl.MasterReplOffset()))
+		return
+	}
+
+	e.stats.SyncPartialOK.Add(1)
+	out.Simple(fmt.Sprintf("CONTINUE %s", e.repl.MasterReplID()))
 }
