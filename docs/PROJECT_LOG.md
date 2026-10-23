@@ -854,3 +854,61 @@
   - `go vet ./...`, `gofmt -l internal cmd`, and `make clock-check` clean.
   - `TestReplicaChaos50Kills` runs in ~6 s with delete/overwrite/large-value cuts and exact `DBSIZE` parity; `TestMasterPingsIdleReplica`, `TestReplicaApplyLoopTimesOutSilentMaster`, `TestFailedFullResyncInvalidatesPSyncState`, `TestReplicaApplyFailureDoesNotAdvanceOffset`, `TestFullResyncConcurrencyLimit`, `TestFullResyncSlotReleasedOnStreamFailure`, `TestSnapshotStreamRejectsTruncated`, `TestNextReplicaReconnectDelay`, and `TestRegisterSyncBufferCapturesOffsetAtomically` pin the new behavior.
 - Next session first task: S3.1 (optional, timeboxed Porcupine linearizability check) or S3.2 (replication benchmarks).
+
+### 2026-10-23 — S3.2: Replication Throughput and Lag Benchmarks
+
+- Built:
+  - `bench/scripts/run-repl-bench.py`: starts one Antares master and one Antares replica on ports 6383/6384, runs `redis-benchmark -t set` at P=1/P=16 (50 clients, 500k requests, 3 runs) with no replica and then with one replica attached, samples `INFO replication` every 50 ms during load, and measures catch-up after each run. Emits `bench/results/<commit>-repl.json` and merges replication claims into `claims.json`.
+  - `Makefile`: `make bench` now runs the core suite and the replication suite; `make bench-repl` runs replication only (no Docker); `make verify` runs the same 500k-request replication pass.
+  - `docs/BENCHMARKS.md`: new S3.2 section with setup, raw runs, stdev, lag percentiles, and context. `README.md` lists the new target.
+- Findings:
+  - One replica costs ~26% of SET throughput at P=1 (190,042 → 140,449 rps) and ~47% at P=16 (747,384 → 399,042 rps) on this laptop. The master still never blocks and the replica never disconnects.
+  - Lag stayed small: p95 offset gap 540 B at P=1 and 4,725 B at P=16; the largest single sample was 63,450 B at P=1, an OS scheduling outlier, and the replica caught up in under 1 ms after every run.
+  - The no-replica P=16 baseline is noisy across invocations (stdev 10,244 within this set); the report records that instead of presenting a single number as exact.
+- Files touched: `bench/scripts/run-repl-bench.py`, `bench/results/45911f2-repl.json`, `Makefile`, `docs/{BENCHMARKS.md,PLAN.md,PROJECT_LOG.md,FILE_MANIFEST.md,COMPATIBILITY.md,RUNBOOK.md}`, `README.md`, `claims.json`.
+- ADRs written: none (extends ADR-018; PLAN §5 S3.2).
+- Exit evidence:
+  - `make bench-repl` green: 3 runs per condition, all replicas stayed `master_link_status:up`, offsets equal before every run, catch-up measured after every loaded run.
+  - Numbers and variance documented in `docs/BENCHMARKS.md`; replication claims merged into `claims.json`.
+  - `python3 -m py_compile bench/scripts/run-repl-bench.py` clean; `gofmt -l internal cmd` and `go vet ./...` unaffected.
+- Next session first task: S3.1 (optional Porcupine check) or S3.3 — `FAILURE_MODES.md`: what happens when connection, master, replica, or disk dies; review against the chaos tests.
+
+### 2026-10-23 — S3.1: Sampled Linearizability Check (Optional)
+
+- Built:
+  - `tests/linearizability/linearizability_test.go`: `TestConcurrentRegisterLinearizable` runs 6 concurrent clients × 60 operations (55% writes) over one register with unique written values, then checks the recorded history with Porcupine's register model and a 10 s timeout.
+  - `Makefile`: `make lin-check` runs the check; added to `.PHONY`, help, and the README command table.
+  - `go.mod`/`go.sum`: Porcupine v1.3.1 as a direct test-only dependency.
+  - `docs/{COMPATIBILITY.md,FILE_MANIFEST.md,PLAN.md,PROJECT_LOG.md,ARCHITECTURE.md}`, `README.md`.
+- Findings:
+  - The check is deliberately sampled, not a proof: 360 operations cannot exhaust the executor's interleavings. It validates the single executor's read/write serialization, not replication or durability.
+  - The test uses unique values per write so Porcupine can identify which write a read observed without relying on a server-side sequence counter.
+- Files touched: `tests/linearizability/linearizability_test.go`, `go.mod`, `go.sum`, `Makefile`, `docs/{COMPATIBILITY.md,FILE_MANIFEST.md,PLAN.md,PROJECT_LOG.md,ARCHITECTURE.md}`, `README.md`.
+- ADRs written: none (optional S3.1; supports ADR-002's single-executor model).
+- Exit evidence:
+  - `make lin-check` green in 0.657 s; the suite also passed under `-count=5` and `-race` during development.
+  - `go test ./...`, `go test -race ./...`, `go vet ./...`, `gofmt -l internal cmd tests`, `make clock-check`, and `git diff --check` clean.
+- Next session first task: S3.3 — `FAILURE_MODES.md`.
+
+### 2026-10-23 — S3.3: Failure Modes and AOF/Replication Ordering Fix
+
+- Built:
+  - `docs/FAILURE_MODES.md`: durability contract per `appendfsync` policy, failure matrix, client/network/master/replica/disk sections, split-brain and full-resync behavior, non-goals, detection/runbook, and an evidence table mapping each claim to a test or command.
+  - `internal/server/persistence.go`: `appendEffects` now builds the encoded commands, appends them to the AOF first, and feeds the replication backlog only after the append succeeds.
+  - `internal/server/executor.go`: `persistEvictions` uses the same order, so an eviction DEL that cannot be persisted is not sent to replicas.
+  - `internal/server/persistence_test.go`: `TestAOFAppendFailureDoesNotFeedReplication` closes the AOF, calls `appendEffects` and `persistEvictions` directly, and asserts both fail without advancing `master_repl_offset`.
+  - `docs/{PLAN.md,PROJECT_LOG.md,COMPATIBILITY.md,FILE_MANIFEST.md,RUNBOOK.md,ARCHITECTURE.md}`, `README.md`.
+- Findings:
+  - The replication backlog was fed before the AOF append. A write that the executor then rejected with `-MISCONF` had already reached replicas, so a replica could apply a write the master reported as failed. AOF-first ordering removes that divergence.
+  - A sticky AOF write/fsync failure is cleared only by restart. `BGREWRITEAOF` aborts against a failed writer and keeps the old AOF (`TestFinishRewriteKeepsWriteFailureSticky`), so the old COMPATIBILITY wording claiming `BGREWRITEAOF` could recover was wrong and is corrected.
+  - The replica applies a full resync in place (flush, then snapshot), so readers can observe a partial dataset while `master_sync_in_progress:1`; a failed resync leaves that partial state until a retry succeeds.
+  - Replids and offsets are not persisted: every master or replica process restart forces a full resync, even with AOF.
+  - The crash harness proves zero acknowledged-write loss only under `-appendfsync always`; `everysec` and `no` are documented as untested for power loss.
+  - `INFO persistence aof_last_bgrewrite_status` is still hardcoded to `ok`; rewrite failures are visible in logs only.
+- Files touched: `internal/server/{persistence.go,persistence_test.go,executor.go}`, `docs/{FAILURE_MODES.md,PLAN.md,PROJECT_LOG.md,COMPATIBILITY.md,FILE_MANIFEST.md,RUNBOOK.md,ARCHITECTURE.md}`, `README.md`.
+- ADRs written: none (S3.3 is a behavior review; ADR-004/007/010/024 already cover the mechanisms).
+- Exit evidence:
+  - `TestAOFAppendFailureDoesNotFeedReplication` and `TestAOFWriteBlockedAfterFailure` pass; `TestFinishRewriteKeepsWriteFailureSticky` still passes.
+  - `go test -count=1 ./...` green (`internal/server` ~9.2 s); `go test -count=1 -race ./...` green (`internal/server` ~11.8 s).
+  - `make lin-check` green; `go vet ./...`, `gofmt -l internal cmd tests`, `make clock-check`, and `git diff --check` clean.
+- Next session first task: S3.4 — fresh-clone `make verify`, full QBank rehearsal, and the retrospective ADR.

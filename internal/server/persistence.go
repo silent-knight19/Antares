@@ -158,19 +158,19 @@ func (e *Executor) collectEffects(req protocol.Request, mutations uint64, spopBe
 }
 
 // appendEffects writes every effect into one frame so replay applies a
-// multi-command effect (a transaction) atomically, and feeds the replication backlog.
+// multi-command effect (a transaction) atomically, then feeds the replication
+// backlog only after the AOF append succeeds: a write rejected with MISCONF
+// must not reach replicas.
 func (e *Executor) appendEffects(effects [][][]byte) error {
 	if len(effects) == 0 {
 		return nil
 	}
+	cmds := make([][]byte, len(effects))
 	var payload []byte
-	for _, args := range effects {
-		cmdBytes := persist.EncodeCommand(args...)
+	for i, args := range effects {
+		cmds[i] = persist.EncodeCommand(args...)
 		if e.aof != nil {
-			payload = append(payload, cmdBytes...)
-		}
-		if e.repl != nil && e.repl.IsMaster() {
-			e.repl.FeedBacklog(cmdBytes)
+			payload = append(payload, cmds[i]...)
 		}
 	}
 	if e.aof != nil {
@@ -182,6 +182,11 @@ func (e *Executor) appendEffects(effects [][][]byte) error {
 			if err := e.startRewrite(); err != nil && !errors.Is(err, errRewriteInProgress) {
 				slog.Error("AOF automatic rewrite failed", "err", err)
 			}
+		}
+	}
+	if e.repl != nil && e.repl.IsMaster() {
+		for _, cmd := range cmds {
+			e.repl.FeedBacklog(cmd)
 		}
 	}
 	return nil

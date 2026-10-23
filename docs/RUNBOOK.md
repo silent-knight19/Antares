@@ -75,8 +75,12 @@ make diff-test        # Differential suite vs pinned Redis 7.4.11
 make tcl              # Official Redis 7.4.11 test suite (65/65 pass)
 make crash-test       # 100x SIGKILL AOF durability test
 make fuzz             # RESP parser & frame recovery fuzzing
-make bench            # redis-benchmark throughput & claims generation
+make bench            # core + replication benchmarks & claims generation
+make bench-repl       # replication throughput/lag only (no Docker)
+make lin-check        # Porcupine concurrent-register linearizability check
 ```
+
+Failure behavior, durability guarantees, and operator actions are documented in [`FAILURE_MODES.md`](FAILURE_MODES.md).
 
 ---
 
@@ -103,7 +107,17 @@ make showcase-dev
 ### AOF Corruption Refusal on Startup
 * **Symptom**: `persist: checksum mismatch at byte ... (repair discards the tail): corrupt log`
 * **Diagnosis**: Power loss or crash during partial disk write caused a corrupt frame.
-* **Fix**: Start the server with `-aof-repair` to discard the corrupt tail and recover all preceding valid frames.
+* **Fix**: Start the server with `-aof-repair` to discard the corrupt tail and recover all preceding valid frames. Do not use this flag for a full disk; see the next entry.
+
+### AOF Write Failure (`-MISCONF`)
+* **Symptom**: Mutating commands return `-MISCONF Errors writing to the AOF file: ...` while reads still work.
+* **Diagnosis**: The disk is full, the volume is read-only, or `fsync` is failing. `INFO persistence` reports `aof_last_write_status:err`. The failure is sticky: `BGREWRITEAOF` cannot clear it.
+* **Fix**: Free space or replace the failed volume, then restart the master with the same `-aof-file`. Expect the replica to full-resync after the restart. See `FAILURE_MODES.md` §6.
+
+### Replica Link Down
+* **Symptom**: `INFO replication` on the replica shows `master_link_status:down`; reads serve stale data and client writes return `-READONLY`.
+* **Diagnosis**: Network cut, master restart (new replid), or the replica fell outside the 1 MB backlog.
+* **Fix**: Restore connectivity. The replica retries with 100 ms → 2 s backoff; it uses `+CONTINUE` when the replid matches and the offset is still in the backlog, otherwise a full resync. Check `sync_full`/`sync_partial_ok` and offset parity. See `FAILURE_MODES.md` §4.3/§5.1.
 
 ### Memory Limit Reached (`-OOM command not allowed...`)
 * **Symptom**: Mutating commands return `-OOM command not allowed when used memory > 'maxmemory'`

@@ -414,11 +414,13 @@ func (e *Executor) persistEvictions(keys []string) error {
 		args = append(args, []byte(key))
 	}
 	cmdBytes := persist.EncodeCommand(args...)
+	if e.aof != nil {
+		if err := e.aof.Append(cmdBytes); err != nil {
+			return err
+		}
+	}
 	if e.repl != nil && e.repl.IsMaster() {
 		e.repl.FeedBacklog(cmdBytes)
-	}
-	if e.aof != nil {
-		return e.aof.Append(cmdBytes)
 	}
 	return nil
 }

@@ -55,7 +55,7 @@ Here, **Antares is the red rival to Redis** — engineered from scratch in Go to
 
 | Works today | Arrives later |
 |---|---|
-| `make build` (both binaries), `make test`, `make test-race`, `make vet`, `make fmt`, `make tidy`, `make fuzz`, `make diff-test` (strings + lists + hashes + sets + transactions + TTL + keyspace + SCAN + INFO + seeded generator + edge/connection surface), `make tcl` (65 selected official expiry/incr tests + per-command report), `make crash-test` (100× SIGKILL AOF durability), `make bench` (P=1/P=16 median benchmarks vs Redis 7.4), `make verify` (complete verification pyramid), replication (PSYNC full/partial, auto-reconnect, master PING keepalive, slow-replica protection, 50-cut chaos suite) | Broader Tcl subsets (documented) |
+| `make build` (both binaries), `make test`, `make test-race`, `make vet`, `make fmt`, `make tidy`, `make fuzz`, `make diff-test` (strings + lists + hashes + sets + transactions + TTL + keyspace + SCAN + INFO + seeded generator + edge/connection surface), `make tcl` (65 selected official expiry/incr tests + per-command report), `make crash-test` (100× SIGKILL AOF durability), `make bench` (P=1/P=16 median benchmarks vs Redis 7.4 plus replication throughput/lag), `make bench-repl`, `make lin-check` (Porcupine concurrent-register check), `make verify` (complete verification pyramid), replication (PSYNC full/partial, auto-reconnect, master PING keepalive, slow-replica protection, 50-cut chaos suite) | Broader Tcl subsets (documented) |
 | TCP server speaking RESP2 — parser with a 31-case corpus captured from real Redis + parser/recovery fuzzers, pooled reply writer, capture-exact error strings, pipeline-aware flushing; PING/ECHO/COMMAND answered through the registry and single keyspace-owning executor (case-insensitive lookup, Redis arity checks, `COMMAND` stub for redis-cli) | `make showcase` |
 | Edge-hardened string core — SET (EX/PX/NX/XX/GET/KEEPTTL), GET, DEL, EXISTS, TYPE, MSET/MGET, INCR/DECR/INCRBY/DECRBY/INCRBYFLOAT, APPEND, STRLEN, GETSET, SETNX; lists — LPUSH/RPUSH/LPOP/RPOP (with counts), LRANGE, LLEN, LINDEX, LSET, LREM, LTRIM, negative ranges, error-order parity, TTL preservation, auto-delete; hashes — HSET/HGET/HMGET/HDEL/HLEN/HGETALL/HKEYS/HVALS/HEXISTS/HRANDFIELD with insertion-order iteration; sets — SADD/SREM/SMEMBERS/SISMEMBER/SCARD/SPOP/SRANDMEMBER with unordered iteration and random pop/rand semantics; keyspace — KEYS glob matching, SCAN with MATCH/COUNT/TYPE and Redis's reverse-binary cursor, RENAME/RENAMENX with TTL transfer, RANDOMKEY, FLUSHDB/FLUSHALL; separate expires dict with lazy delete-on-access, TTL/PTTL/PERSIST, EXPIRE/PEXPIRE/EXPIREAT/PEXPIREAT incl. NX/XX/GT/LT, physical DBSIZE, active expiry (hz=10), INFO sections, CONFIG GET/SET allowlist, HELLO 2, and CLIENT stubs; empty/binary/1 MiB values, wide batches, overflow parity, 512 MiB bulk + 1 GiB request guards, pinned WRONGTYPE body; `make diff-test` green (198 string/TTL + 91 list + 71 hash + 99 set + 171 cross-type + 240 sequence + 47 keyspace steps + 32 SCAN checks + INFO diff + transactions + P9.1 generator/edge/surface + expiry + lazy reads), 1056 one-off live checks clean, and 65 selected official Tcl expiry/incr tests green via `make tcl` with per-command reports | Broader Tcl subsets |
 | CI: gofmt check + `vet` + `build` + race-tested tests + differential harness | Full Observatory showcase (M2) and Playwright E2E (U12) |
@@ -74,7 +74,7 @@ The Observatory bridge (`cmd/observatory`) is live as the M1 dev console and ser
 - **Persistence** — append-only AOF with framed records `[u32 len][u32 CRC32][RESP payload]`, group commit, fsync policies `always` / `everysec` / `no`; recovery replays the valid prefix and truncates at the first bad frame.
 - **Eviction** — approximated LRU under `maxmemory`: 24-bit access clock, sample 5, eviction pool; policies `noeviction` (default), `allkeys-lru`, `volatile-lru`.
 - **Transactions** — `MULTI` / `EXEC` / `DISCARD` with dirty + `EXECABORT` semantics; `WATCH` via value-snapshot compare (a documented divergence).
-- **Replication** — `REPLICAOF`, PSYNC handshake, `master_repl_offset`, 1MB backlog ring, `+FULLRESYNC` and `+CONTINUE` partial resync with automatic reconnect, `REPLCONF ACK`, read-only replicas, bounded per-replica output buffers that disconnect slow replicas without blocking the master, and split-brain-safe promotion that forces a full resync.
+- **Replication** — `REPLICAOF`, PSYNC handshake, `master_repl_offset`, 1MB backlog ring, `+FULLRESYNC` and `+CONTINUE` partial resync with automatic reconnect, `REPLCONF ACK`, read-only replicas, bounded per-replica output buffers that disconnect slow replicas without blocking the master, and split-brain-safe promotion that forces a full resync. Replication is asynchronous (no `WAIT`); the failure contract is in [`docs/FAILURE_MODES.md`](docs/FAILURE_MODES.md).
 
 **Antares Observatory** (from `docs/PLAN.md` §3.2):
 
@@ -169,7 +169,9 @@ docker compose up -d   # Redis on 127.0.0.1:6379
 | `make tcl` | Download the pinned Redis 7.4.11 tests, run the selected official expiry and incr subsets, and print a per-command pass report |
 | `make tcl-expire` | Run only the selected official expiry subset |
 | `make tcl-incr` | Run only the selected official `unit/type/incr` subset |
-| `make bench` | Run `redis-benchmark` against Antares and reference Redis across P=1/P=16, reporting median rps, latency, and updating `claims.json` |
+| `make bench` | Run `redis-benchmark` against Antares and reference Redis across P=1/P=16, then run the replication throughput/lag suite; updates `claims.json` |
+| `make bench-repl` | Run only the replication throughput/lag suite (one master, with/without one replica; no Docker required) |
+| `make lin-check` | Run the Porcupine concurrent-register linearizability check (sampled, not a proof) |
 | `make verify` | Complete verification pyramid: tests, race check, ADR-009 clock boundaries, diff harness, Tcl suites, crash tests, fuzz smoke, and benchmarks |
 | `make run` | Run the Antares server |
 | `make run-observatory` | Run the Observatory bridge |
@@ -179,7 +181,7 @@ docker compose up -d   # Redis on 127.0.0.1:6379
 | `make clean` | Remove build artifacts |
 | `make help` | List all targets |
 
-Phase-gated targets — `showcase`, `showcase-e2e`, `ui-dev` — fail loudly with a pointer until the phase that implements them arrives. `make diff-test`, `make crash-test`, `make tcl`, `make bench`, and `make verify` are live.
+Phase-gated targets — `showcase`, `showcase-e2e`, `ui-dev` — fail loudly with a pointer until the phase that implements them arrives. `make diff-test`, `make crash-test`, `make tcl`, `make bench`, `make bench-repl`, and `make verify` are live.
 
 ## Roadmap
 
@@ -212,7 +214,8 @@ From [`docs/PLAN.md`](docs/PLAN.md) §7 — roughly 20–22 weeks at 3 hours/day
 | [`docs/FILE_MANIFEST.md`](docs/FILE_MANIFEST.md) | Every tracked file, its purpose, and the hand-own commitments for the critical path |
 | [`docs/INTERVIEW_QBANK.md`](docs/INTERVIEW_QBANK.md) | Rehearsal bank: narrative, decisions, verification, and boundary questions with evidence pointers |
 | [`docs/COMPATIBILITY.md`](docs/COMPATIBILITY.md) | Pinned versions, verification claims, and deliberate divergences from real Redis |
-| [`docs/BENCHMARKS.md`](docs/BENCHMARKS.md) | Benchmark methodology, throughput results vs Redis 7.4 (P=1 and P=16), and reproducibility |
+| [`docs/BENCHMARKS.md`](docs/BENCHMARKS.md) | Benchmark methodology, throughput vs Redis 7.4 (P=1/P=16), replication overhead and lag, and reproducibility |
+| [`docs/FAILURE_MODES.md`](docs/FAILURE_MODES.md) | Client, network, master, replica, and disk failure behavior; durability contract; detection and operator actions |
 | [`docs/RUNBOOK.md`](docs/RUNBOOK.md) | Quick start (<5 min), configuration flags, operational commands, and troubleshooting |
 
 ## License

@@ -210,6 +210,28 @@ func TestBGREWRITEAOFWithoutAOF(t *testing.T) {
 	}
 }
 
+func TestAOFAppendFailureDoesNotFeedReplication(t *testing.T) {
+	clk := clock.NewFake(time.UnixMilli(1_000_000))
+	exec, aof, _, _ := newAOFExec(t, clk)
+	if err := aof.Close(); err != nil {
+		t.Fatalf("aof.Close: %v", err)
+	}
+
+	before := exec.Repl().MasterReplOffset()
+	if err := exec.appendEffects([][][]byte{{[]byte("SET"), []byte("k"), []byte("v")}}); err == nil {
+		t.Fatal("appendEffects succeeded after AOF close")
+	}
+	if got := exec.Repl().MasterReplOffset(); got != before {
+		t.Fatalf("replication offset after failed append = %d, want %d", got, before)
+	}
+	if err := exec.persistEvictions([]string{"k"}); err == nil {
+		t.Fatal("persistEvictions succeeded after AOF close")
+	}
+	if got := exec.Repl().MasterReplOffset(); got != before {
+		t.Fatalf("replication offset after failed eviction append = %d, want %d", got, before)
+	}
+}
+
 func TestAOFWriteBlockedAfterFailure(t *testing.T) {
 	clk := clock.NewFake(time.UnixMilli(1_000_000))
 	exec, aof, _, _ := newAOFExec(t, clk)

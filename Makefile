@@ -16,7 +16,7 @@ REF_ADDR ?= 127.0.0.1:6379
 PORT ?= 6380
 
 .PHONY: help build test test-race vet fmt tidy run run-observatory clean fuzz \
-	verify diff-test clock-check tcl-expire tcl-incr crash-test bench tcl showcase showcase-dev showcase-e2e ui-dev ui-build seed
+	verify diff-test clock-check lin-check tcl-expire tcl-incr crash-test bench bench-repl tcl showcase showcase-dev showcase-e2e ui-dev ui-build seed
 
 help:
 	@echo "Antares targets:"
@@ -33,6 +33,9 @@ help:
 	@echo "  diff-test        run the command differential harness against reference Redis (REF_ADDR=$(REF_ADDR))"
 	@echo "  crash-test       build and run the SIGKILL acked-write harness (CRASH_ITERATIONS=100)"
 	@echo "  clock-check      enforce the ADR-009 rule: no direct wall-clock reads outside clock/server I/O"
+	@echo "  lin-check        run the Porcupine concurrent-register linearizability check"
+	@echo "  bench            run throughput benchmarks vs Redis 7.4 and replication benchmarks"
+	@echo "  bench-repl       run replication throughput/lag benchmarks only (no Docker required)"
 	@echo "  tcl-expire       run the selected official Redis unit/expire tests (downloads pinned 7.4.11 tests)"
 	@echo "  tcl-incr         run the selected official Redis unit/type/incr tests"
 	@echo "  tcl              run both selected Tcl suites with a per-command report"
@@ -58,6 +61,9 @@ vet:
 clock-check:
 	@matches=$$(grep -rn --include='*.go' -E 'time\.(Now|Since)\(' internal cmd | grep -v '^internal/clock/clock.go:' | grep -v '^internal/server/server.go:' | grep -v '_test.go:' || true); \
 	if [ -n "$$matches" ]; then echo "$$matches"; echo "use internal/clock instead of direct wall-clock reads"; exit 1; fi
+
+lin-check:
+	$(GO) test -count=1 ./tests/linearizability/
 
 fmt:
 	gofmt -l -w .
@@ -104,6 +110,10 @@ seed:
 
 bench: build
 	@WRITE_CLAIMS=1 ./bench/scripts/run-bench.sh
+	@WRITE_CLAIMS=1 python3 ./bench/scripts/run-repl-bench.py
+
+bench-repl: build
+	@WRITE_CLAIMS=1 python3 ./bench/scripts/run-repl-bench.py
 
 verify: test-race clock-check diff-test tcl crash-test
 	@echo "==> Running fuzz smoke..."
@@ -111,6 +121,7 @@ verify: test-race clock-check diff-test tcl crash-test
 	$(GO) test -run='^$$' -fuzz=FuzzRecoverFile -fuzztime=5s ./internal/persist/
 	@echo "==> Running benchmarks and updating claims.json..."
 	@BENCH_REQUESTS=20000 BENCH_RUNS=3 WRITE_CLAIMS=1 ./bench/scripts/run-bench.sh
+	@REPL_REQUESTS=500000 REPL_RUNS=3 WRITE_CLAIMS=1 python3 ./bench/scripts/run-repl-bench.py
 	@echo "==> Verification complete: all tests, diffs, Tcl, crash-safety, fuzz, and benchmarks green!"
 
 showcase showcase-e2e ui-dev:

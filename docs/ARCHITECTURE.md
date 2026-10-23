@@ -195,7 +195,7 @@ sequenceDiagram
 
 ### 2.7 Verification Architecture (Pyramid)
 
-Antares validates compatibility and performance across a 6-layer pyramid:
+Antares validates compatibility and performance across a verification pyramid:
 
 ```
                   ┌────────────────────────┐
@@ -222,3 +222,5 @@ Antares validates compatibility and performance across a 6-layer pyramid:
 5. **Crash Durability**: 100 iterations of random SIGKILL during high write concurrency confirming zero acknowledged write loss.
 6. **Continuous Fuzzing**: Nightly 1-hour fuzzing across `FuzzReadRequest` (protocol) and `FuzzRecoverFile` (AOF recovery) exceeding 890 million clean executions.
 7. **Benchmarks**: Automated median measurements at P=1 and P=16 against reference Redis feeding machine-verifiable data into `claims.json`.
+
+Two behavior checks sit outside the compatibility pyramid. `make lin-check` samples concurrent SET/GET histories from six clients and checks them against Porcupine's register model; it is a sampled linearizability check, not a proof, and it exercises the single executor rather than replication. `docs/FAILURE_MODES.md` records the reviewed behavior for client disconnects, network cuts, master and replica crashes, slow replicas, disk/AOF failures, full-resync interruption, and manual promotion, with the chaos and persistence tests that evidence each case.
