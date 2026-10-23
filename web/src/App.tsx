@@ -8,6 +8,7 @@ import { NotFound } from './pages/NotFound';
 import { Overview } from './pages/Overview';
 import { Playground } from './pages/Playground';
 import { ReplicationLab } from './pages/ReplicationLab';
+import { InterviewMode } from './pages/InterviewMode';
 
 export default function App() {
   return (
@@ -19,6 +20,7 @@ export default function App() {
         <Route path="benchmarks" element={<Benchmarks />} />
         <Route path="durability" element={<DurabilityLab />} />
         <Route path="replication" element={<ReplicationLab />} />
+        <Route path="interview" element={<InterviewMode />} />
         <Route path="playground" element={<Playground />} />
         <Route path="keyspace" element={<Keyspace />} />
         <Route path="*" element={<NotFound />} />

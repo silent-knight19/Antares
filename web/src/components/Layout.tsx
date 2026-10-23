@@ -27,12 +27,13 @@ export function Layout() {
             <NavItem to="/benchmarks" label="Benchmarks" />
             <NavItem to="/durability" label="Durability Lab" />
             <NavItem to="/replication" label="Replication Lab" />
+            <NavItem to="/interview" label="Interview Mode" />
             <div className="hidden md:my-3 md:block md:border-t md:border-border" />
             <div className="hidden px-2 pb-1 text-[11px] uppercase tracking-wider text-text-faint md:block">Console</div>
             <NavItem to="/playground" label="Playground" />
             <NavItem to="/keyspace" label="Keyspace" />
           </nav>
-          <div className="hidden border-t border-border px-4 py-3 text-xs text-text-faint md:block">M3 · replication lab</div>
+          <div className="hidden border-t border-border px-4 py-3 text-xs text-text-faint md:block">M3 · interview ready</div>
         </aside>
         <main className="min-w-0 flex-1 overflow-auto">
           <div className="mx-auto max-w-[1440px] p-4 md:p-6">

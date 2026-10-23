@@ -205,3 +205,28 @@ export interface ReplicationActionResponse {
   window_start?: number;
   window_end?: number;
 }
+
+export interface TxStepResult {
+  command: string;
+  reply: any;
+  reply_type: string;
+  phase: string;
+  latency_ms: number;
+}
+
+export interface TransactionLabResponse {
+  scenario: string;
+  status: 'committed' | 'aborted_by_watch' | 'execabort' | string;
+  explanation: string;
+  steps: TxStepResult[];
+  tx_state: {
+    active: boolean;
+    dirty: boolean;
+    queued_count: number;
+    watched_count: number;
+    committed_items?: number;
+    conflict_detected?: boolean;
+    syntax_error?: boolean;
+    single_aof_frame?: boolean;
+  };
+}

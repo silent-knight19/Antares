@@ -10,6 +10,7 @@ import type {
   LiveBenchResult,
   ReplicationActionResponse,
   ReplicationLabResponse,
+  TransactionLabResponse,
 } from './types';
 
 export class ApiError extends Error {
@@ -82,6 +83,17 @@ export function performReplicationAction(params: {
   count?: number;
 }): Promise<ReplicationActionResponse> {
   return request<ReplicationActionResponse>('/api/lab/replication/action', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(params),
+  });
+}
+
+export function runTransactionLab(params: {
+  scenario?: string;
+  commands?: string[][];
+} = {}): Promise<TransactionLabResponse> {
+  return request<TransactionLabResponse>('/api/lab/transaction', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(params),

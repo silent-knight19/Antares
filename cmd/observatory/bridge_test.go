@@ -493,3 +493,71 @@ func TestReplicationAction(t *testing.T) {
 		t.Fatalf("unexpected full resync out: %+v", fullOut)
 	}
 }
+
+func TestTransactionLab(t *testing.T) {
+	_, ts := newTestBridge(t)
+
+	// 1. Clean commit
+	payload, _ := json.Marshal(map[string]any{"scenario": "clean_commit"})
+	resp, err := http.Post(ts.URL+"/api/lab/transaction", "application/json", bytes.NewReader(payload))
+	if err != nil {
+		t.Fatalf("POST transaction clean_commit: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("clean_commit status = %d", resp.StatusCode)
+	}
+	var cleanOut struct {
+		Scenario string `json:"scenario"`
+		Status   string `json:"status"`
+		Steps    []any  `json:"steps"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&cleanOut); err != nil {
+		t.Fatalf("decode clean_commit: %v", err)
+	}
+	if cleanOut.Status != "committed" || len(cleanOut.Steps) < 4 {
+		t.Fatalf("unexpected clean_commit output: %+v", cleanOut)
+	}
+
+	// 2. Watch conflict
+	payload, _ = json.Marshal(map[string]any{"scenario": "watch_conflict"})
+	resp2, err := http.Post(ts.URL+"/api/lab/transaction", "application/json", bytes.NewReader(payload))
+	if err != nil {
+		t.Fatalf("POST transaction watch_conflict: %v", err)
+	}
+	defer resp2.Body.Close()
+	if resp2.StatusCode != http.StatusOK {
+		t.Fatalf("watch_conflict status = %d", resp2.StatusCode)
+	}
+	var watchOut struct {
+		Scenario string `json:"scenario"`
+		Status   string `json:"status"`
+	}
+	if err := json.NewDecoder(resp2.Body).Decode(&watchOut); err != nil {
+		t.Fatalf("decode watch_conflict: %v", err)
+	}
+	if watchOut.Status != "aborted_by_watch" {
+		t.Fatalf("unexpected watch_conflict output: %+v", watchOut)
+	}
+
+	// 3. Syntax abort
+	payload, _ = json.Marshal(map[string]any{"scenario": "syntax_abort"})
+	resp3, err := http.Post(ts.URL+"/api/lab/transaction", "application/json", bytes.NewReader(payload))
+	if err != nil {
+		t.Fatalf("POST transaction syntax_abort: %v", err)
+	}
+	defer resp3.Body.Close()
+	if resp3.StatusCode != http.StatusOK {
+		t.Fatalf("syntax_abort status = %d", resp3.StatusCode)
+	}
+	var syntaxOut struct {
+		Scenario string `json:"scenario"`
+		Status   string `json:"status"`
+	}
+	if err := json.NewDecoder(resp3.Body).Decode(&syntaxOut); err != nil {
+		t.Fatalf("decode syntax_abort: %v", err)
+	}
+	if syntaxOut.Status != "execabort" {
+		t.Fatalf("unexpected syntax_abort output: %+v", syntaxOut)
+	}
+}

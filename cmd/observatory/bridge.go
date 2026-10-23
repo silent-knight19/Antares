@@ -112,6 +112,7 @@ func (b *Bridge) routes() http.Handler {
 	mux.HandleFunc("GET /api/lab/eviction-pool", b.handleEvictionPool)
 	mux.HandleFunc("GET /api/lab/replication", b.handleReplicationLab)
 	mux.HandleFunc("POST /api/lab/replication/action", b.handleReplicationAction)
+	mux.HandleFunc("POST /api/lab/transaction", b.handleTransactionLab)
 	mux.HandleFunc("GET /api/events/stream", b.handleEvents)
 	mux.Handle("/", http.HandlerFunc(b.serveStatic))
 	return b.guard(mux)
@@ -1130,6 +1131,246 @@ func (b *Bridge) handleEvents(w http.ResponseWriter, r *http.Request) {
 			})
 		}
 	}
+}
+
+type transactionLabRequest struct {
+	Scenario string     `json:"scenario"` // "clean_commit", "watch_conflict", "syntax_abort", or "custom"
+	Commands [][]string `json:"commands"` // optional custom list of commands
+}
+
+type txStepResult struct {
+	Command   string  `json:"command"`
+	Reply     any     `json:"reply"`
+	ReplyType string  `json:"reply_type"`
+	Phase     string  `json:"phase"` // "setup", "watch", "multi", "queue", "conflict", "commit"
+	LatencyMS float64 `json:"latency_ms"`
+}
+
+func stringArgsToBytes(args ...string) [][]byte {
+	out := make([][]byte, len(args))
+	for i, a := range args {
+		out[i] = []byte(a)
+	}
+	return out
+}
+
+func (b *Bridge) handleTransactionLab(w http.ResponseWriter, r *http.Request) {
+	var body transactionLabRequest
+	if err := decodeJSON(w, r, &body); err != nil && !errors.Is(err, io.EOF) {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	if body.Scenario == "" {
+		body.Scenario = "clean_commit"
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), defaultTargetTTL)
+	defer cancel()
+
+	c, err := client.Dial(ctx, b.cfg.AntaresAddr, client.WithTimeout(b.antares.timeout), client.WithClock(b.clock))
+	if err != nil {
+		writeError(w, http.StatusBadGateway, fmt.Errorf("dial antares: %w", err))
+		return
+	}
+	defer c.Close()
+
+	var steps []txStepResult
+	execStep := func(phase string, args ...string) (client.Result, error) {
+		res, err := c.Execute(ctx, stringArgsToBytes(args...)...)
+		if err != nil {
+			return res, err
+		}
+		rj := toReplyJSON(res.Reply)
+		steps = append(steps, txStepResult{
+			Command:   strings.Join(args, " "),
+			Reply:     rj.Value,
+			ReplyType: string(res.Reply.Kind),
+			Phase:     phase,
+			LatencyMS: ms(res.Latency),
+		})
+		return res, nil
+	}
+
+	var status string
+	var explanation string
+	txState := map[string]any{
+		"active":           false,
+		"dirty":            false,
+		"queued_count":     0,
+		"watched_count":    0,
+		"single_aof_frame": false,
+	}
+
+	switch body.Scenario {
+	case "watch_conflict":
+		// Step 1: Preload keys
+		_, _ = execStep("setup", "SET", "account:alice", "250")
+		_, _ = execStep("setup", "SET", "account:bob", "100")
+
+		// Step 2: WATCH key
+		_, _ = execStep("watch", "WATCH", "account:alice")
+		txState["watched_count"] = 1
+
+		// Step 3: MULTI
+		_, _ = execStep("multi", "MULTI")
+		txState["active"] = true
+
+		// Step 4: Queue DECRBY
+		_, _ = execStep("queue", "DECRBY", "account:alice", "50")
+		txState["queued_count"] = 1
+
+		// Step 5: Interleave external write to trigger WATCH conflict
+		extRes, extErr := b.antares.exec(ctx, "SET", "account:alice", "999")
+		if extErr == nil {
+			steps = append(steps, txStepResult{
+				Command:   "SET account:alice 999 (concurrent client write)",
+				Reply:     toReplyJSON(extRes.Reply).Value,
+				ReplyType: string(extRes.Reply.Kind),
+				Phase:     "conflict",
+				LatencyMS: ms(extRes.Latency),
+			})
+		}
+		txState["conflict_detected"] = true
+
+		// Step 6: Queue INCRBY
+		_, _ = execStep("queue", "INCRBY", "account:bob", "50")
+		txState["queued_count"] = 2
+
+		// Step 7: EXEC
+		execRes, err := execStep("commit", "EXEC")
+		txState["active"] = false
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
+		if execRes.Reply.Kind == client.KindNull || execRes.Reply.Kind == client.KindNullArray {
+			status = "aborted_by_watch"
+			explanation = "Value-snapshot mismatch detected for key 'account:alice' during EXEC. Entire transaction cleanly aborted; 0 queued mutations were applied."
+		} else {
+			status = "committed"
+			explanation = "Transaction executed."
+		}
+
+	case "syntax_abort":
+		// Step 1: MULTI
+		_, _ = execStep("multi", "MULTI")
+		txState["active"] = true
+
+		// Step 2: Valid queued write
+		_, _ = execStep("queue", "SET", "account:treasury", "1000")
+		txState["queued_count"] = 1
+
+		// Step 3: Syntax error / unknown command
+		_, _ = execStep("queue", "INVALID_TRANSACTION_COMMAND", "bad_arg")
+		txState["dirty"] = true
+		txState["syntax_error"] = true
+
+		// Step 4: Another queued command
+		_, _ = execStep("queue", "INCR", "account:treasury")
+		txState["queued_count"] = 2
+
+		// Step 5: EXEC
+		execRes, err := execStep("commit", "EXEC")
+		txState["active"] = false
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
+		if execRes.Reply.Kind == client.KindError && strings.Contains(execRes.Reply.Text, "EXECABORT") {
+			status = "execabort"
+			explanation = "Queue-time unknown command or arity error set the dirty flag on connection state. EXEC rejected execution with -EXECABORT without touching keyspace or disk."
+		} else {
+			status = "committed"
+			explanation = "Transaction executed."
+		}
+
+	case "custom":
+		if len(body.Commands) == 0 {
+			writeError(w, http.StatusBadRequest, errors.New("custom scenario requires at least one command in 'commands'"))
+			return
+		}
+		status = "committed"
+		explanation = "Custom transaction command sequence completed."
+		for _, cmdArgs := range body.Commands {
+			if len(cmdArgs) == 0 {
+				continue
+			}
+			cmdName := strings.ToUpper(cmdArgs[0])
+			phase := "exec"
+			switch cmdName {
+			case "WATCH", "UNWATCH":
+				phase = "watch"
+			case "MULTI":
+				phase = "multi"
+				txState["active"] = true
+			case "EXEC":
+				phase = "commit"
+				txState["active"] = false
+			default:
+				if txState["active"] == true {
+					phase = "queue"
+					txState["queued_count"] = txState["queued_count"].(int) + 1
+				}
+			}
+			res, err := execStep(phase, cmdArgs...)
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, err)
+				return
+			}
+			if cmdName == "EXEC" {
+				if res.Reply.Kind == client.KindNull || res.Reply.Kind == client.KindNullArray {
+					status = "aborted_by_watch"
+					explanation = "WATCH conflict invalidated the transaction; EXEC returned null."
+				} else if res.Reply.Kind == client.KindError && strings.Contains(res.Reply.Text, "EXECABORT") {
+					status = "execabort"
+					explanation = "Dirty flag triggered EXECABORT; transaction discarded."
+				}
+			}
+		}
+
+	default: // "clean_commit"
+		// Step 1: Preload keys
+		_, _ = execStep("setup", "SET", "account:alice", "250")
+		_, _ = execStep("setup", "SET", "account:bob", "100")
+
+		// Step 2: WATCH key
+		_, _ = execStep("watch", "WATCH", "account:alice")
+		txState["watched_count"] = 1
+
+		// Step 3: MULTI
+		_, _ = execStep("multi", "MULTI")
+		txState["active"] = true
+
+		// Step 4: Queue transfer
+		_, _ = execStep("queue", "DECRBY", "account:alice", "50")
+		_, _ = execStep("queue", "INCRBY", "account:bob", "50")
+		txState["queued_count"] = 2
+
+		// Step 5: EXEC
+		execRes, err := execStep("commit", "EXEC")
+		txState["active"] = false
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
+		if execRes.Reply.Kind == client.KindArray {
+			status = "committed"
+			explanation = "Atomic single-turn execution committed 2 operations. AOF effects flushed in a single CRC32-framed record."
+			txState["committed_items"] = len(execRes.Reply.Array)
+			txState["single_aof_frame"] = true
+		} else {
+			status = "unknown"
+			explanation = "EXEC returned: " + execRes.Reply.Text
+		}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"scenario":    body.Scenario,
+		"status":      status,
+		"explanation": explanation,
+		"steps":       steps,
+		"tx_state":    txState,
+	})
 }
 
 func writeSSE(w io.Writer, flusher http.Flusher, event string, id int, data any) {
