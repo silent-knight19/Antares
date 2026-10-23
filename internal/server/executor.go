@@ -57,7 +57,8 @@ type Executor struct {
 	replCancel context.CancelFunc
 	replDone   chan struct{}
 
-	fullResyncs atomic.Int32
+	replicaWriteTimeout atomic.Int64
+	fullResyncs         atomic.Int32
 
 	closeOnce sync.Once
 }
@@ -135,6 +136,7 @@ func newExecutorWithPing(st *store.Store, reg *Registry, active bool, c clock.Cl
 		registerTransactionCommands(reg)
 		registerReplicationCommands(reg, e)
 	}
+	e.replicaWriteTimeout.Store(int64(defaultReplicaWriteTimeout))
 	e.commands = reg
 	go e.loop()
 	if active {
@@ -145,6 +147,28 @@ func newExecutorWithPing(st *store.Store, reg *Registry, active bool, c clock.Cl
 
 // defaultReplicaPingInterval is the master keepalive period (Redis defaults to 10s).
 const defaultReplicaPingInterval = 10 * time.Second
+
+// defaultReplicaWriteTimeout bounds network writes to replicas (S2.3).
+const defaultReplicaWriteTimeout = 5 * time.Second
+
+// ReplicaWriteTimeout returns the per-replica stream write deadline.
+func (e *Executor) ReplicaWriteTimeout() time.Duration {
+	if e == nil {
+		return defaultReplicaWriteTimeout
+	}
+	d := e.replicaWriteTimeout.Load()
+	if d <= 0 {
+		return defaultReplicaWriteTimeout
+	}
+	return time.Duration(d)
+}
+
+// SetReplicaWriteTimeout configures the per-replica stream write deadline.
+func (e *Executor) SetReplicaWriteTimeout(d time.Duration) {
+	if e != nil {
+		e.replicaWriteTimeout.Store(int64(d))
+	}
+}
 
 func (e *Executor) replicationPingLoop(interval time.Duration) {
 	ticker := time.NewTicker(interval)

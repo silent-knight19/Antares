@@ -201,6 +201,9 @@ func (s *State) UnregisterSyncBuffer(buf *SyncBuffer) {
 func (s *State) SetSyncBufferLimit(limit int64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if limit <= 0 {
+		limit = DefaultSyncBufferCap
+	}
 	s.syncBufferLimit = limit
 }
 

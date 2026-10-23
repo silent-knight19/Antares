@@ -83,12 +83,9 @@ func TestSlowReplicaDoesNotBlockMaster(t *testing.T) {
 }
 
 func TestSlowFullResyncDisconnectsOnWriteTimeout(t *testing.T) {
-	oldTimeout := replicaWriteTimeout
-	replicaWriteTimeout = 50 * time.Millisecond
-	defer func() { replicaWriteTimeout = oldTimeout }()
-
 	exec := NewExecutor(nil, nil)
 	defer exec.Close()
+	exec.SetReplicaWriteTimeout(50 * time.Millisecond)
 
 	serverConn, replicaConn := net.Pipe()
 	defer replicaConn.Close()

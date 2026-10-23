@@ -183,7 +183,7 @@ func PerformHandshakeOnConn(ctx context.Context, conn net.Conn, cfg HandshakeCon
 		}
 	} else if strings.HasPrefix(psyncLine, "+CONTINUE") {
 		res.IsFullResync = false
-		parts := strings.Split(strings.TrimPrefix(psyncLine, "+CONTINUE"), " ")
+		parts := strings.Fields(strings.TrimPrefix(psyncLine, "+CONTINUE"))
 		if len(parts) >= 1 && parts[0] != "" {
 			res.MasterReplID = parts[0]
 		}

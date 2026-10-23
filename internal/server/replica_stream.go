@@ -8,10 +8,6 @@ import (
 	"github.com/silent-knight19/antares/internal/repl"
 )
 
-// replicaWriteTimeout bounds each network write so a stalled replica cannot pin
-// a stream goroutine or grow its buffer forever (S2.3).
-var replicaWriteTimeout = 5 * time.Second
-
 // attachReplicaStream makes sure the live write buffer is unregistered and
 // closed when the replica connection ends, even if no further writes arrive.
 func (e *Executor) attachReplicaStream(conn *ConnState, buf *repl.SyncBuffer) {
@@ -32,11 +28,12 @@ func (e *Executor) streamPartialResync(conn net.Conn, buf *repl.SyncBuffer, back
 		buf.Close()
 	}()
 
-	if err := writeReplicaStream(conn, []byte("+CONTINUE "+replID+"\r\n")); err != nil {
+	timeout := e.ReplicaWriteTimeout()
+	if err := writeReplicaStream(conn, []byte("+CONTINUE "+replID+"\r\n"), timeout); err != nil {
 		_ = conn.Close()
 		return
 	}
-	if err := writeReplicaStream(conn, backlog); err != nil {
+	if err := writeReplicaStream(conn, backlog, timeout); err != nil {
 		_ = conn.Close()
 		return
 	}
@@ -53,7 +50,8 @@ func (e *Executor) streamFullResync(conn net.Conn, session *FullResyncSession) {
 		e.endFullResync()
 	}()
 
-	if err := session.StreamOpen(deadlineWriter{conn: conn}); err != nil {
+	timeout := e.ReplicaWriteTimeout()
+	if err := session.StreamOpen(deadlineWriter{conn: conn, timeout: timeout}); err != nil {
 		_ = conn.Close()
 		return
 	}
@@ -63,6 +61,7 @@ func (e *Executor) streamFullResync(conn net.Conn, session *FullResyncSession) {
 // pumpReplicaStream forwards buffered mutations until the buffer closes or a
 // write fails.
 func (e *Executor) pumpReplicaStream(conn net.Conn, buf *repl.SyncBuffer) {
+	timeout := e.ReplicaWriteTimeout()
 	for {
 		chunks, err := buf.DrainChunks()
 		if err != nil {
@@ -70,7 +69,7 @@ func (e *Executor) pumpReplicaStream(conn net.Conn, buf *repl.SyncBuffer) {
 			return
 		}
 		for _, chunk := range chunks {
-			if err := writeReplicaStream(conn, chunk); err != nil {
+			if err := writeReplicaStream(conn, chunk, timeout); err != nil {
 				_ = conn.Close()
 				return
 			}
@@ -85,20 +84,21 @@ func (e *Executor) pumpReplicaStream(conn net.Conn, buf *repl.SyncBuffer) {
 
 // deadlineWriter applies the slow-replica write deadline to snapshot writes too.
 type deadlineWriter struct {
-	conn net.Conn
+	conn    net.Conn
+	timeout time.Duration
 }
 
 func (w deadlineWriter) Write(p []byte) (int, error) {
-	_ = w.conn.SetWriteDeadline(clock.Real{}.Now().Add(replicaWriteTimeout))
+	_ = w.conn.SetWriteDeadline(clock.Real{}.Now().Add(w.timeout))
 	return w.conn.Write(p)
 }
 
-func writeReplicaStream(conn net.Conn, p []byte) error {
+func writeReplicaStream(conn net.Conn, p []byte, timeout time.Duration) error {
 	if len(p) == 0 {
 		return nil
 	}
-	_ = conn.SetWriteDeadline(clock.Real{}.Now().Add(replicaWriteTimeout))
 	for len(p) > 0 {
+		_ = conn.SetWriteDeadline(clock.Real{}.Now().Add(timeout))
 		n, err := conn.Write(p)
 		if err != nil {
 			return err
