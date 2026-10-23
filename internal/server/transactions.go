@@ -180,8 +180,11 @@ func (e *Executor) execute(req execRequest, tx *txState) {
 	}
 
 	mutations := e.store.Mutations()
-	spopBefore := e.captureSpopBefore(req.req)
-	e.commands.DispatchWithConn(req.req, req.out, req.conn)
+	var spopBefore map[string]struct{}
+	if name == "spop" {
+		spopBefore = e.captureSpopBefore(req.req)
+	}
+	cmd.Run(req.req[1:], req.out, req.conn)
 	if err := e.propagate(req.req, mutations, spopBefore); err != nil {
 		req.out.Reset()
 		req.out.Error("MISCONF Errors writing to the AOF file: " + err.Error())

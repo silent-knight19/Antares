@@ -55,16 +55,31 @@ func saveListValue(st *store.Store, key string, v store.Value) {
 		return
 	}
 	v.Kind = store.KindList
-	st.SetPreservingTTL(key, v)
+	if v.Usage.Total > 0 {
+		st.SetPreservingTTLFast(key, v, v.Usage)
+	} else {
+		st.SetPreservingTTL(key, v)
+	}
 }
 
-func saveListState(st *store.Store, key string, base [][]byte, head int) {
+func listMemoryUsage(key string, v store.Value) store.Usage {
+	return store.Usage{
+		Dataset: v.Usage.Dataset,
+		Total:   store.EntryOverhead + int64(len(key)) + int64(cap(v.List))*store.SliceHeaderBytes + v.Usage.Dataset,
+	}
+}
+
+func saveListState(st *store.Store, key string, base [][]byte, head int, u store.Usage) {
 	if len(base) == head {
 		st.Delete(key)
 		return
 	}
-	base, head = listStorage(base, head, len(base)-head)
-	saveListValue(st, key, store.Value{Kind: store.KindList, List: base, ListHead: head})
+	liveLen := len(base) - head
+	if (head > 256 && head > liveLen) || (cap(base) > 4*liveLen && cap(base) > 512) {
+		base, head = listStorage(base, head, liveLen)
+		u.Total = store.EntryOverhead + int64(len(key)) + int64(cap(base))*store.SliceHeaderBytes + u.Dataset
+	}
+	saveListValue(st, key, store.Value{Kind: store.KindList, List: base, ListHead: head, Usage: u})
 }
 
 // listStorage trims to the live span and keeps front headroom for LPUSH; it
@@ -76,10 +91,8 @@ func listStorage(base [][]byte, head, length int) ([][]byte, int) {
 	headroom := length / 2
 	if headroom < 1 {
 		headroom = 1
-	}
-	total := head + length
-	if head <= headroom && total <= len(base) && cap(base) <= 2*total {
-		return base[:total], head
+	} else if headroom > 2048 {
+		headroom = 2048
 	}
 	next := make([][]byte, length+headroom)
 	copy(next[headroom:], base[head:head+length])
@@ -89,16 +102,25 @@ func listStorage(base [][]byte, head, length int) ([][]byte, int) {
 func pushList(st *store.Store, args [][]byte, left bool, out *protocol.Encoder) {
 	key := string(args[0])
 	elements := args[1:]
-	v, _, errMsg := listValue(st, key)
+	v, exists, errMsg := listValue(st, key)
 	if errMsg != "" {
 		out.Error(errMsg)
 		return
 	}
 	length := len(v.List) - v.ListHead
 
+	var addedBytes int64
+	for _, el := range elements {
+		addedBytes += int64(len(el))
+	}
+	if !exists {
+		v.Usage.Dataset = 0
+	}
+	v.Usage.Dataset += addedBytes
+
 	if !left {
 		v.List = append(v.List, elements...)
-		v.List, v.ListHead = listStorage(v.List, v.ListHead, length+len(elements))
+		v.Usage = listMemoryUsage(key, v)
 		saveListValue(st, key, v)
 		out.Int(int64(length + len(elements)))
 		return
@@ -111,21 +133,27 @@ func pushList(st *store.Store, args [][]byte, left bool, out *protocol.Encoder) 
 			v.List[oldHead-1-i] = element
 		}
 		v.ListHead = oldHead - n
+		v.Usage = listMemoryUsage(key, v)
 		saveListValue(st, key, v)
 		out.Int(int64(length + n))
 		return
 	}
 
-	headroom := (length + n) / 2
-	if headroom < 1 {
-		headroom = 1
+	headroom := length + n
+	if headroom < 16 {
+		headroom = 16
+	} else if headroom > 4096 {
+		headroom = 4096
 	}
 	base := make([][]byte, length+n+headroom)
 	for i, element := range elements {
 		base[headroom+n-1-i] = element
 	}
 	copy(base[headroom+n:], v.List[v.ListHead:])
-	saveListValue(st, key, store.Value{Kind: store.KindList, List: base, ListHead: headroom})
+	v.List = base
+	v.ListHead = headroom
+	v.Usage = listMemoryUsage(key, v)
+	saveListValue(st, key, v)
 	out.Int(int64(length + n))
 }
 
@@ -166,13 +194,17 @@ func popList(st *store.Store, args [][]byte, left bool, name string, out *protoc
 			popped := v.List[v.ListHead]
 			out.Bulk(popped)
 			v.List[v.ListHead] = nil
-			saveListState(st, key, v.List, v.ListHead+1)
+			v.Usage.Dataset -= int64(len(popped))
+			v.Usage = listMemoryUsage(key, v)
+			saveListState(st, key, v.List, v.ListHead+1, v.Usage)
 		} else {
 			last := len(v.List) - 1
 			popped := v.List[last]
 			out.Bulk(popped)
 			v.List[last] = nil
-			saveListState(st, key, v.List[:last], v.ListHead)
+			v.Usage.Dataset -= int64(len(popped))
+			v.Usage = listMemoryUsage(key, v)
+			saveListState(st, key, v.List[:last], v.ListHead, v.Usage)
 		}
 		return
 	}
@@ -187,17 +219,23 @@ func popList(st *store.Store, args [][]byte, left bool, name string, out *protoc
 	out.ArrayHeader(take)
 	if left {
 		for i := 0; i < take; i++ {
-			out.Bulk(v.List[v.ListHead+i])
+			elem := v.List[v.ListHead+i]
+			out.Bulk(elem)
+			v.Usage.Dataset -= int64(len(elem))
 			v.List[v.ListHead+i] = nil
 		}
-		saveListState(st, key, v.List, v.ListHead+take)
+		v.Usage = listMemoryUsage(key, v)
+		saveListState(st, key, v.List, v.ListHead+take, v.Usage)
 		return
 	}
 	for i := len(v.List) - 1; i >= len(v.List)-take; i-- {
-		out.Bulk(v.List[i])
+		elem := v.List[i]
+		out.Bulk(elem)
+		v.Usage.Dataset -= int64(len(elem))
 		v.List[i] = nil
 	}
-	saveListState(st, key, v.List[:len(v.List)-take], v.ListHead)
+	v.Usage = listMemoryUsage(key, v)
+	saveListState(st, key, v.List[:len(v.List)-take], v.ListHead, v.Usage)
 }
 
 func lrangeCommand(st *store.Store, args [][]byte, out *protocol.Encoder) {
@@ -344,7 +382,8 @@ func lremCommand(st *store.Store, args [][]byte, out *protocol.Encoder) {
 			v.List[i] = nil
 		}
 		if removed > 0 {
-			saveListState(st, key, v.List[:head+len(next)], head)
+			base, remHead := listStorage(v.List[:head+len(next)], head, len(next))
+			saveListValue(st, key, store.Value{Kind: store.KindList, List: base, ListHead: remHead})
 		}
 	} else {
 		next := make([][]byte, 0, len(list))
@@ -406,7 +445,8 @@ func ltrimCommand(st *store.Store, args [][]byte, out *protocol.Encoder) {
 	for i := keptEnd; i < len(v.List); i++ {
 		v.List[i] = nil
 	}
-	saveListState(st, key, v.List[:keptEnd], newHead)
+	base, trimmedHead := listStorage(v.List[:keptEnd], newHead, keptEnd-newHead)
+	saveListValue(st, key, store.Value{Kind: store.KindList, List: base, ListHead: trimmedHead})
 	out.Simple("OK")
 }
 

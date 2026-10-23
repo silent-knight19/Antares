@@ -110,7 +110,7 @@ func setCommand(st *store.Store, args [][]byte, out *protocol.Encoder) {
 			out.Error(errMsg)
 			return
 		}
-	} else {
+	} else if opts.nx || opts.xx || opts.keepTTL {
 		exists = st.Exists(key)
 	}
 	if (opts.nx && exists) || (opts.xx && !exists) {

@@ -7,17 +7,15 @@ package store
 // heap for payload-sized datasets (TestMemoryUsageTracksRuntime); it is a
 // logical estimate, not the allocator's byte count.
 const (
-	// entryOverhead is the amortized cost of one data-map entry at Go's load
-	// factor, including the inline Value struct (160 bytes after the 24-bit Lru
-	// field and cached Usage) and the key's string header.
-	entryOverhead = 264
+	EntryOverhead    = 264
+	IndexOverhead    = 48
+	SliceHeaderBytes = 24
+	HashEntryBytes   = 48
 
-	// indexOverhead is the amortized cost of one field/member index entry in
-	// map[string]int, excluding the key bytes (counted separately).
-	indexOverhead = 48
-
-	sliceHeaderBytes = 24
-	hashEntryBytes   = 48
+	entryOverhead    = EntryOverhead
+	indexOverhead    = IndexOverhead
+	sliceHeaderBytes = SliceHeaderBytes
+	hashEntryBytes   = HashEntryBytes
 )
 
 // Usage splits accounted keyspace bytes into the total (the number maxmemory

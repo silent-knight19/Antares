@@ -25,12 +25,36 @@ func AppendFrame(dst, payload []byte) []byte {
 	return append(dst, payload...)
 }
 
+func intDigits(n int) int {
+	if n < 10 {
+		return 1
+	}
+	if n < 100 {
+		return 2
+	}
+	if n < 1000 {
+		return 3
+	}
+	if n < 10000 {
+		return 4
+	}
+	if n < 100000 {
+		return 5
+	}
+	d := 0
+	for n > 0 {
+		d++
+		n /= 10
+	}
+	return d
+}
+
 // EncodeCommand renders a Redis command as a RESP2 array of bulk strings.
 // It is the payload format shared by AOF propagation and snapshot writes.
 func EncodeCommand(args ...[]byte) []byte {
-	size := 1 + len(strconv.Itoa(len(args))) + 2
+	size := 1 + intDigits(len(args)) + 2
 	for _, arg := range args {
-		size += 1 + len(strconv.Itoa(len(arg))) + 2 + len(arg) + 2
+		size += 1 + intDigits(len(arg)) + 2 + len(arg) + 2
 	}
 	buf := make([]byte, 0, size)
 	buf = append(buf, '*')

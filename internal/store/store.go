@@ -188,6 +188,7 @@ func (s *Store) Type(key string) string {
 // Set stores value under key and clears any previous expiry.
 func (s *Store) Set(key string, value []byte) {
 	v := Value{Kind: KindString, Str: value, Lru: s.lruClock()}
+	v.Usage = usageOf(key, v)
 	s.storeValue(key, v)
 	delete(s.expires, key)
 	s.mutations++
@@ -196,6 +197,7 @@ func (s *Store) Set(key string, value []byte) {
 // SetWithTTL stores value under key with an absolute Unix-millisecond expiry.
 func (s *Store) SetWithTTL(key string, value []byte, expiresAtMs int64) {
 	v := Value{Kind: KindString, Str: value, Lru: s.lruClock()}
+	v.Usage = usageOf(key, v)
 	s.storeValue(key, v)
 	s.expires[key] = expiresAtMs
 	s.mutations++
@@ -204,7 +206,6 @@ func (s *Store) SetWithTTL(key string, value []byte, expiresAtMs int64) {
 // storeValue replaces key's value and updates the incremental memory total.
 func (s *Store) storeValue(key string, value Value) {
 	s.removeValue(key)
-	value.Usage = usageOf(key, value)
 	s.data[key] = value
 	s.usage.Total += value.Usage.Total
 	s.usage.Dataset += value.Usage.Dataset
@@ -231,6 +232,21 @@ func (s *Store) SetPreservingTTL(key string, value Value) {
 	// Stamp the access clock here so a freshly created value never reads as
 	// maximally idle (handlers build Value literals with Lru unset).
 	value.Lru = s.lruClock()
+	value.Usage = usageOf(key, value)
+	s.storeValue(key, value)
+	s.mutations++
+}
+
+// SetPreservingTTLFast overwrites key with precomputed usage, bypassing usageOf.
+func (s *Store) SetPreservingTTLFast(key string, value Value, usage Usage) {
+	if value.Kind == KindHash && value.HashIndex == nil {
+		value.HashIndex = buildHashIndex(value.Hash)
+	}
+	if value.Kind == KindSet && value.SetIndex == nil {
+		value.SetIndex = buildSetIndex(value.Set)
+	}
+	value.Lru = s.lruClock()
+	value.Usage = usage
 	s.storeValue(key, value)
 	s.mutations++
 }

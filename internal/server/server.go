@@ -223,7 +223,7 @@ func (s *Server) serveConn(conn net.Conn) {
 	}()
 
 	ic := &connIO{Conn: conn, timeout: s.cfg.IdleTimeout, stats: s.cfg.Stats}
-	bw := bufio.NewWriter(ic)
+	bw := bufio.NewWriterSize(ic, readBufferSize)
 	ic.bw = bw
 	br := bufio.NewReaderSize(ic, readBufferSize)
 	enc := protocol.GetEncoder()

@@ -59,6 +59,18 @@ func (r *Registry) Register(cmd Command) {
 
 // Lookup returns the command registered under name.
 func (r *Registry) Lookup(name []byte) (Command, bool) {
+	if len(name) <= 32 {
+		var buf [32]byte
+		for i := 0; i < len(name); i++ {
+			c := name[i]
+			if c >= 'A' && c <= 'Z' {
+				c += 'a' - 'A'
+			}
+			buf[i] = c
+		}
+		cmd, ok := r.commands[string(buf[:len(name)])]
+		return cmd, ok
+	}
 	cmd, ok := r.commands[strings.ToLower(string(name))]
 	return cmd, ok
 }
@@ -80,10 +92,15 @@ func (r *Registry) DispatchWithConn(req protocol.Request, out *protocol.Encoder,
 		out.Error(protocol.WrongArity(cmd.Name))
 		return
 	}
+	cmd.Run(req[1:], out, conn)
+}
+
+// Run executes the command handler without an extra registry lookup.
+func (cmd Command) Run(args [][]byte, out *protocol.Encoder, conn *ConnState) {
 	if cmd.HandlerWithConn != nil {
-		cmd.HandlerWithConn(req[1:], out, conn)
+		cmd.HandlerWithConn(args, out, conn)
 	} else if cmd.Handler != nil {
-		cmd.Handler(req[1:], out)
+		cmd.Handler(args, out)
 	}
 }
 

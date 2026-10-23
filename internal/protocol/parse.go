@@ -72,7 +72,8 @@ func readMultibulkLimit(br *bufio.Reader, budget int64) (Request, bool, error) {
 	if _, err := br.ReadByte(); err != nil {
 		return nil, false, unexpectedEOF(err)
 	}
-	line, err := readCountLine(br, "too big mbulk count string")
+	var scratch [32]byte
+	line, err := readCountLine(br, scratch[:], "too big mbulk count string")
 	if err != nil {
 		return nil, false, err
 	}
@@ -103,7 +104,8 @@ func readMultibulkLimit(br *bufio.Reader, budget int64) (Request, bool, error) {
 }
 
 func readBulk(br *bufio.Reader, budget int64) ([]byte, error) {
-	line, err := readCountLine(br, "too big bulk count string")
+	var scratch [32]byte
+	line, err := readCountLine(br, scratch[:], "too big bulk count string")
 	if err != nil {
 		return nil, err
 	}
@@ -172,10 +174,21 @@ func readInline(br *bufio.Reader) (Request, bool, error) {
 	return args, false, nil
 }
 
-// readLine reads through delim and returns the bytes before it. Redis gives
-// up only when delim has not appeared within PROTO_INLINE_MAX_SIZE bytes.
 func readLine(br *bufio.Reader, delim byte, tooBigMsg string) ([]byte, error) {
-	var line []byte
+	slice, err := br.ReadSlice(delim)
+	if err == nil {
+		line := slice[:len(slice)-1]
+		if len(line) > inlineMaxSize {
+			return nil, &ProtocolError{Msg: tooBigMsg}
+		}
+		res := make([]byte, len(line))
+		copy(res, line)
+		return res, nil
+	}
+	if err != bufio.ErrBufferFull {
+		return nil, unexpectedEOF(err)
+	}
+	line := append([]byte(nil), slice...)
 	for {
 		b, err := br.ReadByte()
 		if err != nil {
@@ -194,10 +207,42 @@ func readLine(br *bufio.Reader, delim byte, tooBigMsg string) ([]byte, error) {
 // readCountLine reads a multibulk or bulk header line, then skips the byte
 // after its terminating '\r' blindly — redis 7.4 never checks that it is
 // '\n' (captured: "*1\rX$4\r\nPING\r\n" answers +PONG).
-func readCountLine(br *bufio.Reader, tooBigMsg string) ([]byte, error) {
-	line, err := readLine(br, '\r', tooBigMsg)
-	if err != nil {
-		return nil, err
+func readCountLine(br *bufio.Reader, scratch []byte, tooBigMsg string) ([]byte, error) {
+	slice, err := br.ReadSlice('\r')
+	if err == nil {
+		line := slice[:len(slice)-1]
+		if len(line) > inlineMaxSize {
+			return nil, &ProtocolError{Msg: tooBigMsg}
+		}
+		var res []byte
+		if len(line) <= len(scratch) {
+			copy(scratch, line)
+			res = scratch[:len(line)]
+		} else {
+			res = make([]byte, len(line))
+			copy(res, line)
+		}
+		if _, err := br.ReadByte(); err != nil {
+			return nil, unexpectedEOF(err)
+		}
+		return res, nil
+	}
+	if err != bufio.ErrBufferFull {
+		return nil, unexpectedEOF(err)
+	}
+	line := append([]byte(nil), slice...)
+	for {
+		b, err := br.ReadByte()
+		if err != nil {
+			return nil, unexpectedEOF(err)
+		}
+		if b == '\r' {
+			break
+		}
+		line = append(line, b)
+		if len(line) > inlineMaxSize {
+			return nil, &ProtocolError{Msg: tooBigMsg}
+		}
 	}
 	if _, err := br.ReadByte(); err != nil {
 		return nil, unexpectedEOF(err)

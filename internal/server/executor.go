@@ -224,23 +224,33 @@ func (e *Executor) HandleReplicated(ctx context.Context, req protocol.Request, o
 	e.handle(ctx, req, out, conn, syncGen, bytesRead)
 }
 
+var donePool = sync.Pool{
+	New: func() any {
+		return make(chan struct{}, 1)
+	},
+}
+
 func (e *Executor) handle(ctx context.Context, req protocol.Request, out *protocol.Encoder, conn *ConnState, syncGen uint64, bytesRead int64) {
 	if conn == nil {
 		conn = &ConnState{}
 	}
-	done := make(chan struct{})
+	done := donePool.Get().(chan struct{})
 	select {
 	case e.requests <- execRequest{req: req, out: out, conn: conn, done: done, ctx: ctx, syncGen: syncGen, replBytes: bytesRead}:
 	case <-ctx.Done():
+		donePool.Put(done)
 		return
 	case <-e.quit:
+		donePool.Put(done)
 		return
 	case <-e.done:
+		donePool.Put(done)
 		return
 	}
 	// Never return while the executor could still write through out.
 	select {
 	case <-done:
+		donePool.Put(done)
 	case <-e.done:
 	}
 }
@@ -291,6 +301,14 @@ func (e *Executor) loop() {
 			select {
 			case req := <-e.requests:
 				e.run(req)
+				for i := 0; i < 256; i++ {
+					select {
+					case nextReq := <-e.requests:
+						e.run(nextReq)
+					default:
+						i = 256
+					}
+				}
 			case <-e.quit:
 				return
 			}
@@ -303,6 +321,14 @@ func (e *Executor) loop() {
 		select {
 		case req := <-e.requests:
 			e.run(req)
+			for i := 0; i < 256; i++ {
+				select {
+				case nextReq := <-e.requests:
+					e.run(nextReq)
+				default:
+					i = 256
+				}
+			}
 		case <-timer.C:
 			e.expiry.Run(e.clock.Now().UnixMilli(), e.cycleBudget())
 			timer.Reset(e.cycleInterval())
@@ -347,7 +373,10 @@ func (e *Executor) run(req execRequest) {
 			req.out.Reset()
 			req.out.Error("ERR internal error")
 		}
-		close(req.done)
+		select {
+		case req.done <- struct{}{}:
+		default:
+		}
 	}()
 	if req.ctx != nil && req.ctx.Err() != nil {
 		return
