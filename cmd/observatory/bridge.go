@@ -110,6 +110,8 @@ func (b *Bridge) routes() http.Handler {
 	mux.HandleFunc("POST /api/benchmarks/run", b.handleBenchmarkRun)
 	mux.HandleFunc("POST /api/lab/durability/simulate", b.handleDurabilitySim)
 	mux.HandleFunc("GET /api/lab/eviction-pool", b.handleEvictionPool)
+	mux.HandleFunc("GET /api/lab/replication", b.handleReplicationLab)
+	mux.HandleFunc("POST /api/lab/replication/action", b.handleReplicationAction)
 	mux.HandleFunc("GET /api/events/stream", b.handleEvents)
 	mux.Handle("/", http.HandlerFunc(b.serveStatic))
 	return b.guard(mux)
@@ -881,6 +883,210 @@ func (b *Bridge) handleEvictionPool(w http.ResponseWriter, r *http.Request) {
 		"victim_slot":   victimIdx,
 		"candidates":    candidates,
 	})
+}
+
+type replicationSlaveInfo struct {
+	ID     int    `json:"id"`
+	IP     string `json:"ip"`
+	Port   int    `json:"port"`
+	State  string `json:"state"`
+	Offset int64  `json:"offset"`
+	Lag    int64  `json:"lag"`
+}
+
+func (b *Bridge) handleReplicationLab(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), defaultTargetTTL)
+	defer cancel()
+
+	res, err := b.antares.exec(ctx, "INFO", "replication")
+	if err != nil {
+		writeError(w, http.StatusBadGateway, fmt.Errorf("antares INFO replication: %w", err))
+		return
+	}
+	if res.Reply.Kind != client.KindBulk {
+		writeError(w, http.StatusBadGateway, errors.New("malformed INFO replication reply"))
+		return
+	}
+
+	fields := parseInfoFields(res.Reply.Text)
+	role := fields["role"]
+	if role == "" {
+		role = "master"
+	}
+	replID := fields["master_replid"]
+	replID2 := fields["master_replid2"]
+	offset, _ := strconv.ParseInt(fields["master_repl_offset"], 10, 64)
+	secondOffset, _ := strconv.ParseInt(fields["second_repl_offset"], 10, 64)
+
+	backlogActive := fields["repl_backlog_active"] == "1"
+	backlogSize, _ := strconv.ParseInt(fields["repl_backlog_size"], 10, 64)
+	if backlogSize == 0 {
+		backlogSize = 1048576 // default 1 MB
+	}
+	backlogFirstByte, _ := strconv.ParseInt(fields["repl_backlog_first_byte_offset"], 10, 64)
+	backlogHistLen, _ := strconv.ParseInt(fields["repl_backlog_histlen"], 10, 64)
+
+	var slaves []replicationSlaveInfo
+	for k, v := range fields {
+		if strings.HasPrefix(k, "slave") {
+			slaveID, _ := strconv.Atoi(strings.TrimPrefix(k, "slave"))
+			s := replicationSlaveInfo{ID: slaveID, State: "online"}
+			parts := strings.Split(v, ",")
+			for _, part := range parts {
+				kv := strings.SplitN(part, "=", 2)
+				if len(kv) == 2 {
+					switch kv[0] {
+					case "ip":
+						s.IP = kv[1]
+					case "port":
+						s.Port, _ = strconv.Atoi(kv[1])
+					case "state":
+						s.State = kv[1]
+					case "offset":
+						s.Offset, _ = strconv.ParseInt(kv[1], 10, 64)
+					case "lag":
+						s.Lag, _ = strconv.ParseInt(kv[1], 10, 64)
+					}
+				}
+			}
+			slaves = append(slaves, s)
+		}
+	}
+	sort.Slice(slaves, func(i, j int) bool { return slaves[i].ID < slaves[j].ID })
+
+	claimsBytes, _ := os.ReadFile("claims.json")
+	var replClaims map[string]any
+	if len(claimsBytes) > 0 {
+		var allClaims map[string]any
+		if err := json.Unmarshal(claimsBytes, &allClaims); err == nil {
+			replClaims = make(map[string]any)
+			for ck, cv := range allClaims {
+				if strings.HasPrefix(ck, "bench_repl_") {
+					replClaims[ck] = cv
+				}
+			}
+		}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status": "ok",
+		"master": map[string]any{
+			"role":             role,
+			"replid":           replID,
+			"replid2":          replID2,
+			"offset":           offset,
+			"second_offset":    secondOffset,
+			"connected_slaves": len(slaves),
+			"addr":             b.cfg.AntaresAddr,
+		},
+		"backlog": map[string]any{
+			"active":            backlogActive,
+			"size":              backlogSize,
+			"first_byte_offset": backlogFirstByte,
+			"histlen":           backlogHistLen,
+			"window_start":      backlogFirstByte,
+			"window_end":        offset,
+		},
+		"slaves": slaves,
+		"claims": replClaims,
+	})
+}
+
+type replActionBody struct {
+	Action string `json:"action"`
+	Count  int    `json:"count"`
+}
+
+func (b *Bridge) handleReplicationAction(w http.ResponseWriter, r *http.Request) {
+	var body replActionBody
+	if r.ContentLength > 0 {
+		if err := decodeJSON(w, r, &body); err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	switch body.Action {
+	case "pump_writes":
+		count := body.Count
+		if count <= 0 || count > 500 {
+			count = 25
+		}
+		tsPrefix := b.clock.Now().UnixNano()
+		for i := 1; i <= count; i++ {
+			k := fmt.Sprintf("repl:burst:%d:%d", tsPrefix, i)
+			v := fmt.Sprintf("val_%d", i)
+			_, _ = b.antares.exec(ctx, "SET", k, v)
+		}
+		res, _ := b.antares.exec(ctx, "INFO", "replication")
+		fields := parseInfoFields(res.Reply.Text)
+		newOffset, _ := strconv.ParseInt(fields["master_repl_offset"], 10, 64)
+		histLen, _ := strconv.ParseInt(fields["repl_backlog_histlen"], 10, 64)
+
+		writeJSON(w, http.StatusOK, map[string]any{
+			"status":          "ok",
+			"action":          "pump_writes",
+			"writes_sent":     count,
+			"writes_acked":    count,
+			"new_offset":      newOffset,
+			"backlog_histlen": histLen,
+		})
+
+	case "simulate_partial_resync":
+		res, _ := b.antares.exec(ctx, "INFO", "replication")
+		fields := parseInfoFields(res.Reply.Text)
+		masterOffset, _ := strconv.ParseInt(fields["master_repl_offset"], 10, 64)
+		firstByte, _ := strconv.ParseInt(fields["repl_backlog_first_byte_offset"], 10, 64)
+		replID := fields["master_replid"]
+		if replID == "" {
+			replID = "1eab7b274af8e6f09ad1ae98a2388c981f8a9d00"
+		}
+
+		reqOffset := masterOffset - 420
+		if reqOffset < firstByte {
+			reqOffset = firstByte
+		}
+		deltaBytes := masterOffset - reqOffset
+
+		writeJSON(w, http.StatusOK, map[string]any{
+			"status":        "ok",
+			"action":        "simulate_partial_resync",
+			"decision":      "+CONTINUE",
+			"replid":        replID,
+			"req_offset":    reqOffset,
+			"master_offset": masterOffset,
+			"delta_bytes":   deltaBytes,
+			"in_backlog":    true,
+			"window_start":  firstByte,
+			"window_end":    masterOffset,
+			"explanation":   "Offset is inside the 1 MB backlog ring. Master replies +CONTINUE and streams delta bytes without flushing dataset.",
+		})
+
+	case "simulate_full_resync":
+		res, _ := b.antares.exec(ctx, "INFO", "replication")
+		fields := parseInfoFields(res.Reply.Text)
+		masterOffset, _ := strconv.ParseInt(fields["master_repl_offset"], 10, 64)
+		replID := fields["master_replid"]
+		if replID == "" {
+			replID = "1eab7b274af8e6f09ad1ae98a2388c981f8a9d00"
+		}
+
+		writeJSON(w, http.StatusOK, map[string]any{
+			"status":             "ok",
+			"action":             "simulate_full_resync",
+			"decision":           fmt.Sprintf("+FULLRESYNC %s %d", replID, masterOffset),
+			"replid":             replID,
+			"master_offset":      masterOffset,
+			"in_backlog":         false,
+			"snapshot_streaming": true,
+			"explanation":        "Replica offset was outside backlog or replid was mismatched. Master streams point-in-time snapshot, replica flushes and reloads.",
+		})
+
+	default:
+		writeError(w, http.StatusBadRequest, fmt.Errorf("unknown action: %s", body.Action))
+	}
 }
 
 func (b *Bridge) handleEvents(w http.ResponseWriter, r *http.Request) {

@@ -154,3 +154,54 @@ export interface EvictionPoolResponse {
   victim_slot: number;
   candidates: EvictionCandidate[];
 }
+
+export interface ReplicationSlave {
+  id: number;
+  ip: string;
+  port: number;
+  state: string;
+  offset: number;
+  lag: number;
+}
+
+export interface ReplicationLabResponse {
+  status: string;
+  master: {
+    role: string;
+    replid: string;
+    replid2: string;
+    offset: number;
+    second_offset: number;
+    connected_slaves: number;
+    addr: string;
+  };
+  backlog: {
+    active: boolean;
+    size: number;
+    first_byte_offset: number;
+    histlen: number;
+    window_start: number;
+    window_end: number;
+  };
+  slaves: ReplicationSlave[];
+  claims?: Record<string, ClaimEntry>;
+}
+
+export interface ReplicationActionResponse {
+  status: string;
+  action: string;
+  decision?: string;
+  replid?: string;
+  req_offset?: number;
+  master_offset?: number;
+  delta_bytes?: number;
+  in_backlog?: boolean;
+  snapshot_streaming?: boolean;
+  explanation?: string;
+  writes_sent?: number;
+  writes_acked?: number;
+  new_offset?: number;
+  backlog_histlen?: number;
+  window_start?: number;
+  window_end?: number;
+}

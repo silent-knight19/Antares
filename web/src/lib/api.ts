@@ -8,6 +8,8 @@ import type {
   InfoResponse,
   KeysResponse,
   LiveBenchResult,
+  ReplicationActionResponse,
+  ReplicationLabResponse,
 } from './types';
 
 export class ApiError extends Error {
@@ -70,6 +72,22 @@ export function simulateDurability(count = 30): Promise<DurabilitySimResponse> {
 export function fetchEvictionPool(): Promise<EvictionPoolResponse> {
   return request<EvictionPoolResponse>('/api/lab/eviction-pool');
 }
+
+export function fetchReplicationLab(): Promise<ReplicationLabResponse> {
+  return request<ReplicationLabResponse>('/api/lab/replication');
+}
+
+export function performReplicationAction(params: {
+  action: 'pump_writes' | 'simulate_partial_resync' | 'simulate_full_resync';
+  count?: number;
+}): Promise<ReplicationActionResponse> {
+  return request<ReplicationActionResponse>('/api/lab/replication/action', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(params),
+  });
+}
+
 
 export function exec(args: string[], target = 'antares'): Promise<ExecResponse> {
   return request<ExecResponse>('/api/exec', {

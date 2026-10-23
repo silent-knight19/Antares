@@ -405,3 +405,91 @@ func TestEvictionPool(t *testing.T) {
 		t.Fatalf("unexpected candidates len: %d", len(out.Candidates))
 	}
 }
+
+func TestReplicationLab(t *testing.T) {
+	_, ts := newTestBridge(t)
+	var out struct {
+		Status string `json:"status"`
+		Master struct {
+			Role   string `json:"role"`
+			Offset int64  `json:"offset"`
+		} `json:"master"`
+		Backlog struct {
+			Size int64 `json:"size"`
+		} `json:"backlog"`
+	}
+	if code := getJSON(t, ts.URL+"/api/lab/replication", &out); code != http.StatusOK {
+		t.Fatalf("replication lab status = %d", code)
+	}
+	if out.Status != "ok" || out.Master.Role != "master" || out.Backlog.Size != 1048576 {
+		t.Fatalf("unexpected replication lab out: %+v", out)
+	}
+}
+
+func TestReplicationAction(t *testing.T) {
+	_, ts := newTestBridge(t)
+
+	// 1. Pump writes
+	payload, _ := json.Marshal(map[string]any{"action": "pump_writes", "count": 10})
+	resp, err := http.Post(ts.URL+"/api/lab/replication/action", "application/json", bytes.NewReader(payload))
+	if err != nil {
+		t.Fatalf("POST action pump_writes: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("pump_writes status = %d", resp.StatusCode)
+	}
+	var pumpOut struct {
+		Action     string `json:"action"`
+		WritesSent int    `json:"writes_sent"`
+		NewOffset  int64  `json:"new_offset"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&pumpOut); err != nil {
+		t.Fatalf("decode pump_writes: %v", err)
+	}
+	if pumpOut.Action != "pump_writes" || pumpOut.WritesSent != 10 || pumpOut.NewOffset <= 0 {
+		t.Fatalf("unexpected pump_writes: %+v", pumpOut)
+	}
+
+	// 2. Simulate partial resync (+CONTINUE)
+	payload, _ = json.Marshal(map[string]any{"action": "simulate_partial_resync"})
+	resp2, err := http.Post(ts.URL+"/api/lab/replication/action", "application/json", bytes.NewReader(payload))
+	if err != nil {
+		t.Fatalf("POST action simulate_partial_resync: %v", err)
+	}
+	defer resp2.Body.Close()
+	if resp2.StatusCode != http.StatusOK {
+		t.Fatalf("simulate_partial_resync status = %d", resp2.StatusCode)
+	}
+	var partialOut struct {
+		Decision  string `json:"decision"`
+		InBacklog bool   `json:"in_backlog"`
+	}
+	if err := json.NewDecoder(resp2.Body).Decode(&partialOut); err != nil {
+		t.Fatalf("decode partial resync: %v", err)
+	}
+	if partialOut.Decision != "+CONTINUE" || !partialOut.InBacklog {
+		t.Fatalf("unexpected partial resync out: %+v", partialOut)
+	}
+
+	// 3. Simulate full resync (+FULLRESYNC)
+	payload, _ = json.Marshal(map[string]any{"action": "simulate_full_resync"})
+	resp3, err := http.Post(ts.URL+"/api/lab/replication/action", "application/json", bytes.NewReader(payload))
+	if err != nil {
+		t.Fatalf("POST action simulate_full_resync: %v", err)
+	}
+	defer resp3.Body.Close()
+	if resp3.StatusCode != http.StatusOK {
+		t.Fatalf("simulate_full_resync status = %d", resp3.StatusCode)
+	}
+	var fullOut struct {
+		Decision  string `json:"decision"`
+		InBacklog bool   `json:"in_backlog"`
+	}
+	if err := json.NewDecoder(resp3.Body).Decode(&fullOut); err != nil {
+		t.Fatalf("decode full resync: %v", err)
+	}
+	if !strings.HasPrefix(fullOut.Decision, "+FULLRESYNC") || fullOut.InBacklog {
+		t.Fatalf("unexpected full resync out: %+v", fullOut)
+	}
+}

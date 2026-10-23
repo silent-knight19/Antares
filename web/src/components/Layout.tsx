@@ -14,15 +14,6 @@ function NavItem({ to, label }: { to: string; label: string }) {
   );
 }
 
-function LaterItem({ label, milestone }: { label: string; milestone: string }) {
-  return (
-    <div className="flex items-center justify-between rounded-md px-3 py-2 text-sm text-text-faint" aria-disabled="true">
-      <span>{label}</span>
-      <span className="font-mono text-xs">{milestone}</span>
-    </div>
-  );
-}
-
 export function Layout() {
   return (
     <div className="flex h-full min-h-screen flex-col bg-bg">
@@ -35,14 +26,13 @@ export function Layout() {
             <NavItem to="/metrics" label="Metrics" />
             <NavItem to="/benchmarks" label="Benchmarks" />
             <NavItem to="/durability" label="Durability Lab" />
+            <NavItem to="/replication" label="Replication Lab" />
             <div className="hidden md:my-3 md:block md:border-t md:border-border" />
             <div className="hidden px-2 pb-1 text-[11px] uppercase tracking-wider text-text-faint md:block">Console</div>
             <NavItem to="/playground" label="Playground" />
             <NavItem to="/keyspace" label="Keyspace" />
-            <div className="hidden md:my-3 md:block md:border-t md:border-border" />
-            <LaterItem label="Replication" milestone="M3" />
           </nav>
-          <div className="hidden border-t border-border px-4 py-3 text-xs text-text-faint md:block">M2 · showcase</div>
+          <div className="hidden border-t border-border px-4 py-3 text-xs text-text-faint md:block">M3 · replication lab</div>
         </aside>
         <main className="min-w-0 flex-1 overflow-auto">
           <div className="mx-auto max-w-[1440px] p-4 md:p-6">
