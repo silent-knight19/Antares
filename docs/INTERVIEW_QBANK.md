@@ -20,16 +20,18 @@ Evidence: `README.md`, `docs/PLAN.md` §1–§3, `docs/BENCHMARKS.md`.
 
 Antares is architected around a single-executor concurrency model: concurrent client I/O runs across lightweight Go goroutines, which push parsed RESP2 requests through a bounded channel into a single keyspace executor. This delivers single-threaded sequential semantics without lock contention or data races by construction.
 
-On top of the core store and 71 Redis commands, I built three critical systems:
+On top of the core store and 71 Redis commands, I built four critical systems:
 1. **Durability**: A framed AOF log with 32-bit length headers and IEEE CRC32 checksums, group-commit fsync policies, and background snapshot rewrites. We verified zero acknowledged write loss across 100 SIGKILL crash iterations.
 2. **Memory & Eviction**: A logical memory model that calculates retained keyspace overhead within 10% of Go's heap, enforcing Redis's exact `CMD_DENYOOM` error gates and implementing 24-bit approximated-LRU sampling pool eviction, achieving 98–100% hot-set retention under churn.
 3. **Transactions**: ACID atomicity for MULTI/EXEC with dirty aborts and value-snapshot WATCH invalidation, committed as a single atomic AOF frame.
+4. **Replication & Resilience**: Asynchronous PSYNC master-replica streaming with a 1 MB backlog ring for `+CONTINUE` partial resync, shared snapshot streaming, bounded 64 MiB output buffers preventing master stalls, and AOF-first ordering verified across 50× mid-stream kill chaos cycles and Porcupine linearizability testing.
 
 To eliminate 'works on my machine' claims, I built the Antares Observatory—a companion service that monitors internal telemetry and renders performance numbers strictly from an automated `claims.json` pipeline. We run differential tests against pinned Redis 7.4.11 in Docker with zero mismatches, 65 official Redis Tcl test suites, and continuous 1-hour fuzz soaks exceeding 890 million iterations with zero crashes."
 
-Evidence: `docs/ARCHITECTURE.md`, `docs/DECISIONS.md`, `docs/RUNBOOK.md`.
+Evidence: `docs/ARCHITECTURE.md`, `docs/DECISIONS.md`, `docs/RUNBOOK.md`, `docs/FAILURE_MODES.md`.
 
 ### Q1b. Technical Deep-Dive / System Walkthrough (10 minutes)
+
 
 When an interviewer says: *"Take 10 minutes and walk me through the entire architecture from connection accept to disk commit and testing."*
 
@@ -71,6 +73,7 @@ Evidence: `docs/ARCHITECTURE.md`, `docs/BENCHMARKS.md`, `docs/COMPATIBILITY.md`.
 ### Q1c. Resume Ready Bullets (SDE-1 / Systems Software Engineer)
 
 - **Engineered high-performance Redis-compatible in-memory store in Go**, implementing RESP2 protocol, 71 commands across core data structures (strings, lists, hashes, sets), and single-executor sequential concurrency model.
+- **Architected PSYNC master-replica replication engine** featuring 1 MB backlog ring for partial resync (`+CONTINUE`), bounded 64 MiB client buffers protecting master latency, and AOF-first ordering; validated zero state divergence across 50× kill chaos cycles and Porcupine linearizability model checks.
 - **Designed crash-resilient persistence engine** utilizing CRC32-framed AOF logs, group commit (`always`/`everysec`), and atomic snapshot rewrites, verified with zero acknowledged write loss across 100× SIGKILL chaos tests.
 - **Implemented memory accounting & approximated LRU eviction** using 24-bit access clocks and a 16-slot candidate pool, retaining 98–100% of hot working sets under continuous cold churn.
 - **Built MULTI/EXEC transaction state machine** featuring queue-time syntax validation, `EXECABORT` semantics, value-snapshot `WATCH` invalidation, and single-frame atomic AOF persistence.
@@ -192,7 +195,36 @@ A standard `redis-benchmark` setup comparing Antares against reference Redis 7.4
 
 Evidence: ADR-018; `bench/scripts/run-bench.sh`; `docs/BENCHMARKS.md`; `claims.json`; `bench/results/`; `Makefile` (`make bench`, `make verify`).
 
+### Q24. How does replication work in Antares, and how does PSYNC decide between partial and full resync?
+
+Replication is asynchronous and follows the Redis 7.4 PSYNC protocol. When a replica connects, it executes a handshake (`PING`, `REPLCONF listening-port`, `REPLCONF capa psync2`, and `PSYNC <replid> <offset>`). The master inspects the requested replid and offset against its 1 MB in-memory circular backlog ring buffer. If the replid matches `master_replid` (or `master_replid2` post-promotion) and the requested offset falls within `[backlog_start, master_offset]`, the master responds with `+CONTINUE` and streams only the missing delta bytes from the backlog buffer without flushing the replica dataset. If the replid is unknown (e.g. initial sync `PSYNC ? -1` or after master process restart) or the replica's offset has fallen out of the 1 MB window, the master returns `+FULLRESYNC <replid> <offset>`. For full resync, Antares streams a point-in-time snapshot using the shared snapshot format while buffering concurrent client writes, and the replica applies it in place before resuming live stream consumption.
+
+Evidence: ADR-030; `internal/repl/`; `TestPSyncDecisionPath`, `TestReplicaReconnectUsesPartialResync`, `TestReplicaFullResyncAndApplyLoop`.
+
+### Q25. How do you protect the master from slow, lagging, or stalled replicas?
+
+A critical challenge in single-executor systems is preventing slow network I/O from stalling keyspace execution. Antares never writes replication frames directly within the executor loop. Instead, the executor writes encoded commands into the 1 MB backlog ring buffer and fans them out to per-replica output channels. Each connected replica is serviced by an independent streaming pump goroutine with a 64 MiB output buffer limit and an atomic 5-second socket write deadline. If a replica stops reading or network latency causes its buffer to exceed 64 MiB or miss its write deadline, the master immediately terminates that replica's connection and cleans up its state. The master executor and normal client traffic are completely isolated and never stall.
+
+Evidence: ADR-030; `internal/server/replica_commands.go`; `TestSlowReplicaDoesNotBlockMaster`, `TestSlowFullResyncDisconnectsOnWriteTimeout`, `TestPumpReplicaStreamDisconnectsOnOverflow`.
+
+### Q26. Why must AOF append precede feeding the replication backlog, and what happens when an AOF write fails?
+
+In persistence architectures with replication, ordering between disk writes and network propagation is an invariant. In Antares, command mutations are collected and written/fsynced to the AOF *before* feeding the replication backlog. If the backlog were fed first and the AOF append subsequently failed (due to disk full or I/O error), the client would receive a `-MISCONF Errors writing to the AOF file` failure, but the mutation would already have reached replicas and been applied. By enforcing AOF-append-first in both `appendEffects` and `persistEvictions`, a `-MISCONF` rejected write is never broadcast to replicas. On the master, an AOF write failure is sticky: all subsequent mutations are refused with `-MISCONF` while reads continue, until the operator frees space and restarts the node.
+
+Evidence: ADR-024, ADR-030; `internal/server/persistence.go`, `internal/server/executor.go`; `TestAOFAppendFailureDoesNotFeedReplication`, `TestAOFWriteBlockedAfterFailure`; `docs/FAILURE_MODES.md` §1 & §6.
+
+### Q27. How do you test and verify replication correctness and linearizability?
+
+We verify replication through a multi-tiered test harness:
+1. **Chaos Testing**: `TestReplicaChaos50Kills` cuts the replica TCP connection 50 consecutive times mid-stream while a concurrent write client pumps mutations, asserting automatic reconnect, correct `+CONTINUE` resumption, and 100% key and offset equality after every reconnect.
+2. **Split-Brain Testing**: `TestSplitBrainPromotionForcesFullResync` simulates network partitions and `REPLICAOF NO ONE` promotions, verifying that new replids force full resyncs and prevent divergent keyspace splits.
+3. **Linearizability Model Checking**: `make lin-check` uses Porcupine to record real-time concurrent SET/GET interleavings from 6 concurrent clients (360 total operations) on a shared register, validating that all observed reads and writes form a valid sequential linearizable history.
+4. **Replication Benchmarks**: `make bench-repl` measures SET throughput and lag under load (P=1: 190k → 140k rps, 26% overhead; P=16: 747k → 399k rps, 46% overhead; max offset lag 63 KB, replica catch-up <0.2 ms).
+
+Evidence: ADR-030; `tests/linearizability/linearizability_test.go`, `tests/chaos/`, `bench/scripts/run-repl-bench.py`, `docs/BENCHMARKS.md`, `docs/FAILURE_MODES.md`.
+
 ---
+
 
 ## 4. Boundaries ("what does it NOT do?")
 

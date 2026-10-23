@@ -165,10 +165,10 @@ Each package carries a `doc.go` charter referencing its ADR; real files land in 
 | Path | What it is | Ownership |
 |---|---|---|
 | `docs/PLAN.md` | Single source of truth: scope, phases, exit criteria, protocol, DoD | scaffold |
-| `docs/DECISIONS.md` | ADR log (ADR-001…022): context, options, why chosen/rejected, trade-offs, proof | scaffold |
+| `docs/DECISIONS.md` | ADR log (ADR-001…030): context, options, why chosen/rejected, trade-offs, proof | scaffold |
 | `docs/PROJECT_LOG.md` | Session log — deliverables, issues (STAR shape), exit evidence, next task | scaffold |
 | `docs/FILE_MANIFEST.md` | This file | scaffold |
-| `docs/INTERVIEW_QBANK.md` | Rehearsal Q&A + boundary-of-knowledge list | scaffold |
+| `docs/INTERVIEW_QBANK.md` | Rehearsal Q&A + boundary-of-knowledge list, updated with replication deep-dive (Q24–Q27) | scaffold |
 | `docs/COMPATIBILITY.md` | Pinned versions, compat claims, deliberate divergences, licensing note (stub until P9.1) | scaffold |
 | `docs/FAILURE_MODES.md` | S3.3 failure contract: durability table, client/network/master/replica/disk failure matrix, split-brain and full-resync behavior, non-goals, detection/runbook, and evidence commands | scaffold |
 | `docs/UI-DESIGN.md` | U0 design baseline: dark-theme tokens, ASCII shell/Playground/Keyspace wireframes, render policy, a11y, keyboard map, and the M1 API contract; updated at U3/U4/U6a to match the built console | scaffold |

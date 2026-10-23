@@ -115,7 +115,7 @@ bench: build
 bench-repl: build
 	@WRITE_CLAIMS=1 python3 ./bench/scripts/run-repl-bench.py
 
-verify: test-race clock-check diff-test tcl crash-test
+verify: test-race clock-check diff-test tcl crash-test lin-check
 	@echo "==> Running fuzz smoke..."
 	$(GO) test -run='^$$' -fuzz=FuzzReadRequest -fuzztime=5s ./internal/protocol/
 	$(GO) test -run='^$$' -fuzz=FuzzRecoverFile -fuzztime=5s ./internal/persist/

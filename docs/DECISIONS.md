@@ -727,3 +727,38 @@
   - "Why not model Redis locally?" → a model is a second set of assumptions; diffing two running servers is the independent oracle.
   - "What did the generator catch?" → it surfaced the known C-`int` LSET divergence on the first sweep, which validated the documented boundary and forced the exclusion list to be explicit.
 - Proof: `tests/differential/generator_test.go`, `canonical.go`, `canonical_test.go`, `edge_diff_test.go`, `surface_diff_test.go`; 30 seeds × 1,000 steps green against the pinned container; `make diff-test` green on the corpus + generator + edge + connection surface.
+
+## ADR-030 — Replication: asynchronous propagation, PSYNC partial/full resync, bounded replica buffers, and AOF-first ordering
+- Date: 2026-10-23 · Phase: S1–S3 (S3.4) · Status: Accepted
+- Context: In Phase S, Antares introduced master-replica replication to deliver read scalability, failure tolerance, and off-master inspection. Redis replication relies on the PSYNC protocol, monotonic offset tracking, a fixed-size replication backlog ring buffer, snapshot streaming for full synchronization, and asynchronous stream propagation without blocking client writes. In Go, we needed to design a replication engine that integrates seamlessly with our single-executor architecture (ADR-002), ensures the master executor never stalls on slow, paused, or severed replica connections, guarantees deterministic write ordering across AOF persistence (ADR-004/024) and replication backlogs, and handles network cut chaos and promotion without split-brain corruption.
+- Options:
+  - A. Synchronous replication with distributed consensus (Raft/Multi-Paxos) and client-blocking acknowledgements (`WAIT`).
+  - B. Asynchronous master-replica replication implementing the Redis 7.4-compatible `PSYNC` protocol (`+CONTINUE` partial resync within a 1 MB backlog ring, `+FULLRESYNC` with shared snapshot streaming and concurrent-write buffering), bounded per-replica output buffers (64 MiB limit) with write deadlines to shed slow replicas, an asynchronous replica apply loop enforcing `-READONLY` gating, and strict AOF-first ordering on the executor before feeding the backlog.
+  - C. Inline synchronous socket writes inside the executor loop, dispatching replication frames directly to connected replicas before returning client replies.
+- Decision: B.
+  - **Handshake & Offset Tracking**: Replicas initiate replication with a standard handshake (`PING`, `REPLCONF listening-port`, `REPLCONF capa psync2`, `PSYNC <replid> <offset>`). The master maintains a 40-character hexadecimal `MasterReplID` and monotonic `MasterReplOffset`.
+  - **1 MB Backlog Ring Buffer**: The master maintains a circular buffer of the last 1 MB of replication stream traffic. If a reconnecting replica presents a matching replid and an offset within `[backlog_start, master_offset]`, the master replies `+CONTINUE <replid>` and transmits the missing backlog slice without flushes. If the replid differs or the offset has fallen outside the window, the master replies `+FULLRESYNC <replid> <offset>`.
+  - **Snapshot Streaming**: Full resynchronization streams a point-in-time snapshot using the shared snapshot format (ADR-007) plus concurrent-write buffering. Replicas flush existing datasets and apply the stream in place. Concurrent full resyncs are throttled to one at a time.
+  - **Bounded Replica Buffers & Slow-Replica Disconnect**: To guarantee the master executor is never blocked by a slow, paused, or lagging replica, each replica link has an asynchronous pump goroutine with a 64 MiB output buffer and a 5-second write deadline. Overflowing or timing out disconnects the replica cleanly, leaving master throughput unaffected.
+  - **Strict AOF-First Mutation Ordering**: In both `appendEffects` and `persistEvictions`, mutating effects are written and fsynced/buffered to the AOF *before* feeding the replication backlog. If an AOF write fails with `-MISCONF`, the mutation is never forwarded to replicas, preventing master-replica divergence on rejected writes.
+  - **Split-Brain & Promotion**: Manual promotion via `REPLICAOF NO ONE` generates a fresh random replid, stores the previous replid as `master_replid2`, and resets the backlog. A reconnecting former master or divergent replica is forced to full-resync, discarding divergent history and preventing split-brain corruption.
+- Why chosen:
+  - Preserves single-executor throughput: client writes are acknowledged immediately without waiting for network RTT or replica ACKs.
+  - Redis protocol compatibility: standard Redis clients and replicas can connect and interpret PSYNC replies.
+  - Eliminates backpressure: 64 MiB buffers with deadlines isolate the master executor from network stalls.
+  - Strict durability safety: AOF-first ordering guarantees that a write rejected by disk policy is never propagated to replicas.
+- Why rejected:
+  - A: Breaks Redis protocol compatibility, adds multi-RTT latency to every write, and violates the project scope (ADR-012).
+  - C: Inlining network writes in the executor would allow a single slow network interface or stalled replica to freeze all clients globally.
+- Trade-offs accepted:
+  - Replication is asynchronous: acknowledged writes can be lost if a master process crashes before propagating to replicas (no `WAIT` command).
+  - Replicas apply full resyncs in place (flush then load): reads on the replica may observe a partial dataset while `master_sync_in_progress:1`.
+  - Replids and offsets are in-memory only: restarting a master or replica forces a full resync even when AOF is enabled.
+- Revisit if:
+  - Distributed consensus or synchronous replication (`WAIT`) is explicitly required by future multi-node extensions.
+- Interview Q&A:
+  - "How does Antares decide between partial and full resync?" → The master compares the replica's PSYNC replid with its current replid, and checks whether the requested offset falls within the 1 MB backlog ring window. If both match, it sends `+CONTINUE` and streams only the backlog delta; otherwise it sends `+FULLRESYNC` and streams a complete snapshot.
+  - "How do you protect the master from slow or hanging replicas?" → Each replica connection has a separate streaming pump with a 64 MiB buffer limit and a 5-second write deadline. If a replica stops reading, its buffer fills and it is closed; the master executor never waits on network I/O.
+  - "Why must AOF append precede feeding the replication backlog?" → If the backlog were fed first and the AOF disk write subsequently failed with `-MISCONF`, the client would be told the write failed while replicas had already received and applied it, creating unrecoverable state divergence.
+  - "How is split-brain prevented during promotion?" → Promoting a replica with `REPLICAOF NO ONE` assigns a fresh random replid and resets the backlog. If an old master subsequently rejoins, the replid mismatch triggers a full resync, overwriting divergent state.
+- Proof: `internal/repl/` (`handshake.go`, `backlog.go`, `repl.go`, `snapshot.go`), `internal/server/persistence.go` (`appendEffects`), `internal/server/executor.go` (`persistEvictions`), `internal/server/replica_commands.go`; `TestPSyncDecisionPath`, `TestReplicaReconnectUsesPartialResync`, `TestSlowReplicaDoesNotBlockMaster`, `TestSlowFullResyncDisconnectsOnWriteTimeout`, `TestReplicaChaos50Kills`, `TestSplitBrainPromotionForcesFullResync`, `TestAOFAppendFailureDoesNotFeedReplication`; `docs/FAILURE_MODES.md`, `tests/linearizability/linearizability_test.go`, `bench/scripts/run-repl-bench.py`.

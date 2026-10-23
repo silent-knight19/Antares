@@ -912,3 +912,28 @@
   - `go test -count=1 ./...` green (`internal/server` ~9.2 s); `go test -count=1 -race ./...` green (`internal/server` ~11.8 s).
   - `make lin-check` green; `go vet ./...`, `gofmt -l internal cmd tests`, `make clock-check`, and `git diff --check` clean.
 - Next session first task: S3.4 — fresh-clone `make verify`, full QBank rehearsal, and the retrospective ADR.
+
+### 2026-10-23 — S3.4: Final Replication Verification, Retrospective ADR-030, and QBank Rehearsal (Phase S Complete)
+
+- Built:
+  - `docs/DECISIONS.md`: authored **ADR-030** (`Replication: asynchronous propagation, PSYNC partial/full resync, bounded replica buffers, and AOF-first ordering`) documenting the replication architecture, backlog window math, bounded output buffer isolation, strict AOF-first ordering, and split-brain promotion safety.
+  - `docs/INTERVIEW_QBANK.md`: refreshed project elevator pitches and resume bullets with replication achievements; added dedicated replication deep-dive questions (Q24–Q27) covering PSYNC decision logic, slow-replica protection, AOF ordering, chaos testing, and linearizability checking.
+  - `Makefile`: added `lin-check` to the `verify` target prerequisites so Porcupine linearizability model checking runs as part of the unified verification umbrella.
+  - `docs/PLAN.md`: marked Phase S (Replication Core, Partial Resync & Resilience, Replication Verification) **100% complete** across all subphases S1.1–S3.4. All 61 planned Go backend and replication sessions (P0–P10 + S1–S3) are now complete.
+  - `docs/FILE_MANIFEST.md`: updated descriptions for `DECISIONS.md` (ADR-001...030) and `INTERVIEW_QBANK.md` (Q24–Q27).
+- Findings:
+  - Single-executor serialization allows clean isolation of replication streaming: the master writes to an in-memory backlog and per-replica channels, while dedicated asynchronous pump goroutines handle network backpressure.
+  - The combination of a 64 MiB output buffer limit and 5-second write deadline eliminates the risk of lagging or wedged replicas degrading master write latency.
+  - Verification across the full pyramid (race detection, ADR-009 clock AST lint, 1,000+ differential tests against Docker Redis 7.4.11, 65 official Tcl tests, 100x SIGKILL crash recovery, fuzzing, and Porcupine linearizability) provides end-to-end confidence without mocks.
+- Files touched: `docs/DECISIONS.md`, `docs/INTERVIEW_QBANK.md`, `docs/PLAN.md`, `docs/FILE_MANIFEST.md`, `docs/PROJECT_LOG.md`, `Makefile`.
+- ADRs written: ADR-030 (`Replication: asynchronous propagation, PSYNC partial/full resync, bounded replica buffers, and AOF-first ordering`).
+- Exit evidence:
+  - `make test-race`: 100% clean across all packages (0 data races detected).
+  - `make clock-check`: clean (ADR-009 boundary maintained).
+  - `make diff-test`: green against containerized Redis 7.4.11.
+  - `make tcl`: 65/65 official Redis Tcl tests pass (39 expire + 26 incr).
+  - `make crash-test`: 100x SIGKILL iterations green with zero acknowledged write loss.
+  - `make lin-check`: Porcupine concurrent-register linearizability check PASS.
+  - `make bench-repl`: replication throughput and offset lag benchmark clean.
+  - `gofmt -l .`, `make vet`, `git diff --check`: 100% clean.
+- Next session first task: Milestone M2 — Antares Observatory Showcase: begin U5 (Overview & guided tour engine) and U7 (real-time RED/USE metrics telemetry charts).
