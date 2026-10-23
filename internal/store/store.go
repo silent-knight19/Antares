@@ -59,12 +59,12 @@ type HashEntry struct {
 }
 
 type Store struct {
-	data        map[string]Value
-	expires     map[string]int64
-	clock       clock.Clock
-	scanSeed    maphash.Seed
-	expiredKeys uint64
-	mutations   uint64
+	data         map[string]Value
+	expires      map[string]int64
+	clock        clock.Clock
+	scanSeed     maphash.Seed
+	expiredKeys  uint64
+	mutations    uint64
 	usage        Usage
 	onLazyExpire func(key string)
 }

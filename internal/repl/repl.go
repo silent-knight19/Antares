@@ -57,12 +57,12 @@ type State struct {
 	slaveReadOnly   bool
 	slavePriority   int
 
-	slaves          []*SlaveInfo
-	slavesByID      map[uint64]*SlaveInfo
-	nextSlaveID     uint64
-	lastIO          time.Time
-	syncInProgress  bool
-	syncEpoch       uint64
+	slaves         []*SlaveInfo
+	slavesByID     map[uint64]*SlaveInfo
+	nextSlaveID    uint64
+	lastIO         time.Time
+	syncInProgress bool
+	syncEpoch      uint64
 
 	backlogActive   bool
 	backlogSize     int64

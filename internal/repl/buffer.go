@@ -85,7 +85,6 @@ func (b *SyncBuffer) notifyLocked() {
 	}
 }
 
-
 // DrainChunks returns all accumulated chunks without flattening into a single slice,
 // resetting the buffer.
 func (b *SyncBuffer) DrainChunks() ([][]byte, error) {
