@@ -57,6 +57,13 @@ func setMemberIndex(v store.Value, member []byte) int {
 	return index
 }
 
+func setMemoryUsage(key string, members [][]byte, index map[string]int, dataset int64) store.Usage {
+	return store.Usage{
+		Dataset: dataset,
+		Total:   store.EntryOverhead + int64(len(key)) + int64(cap(members))*store.SliceHeaderBytes + int64(len(index))*store.IndexOverhead + 2*dataset,
+	}
+}
+
 func saddCommand(st *store.Store, args [][]byte, out *protocol.Encoder) {
 	key := string(args[0])
 	v, exists, errMsg := setValue(st, key)
@@ -66,8 +73,13 @@ func saddCommand(st *store.Store, args [][]byte, out *protocol.Encoder) {
 	}
 	members := v.Set
 	index := v.SetIndex
-	if index == nil {
+	dataset := v.Usage.Dataset
+	if !exists || index == nil {
 		index = buildSetIndex(members)
+		if !exists {
+			members = make([][]byte, 0, max(len(args)-1, 64))
+			dataset = 0
+		}
 	}
 	added := int64(0)
 	for _, member := range args[1:] {
@@ -77,10 +89,12 @@ func saddCommand(st *store.Store, args [][]byte, out *protocol.Encoder) {
 		}
 		index[name] = len(members)
 		members = append(members, member)
+		dataset += int64(len(member))
 		added++
 	}
 	if added > 0 || !exists {
-		st.SetPreservingTTL(key, store.Value{Kind: store.KindSet, Set: members, SetIndex: index})
+		u := setMemoryUsage(key, members, index, dataset)
+		st.SetPreservingTTLFast(key, store.Value{Kind: store.KindSet, Set: members, SetIndex: index, Usage: u}, u)
 	}
 	out.Int(added)
 }
@@ -105,27 +119,28 @@ func sremCommand(st *store.Store, args [][]byte, out *protocol.Encoder) {
 	for _, member := range args[1:] {
 		targets[string(member)] = struct{}{}
 	}
-	members, removed := removeSetMembers(members, index, targets)
+	dataset := v.Usage.Dataset
+	members, removed, newDataset := removeSetMembersWithDataset(members, index, targets, dataset)
 	if removed > 0 {
 		if len(members) == 0 {
 			st.Delete(key)
 		} else {
 			members = rightSize(members)
-			st.SetPreservingTTL(key, store.Value{Kind: store.KindSet, Set: members, SetIndex: index})
+			u := setMemoryUsage(key, members, index, newDataset)
+			st.SetPreservingTTLFast(key, store.Value{Kind: store.KindSet, Set: members, SetIndex: index, Usage: u}, u)
 		}
 	}
 	out.Int(removed)
 }
 
-// removeSetMembers uses the member index and swap-remove: sets are unordered,
-// so this is O(1) per member instead of a full scan and index rebuild.
-func removeSetMembers(members [][]byte, index map[string]int, targets map[string]struct{}) ([][]byte, int64) {
+func removeSetMembersWithDataset(members [][]byte, index map[string]int, targets map[string]struct{}, dataset int64) ([][]byte, int64, int64) {
 	removed := int64(0)
 	for member := range targets {
 		pos, ok := index[string(member)]
 		if !ok {
 			continue
 		}
+		dataset -= int64(len(member))
 		last := len(members) - 1
 		if pos != last {
 			members[pos] = members[last]
@@ -136,7 +151,10 @@ func removeSetMembers(members [][]byte, index map[string]int, targets map[string
 		delete(index, string(member))
 		removed++
 	}
-	return members, removed
+	if dataset < 0 {
+		dataset = 0
+	}
+	return members, removed, dataset
 }
 
 func smembersCommand(st *store.Store, args [][]byte, out *protocol.Encoder) {
@@ -235,11 +253,13 @@ func spopCommand(st *store.Store, args [][]byte, out *protocol.Encoder) {
 	if index == nil {
 		index = buildSetIndex(members)
 	}
+	dataset := v.Usage.Dataset
 	out.ArrayHeader(take)
 	for range take {
 		pos := rand.IntN(len(members))
 		popped := members[pos]
 		out.Bulk(popped)
+		dataset -= int64(len(popped))
 		last := len(members) - 1
 		delete(index, string(popped))
 		if pos != last {
@@ -257,7 +277,11 @@ func spopCommand(st *store.Store, args [][]byte, out *protocol.Encoder) {
 	if len(next) < initial/2 {
 		index = buildSetIndex(next)
 	}
-	st.SetPreservingTTL(key, store.Value{Kind: store.KindSet, Set: next, SetIndex: index})
+	if dataset < 0 {
+		dataset = 0
+	}
+	u := setMemoryUsage(key, next, index, dataset)
+	st.SetPreservingTTLFast(key, store.Value{Kind: store.KindSet, Set: next, SetIndex: index, Usage: u}, u)
 }
 
 func popMember(st *store.Store, key string, v store.Value, index int) []byte {
@@ -268,7 +292,7 @@ func popMember(st *store.Store, key string, v store.Value, index int) []byte {
 		members[index] = members[last]
 	}
 	members[last] = nil
-	next := rightSize(members[:last])
+	next := members[:last]
 	if len(next) == 0 {
 		st.Delete(key)
 		return popped
@@ -279,10 +303,15 @@ func popMember(st *store.Store, key string, v store.Value, index int) []byte {
 	} else {
 		delete(indexMap, string(popped))
 		if index != last {
-			indexMap[string(members[index])] = index
+			indexMap[string(next[index])] = index
 		}
 	}
-	st.SetPreservingTTL(key, store.Value{Kind: store.KindSet, Set: next, SetIndex: indexMap})
+	dataset := v.Usage.Dataset - int64(len(popped))
+	if dataset < 0 {
+		dataset = 0
+	}
+	u := setMemoryUsage(key, next, indexMap, dataset)
+	st.SetPreservingTTLFast(key, store.Value{Kind: store.KindSet, Set: next, SetIndex: indexMap, Usage: u}, u)
 	return popped
 }
 

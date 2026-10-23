@@ -89,10 +89,10 @@ func listStorage(base [][]byte, head, length int) ([][]byte, int) {
 		return nil, 0
 	}
 	headroom := length / 2
-	if headroom < 1 {
-		headroom = 1
-	} else if headroom > 2048 {
-		headroom = 2048
+	if headroom < 64 {
+		headroom = 64
+	} else if headroom > 65536 {
+		headroom = 65536
 	}
 	next := make([][]byte, length+headroom)
 	copy(next[headroom:], base[head:head+length])
@@ -110,8 +110,12 @@ func pushList(st *store.Store, args [][]byte, left bool, out *protocol.Encoder) 
 	length := len(v.List) - v.ListHead
 
 	var addedBytes int64
-	for _, el := range elements {
-		addedBytes += int64(len(el))
+	if len(elements) == 1 {
+		addedBytes = int64(len(elements[0]))
+	} else {
+		for _, el := range elements {
+			addedBytes += int64(len(el))
+		}
 	}
 	if !exists {
 		v.Usage.Dataset = 0
@@ -119,6 +123,9 @@ func pushList(st *store.Store, args [][]byte, left bool, out *protocol.Encoder) 
 	v.Usage.Dataset += addedBytes
 
 	if !left {
+		if !exists {
+			v.List = make([][]byte, 0, max(len(elements), 64))
+		}
 		v.List = append(v.List, elements...)
 		v.Usage = listMemoryUsage(key, v)
 		saveListValue(st, key, v)
@@ -140,10 +147,10 @@ func pushList(st *store.Store, args [][]byte, left bool, out *protocol.Encoder) 
 	}
 
 	headroom := length + n
-	if headroom < 16 {
-		headroom = 16
-	} else if headroom > 4096 {
-		headroom = 4096
+	if headroom < 64 {
+		headroom = 64
+	} else if headroom > 65536 {
+		headroom = 65536
 	}
 	base := make([][]byte, length+n+headroom)
 	for i, element := range elements {

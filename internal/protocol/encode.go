@@ -39,6 +39,14 @@ func (e *Encoder) Reset() { e.buf = e.buf[:0] }
 // Simple writes +<s>\r\n. Callers pass fixed strings without CR/LF, as
 // Redis's addReplyStatus does.
 func (e *Encoder) Simple(s string) {
+	if s == "PONG" {
+		e.buf = append(e.buf, '+', 'P', 'O', 'N', 'G', '\r', '\n')
+		return
+	}
+	if s == "OK" {
+		e.buf = append(e.buf, '+', 'O', 'K', '\r', '\n')
+		return
+	}
 	e.buf = append(e.buf, '+')
 	e.buf = append(e.buf, s...)
 	e.buf = append(e.buf, '\r', '\n')

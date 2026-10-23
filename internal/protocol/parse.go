@@ -2,6 +2,7 @@ package protocol
 
 import (
 	"bufio"
+	"bytes"
 	"errors"
 	"io"
 )
@@ -315,6 +316,23 @@ func splitInline(line []byte) ([][]byte, bool) {
 		if b == 0 {
 			line = line[:i]
 			break
+		}
+	}
+	if bytes.IndexAny(line, "\"'\\") == -1 {
+		var args [][]byte
+		p := 0
+		for {
+			for p < len(line) && isBlank(line[p]) {
+				p++
+			}
+			if p == len(line) {
+				return args, true
+			}
+			start := p
+			for p < len(line) && !isBlank(line[p]) {
+				p++
+			}
+			args = append(args, line[start:p])
 		}
 	}
 	var args [][]byte
