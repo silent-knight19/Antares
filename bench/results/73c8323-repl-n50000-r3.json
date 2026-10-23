@@ -1,0 +1,211 @@
+{
+  "commit": "73c8323",
+  "timestamp": "2026-10-23T06:59:57Z",
+  "platform": "darwin/arm64",
+  "go_version": "go1.27.1",
+  "requests_per_run": 50000,
+  "clients": 50,
+  "runs_count": 3,
+  "pipelines": [
+    1,
+    16
+  ],
+  "sample_interval_ms": 50,
+  "throughput": [
+    {
+      "pipeline": 1,
+      "command": "SET",
+      "without_replica": {
+        "median_rps": 185185.2,
+        "stdev_rps": 4397.6,
+        "all_rps": [
+          177936.0,
+          185185.2,
+          185873.6
+        ],
+        "p50_ms": 0.167,
+        "p99_ms": 0.399
+      },
+      "with_replica": {
+        "median_rps": 134408.6,
+        "stdev_rps": 11707.0,
+        "all_rps": [
+          134408.6,
+          121951.2,
+          145348.8
+        ],
+        "p50_ms": 0.207,
+        "p99_ms": 0.479
+      },
+      "overhead_percent": 27.4,
+      "throughput_retained_percent": 72.6
+    },
+    {
+      "pipeline": 16,
+      "command": "SET",
+      "without_replica": {
+        "median_rps": 602409.7,
+        "stdev_rps": 21605.1,
+        "all_rps": [
+          617283.9,
+          574712.7,
+          602409.7
+        ],
+        "p50_ms": 1.287,
+        "p99_ms": 1.903
+      },
+      "with_replica": {
+        "median_rps": 393700.8,
+        "stdev_rps": 30019.5,
+        "all_rps": [
+          357142.8,
+          416666.7,
+          393700.8
+        ],
+        "p50_ms": 2.023,
+        "p99_ms": 2.623
+      },
+      "overhead_percent": 34.6,
+      "throughput_retained_percent": 65.4
+    }
+  ],
+  "lag": [
+    {
+      "pipeline": 1,
+      "runs": [
+        {
+          "pipeline": 1,
+          "run": 1,
+          "rps": 134408.59,
+          "p50_ms": 0.207,
+          "p99_ms": 0.479,
+          "lag_samples": 8,
+          "samples": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            135
+          ],
+          "lag_median_bytes": 0,
+          "lag_p95_bytes": 135,
+          "lag_max_bytes": 135,
+          "catchup_ms": 0.1
+        },
+        {
+          "pipeline": 1,
+          "run": 2,
+          "rps": 121951.22,
+          "p50_ms": 0.231,
+          "p99_ms": 0.455,
+          "lag_samples": 9,
+          "samples": [
+            0,
+            0,
+            0,
+            0,
+            450,
+            0,
+            180,
+            0,
+            945
+          ],
+          "lag_median_bytes": 0,
+          "lag_p95_bytes": 945,
+          "lag_max_bytes": 945,
+          "catchup_ms": 0.1
+        },
+        {
+          "pipeline": 1,
+          "run": 3,
+          "rps": 145348.83,
+          "p50_ms": 0.199,
+          "p99_ms": 0.495,
+          "lag_samples": 7,
+          "samples": [
+            0,
+            0,
+            0,
+            630,
+            225,
+            0,
+            90
+          ],
+          "lag_median_bytes": 0,
+          "lag_p95_bytes": 630,
+          "lag_max_bytes": 630,
+          "catchup_ms": 0.1
+        }
+      ],
+      "sample_count": 24,
+      "max_gap_bytes": 945,
+      "p95_gap_bytes": 630,
+      "median_gap_bytes": 0,
+      "max_catchup_ms": 0.1
+    },
+    {
+      "pipeline": 16,
+      "runs": [
+        {
+          "pipeline": 16,
+          "run": 1,
+          "rps": 357142.84,
+          "p50_ms": 2.199,
+          "p99_ms": 2.999,
+          "lag_samples": 3,
+          "samples": [
+            0,
+            34650,
+            2925
+          ],
+          "lag_median_bytes": 2925,
+          "lag_p95_bytes": 34650,
+          "lag_max_bytes": 34650,
+          "catchup_ms": 0.1
+        },
+        {
+          "pipeline": 16,
+          "run": 2,
+          "rps": 416666.69,
+          "p50_ms": 1.903,
+          "p99_ms": 2.431,
+          "lag_samples": 3,
+          "samples": [
+            0,
+            8280,
+            6930
+          ],
+          "lag_median_bytes": 6930,
+          "lag_p95_bytes": 8280,
+          "lag_max_bytes": 8280,
+          "catchup_ms": 0.1
+        },
+        {
+          "pipeline": 16,
+          "run": 3,
+          "rps": 393700.78,
+          "p50_ms": 2.023,
+          "p99_ms": 2.623,
+          "lag_samples": 3,
+          "samples": [
+            0,
+            2925,
+            810
+          ],
+          "lag_median_bytes": 810,
+          "lag_p95_bytes": 2925,
+          "lag_max_bytes": 2925,
+          "catchup_ms": 0.1
+        }
+      ],
+      "sample_count": 9,
+      "max_gap_bytes": 34650,
+      "p95_gap_bytes": 34650,
+      "median_gap_bytes": 2925,
+      "max_catchup_ms": 0.1
+    }
+  ]
+}

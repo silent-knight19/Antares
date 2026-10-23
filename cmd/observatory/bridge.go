@@ -567,7 +567,20 @@ func (b *Bridge) handleBenchmarks(w http.ResponseWriter, r *http.Request) {
 	matches, _ := filepath.Glob("bench/results/*.json")
 	var reportData []byte
 	var latestFile string
-	if len(matches) > 0 {
+	var benchFiles []string
+	var replFiles []string
+	for _, m := range matches {
+		if strings.HasSuffix(m, "-repl.json") {
+			replFiles = append(replFiles, m)
+		} else {
+			benchFiles = append(benchFiles, m)
+		}
+	}
+	if len(benchFiles) > 0 {
+		sort.Strings(benchFiles)
+		latestFile = benchFiles[len(benchFiles)-1]
+		reportData, _ = os.ReadFile(latestFile)
+	} else if len(matches) > 0 {
 		sort.Strings(matches)
 		latestFile = matches[len(matches)-1]
 		reportData, _ = os.ReadFile(latestFile)
@@ -576,6 +589,14 @@ func (b *Bridge) handleBenchmarks(w http.ResponseWriter, r *http.Request) {
 	var parsedReport any
 	if len(reportData) > 0 {
 		_ = json.Unmarshal(reportData, &parsedReport)
+	}
+
+	var replReport any
+	if len(replFiles) > 0 {
+		sort.Strings(replFiles)
+		if rData, readErr := os.ReadFile(replFiles[len(replFiles)-1]); readErr == nil {
+			_ = json.Unmarshal(rData, &replReport)
+		}
 	}
 
 	claimsBytes, _ := os.ReadFile("claims.json")
@@ -592,6 +613,7 @@ func (b *Bridge) handleBenchmarks(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"status":      status,
 		"report":      parsedReport,
+		"repl_report": replReport,
 		"claims":      parsedClaims,
 		"source_file": latestFile,
 	})

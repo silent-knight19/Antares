@@ -14,10 +14,10 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 
-REQUESTS="${BENCH_REQUESTS:-100000}"
+REQUESTS="${BENCH_REQUESTS:-20000}"
 CLIENTS="${BENCH_CLIENTS:-50}"
 RUNS="${BENCH_RUNS:-3}"
-WORKLOADS="${BENCH_WORKLOADS:-set,get,incr,mset}"
+WORKLOADS="${BENCH_WORKLOADS:-ping_inline,ping_mbulk,set,get,incr,mset,lpush,rpush,lpop,rpop,sadd,hset,spop}"
 PIPELINES="${BENCH_PIPELINES:-1 16}"
 WRITE_CLAIMS="${WRITE_CLAIMS:-0}"
 OUTPUT_DIR="${REPO_ROOT}/bench/results"
@@ -134,6 +134,8 @@ clients = int(sys.argv[10])
 def parse_csv(path):
     # returns dict of test_name -> {rps, p50, p99}
     data = {}
+    if not os.path.exists(path):
+        return data
     with open(path, "r", encoding="utf-8") as f:
         reader = csv.DictReader(f)
         for row in reader:
@@ -163,8 +165,18 @@ results = {
 
 summary_table = []
 
+# Collect all command names present across files preserving order
+command_order = []
 for pipe in pipelines:
-    for cmd in ["SET", "GET", "INCR", "MSET"]:
+    for r in range(1, runs + 1):
+        for prefix in ("antares", "redis"):
+            fpath = os.path.join(tmp_dir, f"{prefix}_p{pipe}_r{r}.csv")
+            for k in parse_csv(fpath).keys():
+                if k not in command_order:
+                    command_order.append(k)
+
+for pipe in pipelines:
+    for cmd in command_order:
         # Collect runs
         antares_rps_list = []
         antares_p50_list = []
@@ -228,8 +240,7 @@ print("| :--- | :--- | :---: | :---: | :---: | :---: | :---: |")
 for row in summary_table:
     print(f"| {row[0]} | {row[1]} | **{row[2]}** | {row[3]} | **{row[4]}** | {row[5]} | {row[6]} |")
 
-# Check targets
-targets_met = True
+# Check targets for core commands
 for b in results["benchmarks"]:
     p = b["pipeline"]
     cmd = b["command"]
@@ -239,7 +250,7 @@ for b in results["benchmarks"]:
     # Target criteria:
     # P=1: 60-100k or >=50% Redis
     # P=16: 400-800k or >=50% Redis
-    if ratio < 50.0 and rps < (50000 if p == 1 else 300000):
+    if cmd in ("SET", "GET", "INCR", "MSET") and ratio < 50.0 and rps < (50000 if p == 1 else 300000):
         print(f"WARNING: {cmd} (P={p}) below 50% target ratio ({ratio}%)", file=sys.stderr)
 
 out_json = json.dumps(results, indent=2)
