@@ -279,7 +279,7 @@ func (s *Server) serveConn(conn net.Conn) {
 		}
 
 		// Fast path: PING outside MULTI transactions
-		if s.batchHandler != nil && !connState.tx.active && len(req) <= 2 && isPing(req[0]) {
+		if s.batchHandler != nil && !connState.tx.active && !connState.streaming && len(req) <= 2 && isPing(req[0]) {
 			if s.cfg.Stats != nil {
 				s.cfg.Stats.Commands.Add(1)
 			}

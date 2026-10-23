@@ -310,6 +310,30 @@ func TestBridgeRejectsCrossOriginWrite(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("same-origin status = %d, want 200", resp.StatusCode)
 	}
+
+	req, _ = http.NewRequest(http.MethodPost, ts.URL+"/api/exec", bytes.NewReader(payload))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Referer", "http://evil.example/page")
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("cross-origin Referer POST: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("cross-origin Referer status = %d, want 403", resp.StatusCode)
+	}
+
+	req, _ = http.NewRequest(http.MethodPost, ts.URL+"/api/exec", bytes.NewReader(payload))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Sec-Fetch-Site", "cross-site")
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("cross-site Sec-Fetch-Site POST: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("cross-site Sec-Fetch-Site status = %d, want 403", resp.StatusCode)
+	}
 }
 
 func TestExecRejectsOversizedReply(t *testing.T) {

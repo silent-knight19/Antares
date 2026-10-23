@@ -224,3 +224,15 @@ func TestScanCommandGuaranteesUnderGrowthAndShrink(t *testing.T) {
 		}
 	}
 }
+
+func TestGlobTrailingHyphen(t *testing.T) {
+	if !globMatch([]byte("[a-]"), []byte("-")) {
+		t.Fatal("expected [a-] to match -")
+	}
+	if !globMatch([]byte("[a-]"), []byte("a")) {
+		t.Fatal("expected [a-] to match a")
+	}
+	if globMatch([]byte("[a-]"), []byte("b")) {
+		t.Fatal("expected [a-] not to match b")
+	}
+}

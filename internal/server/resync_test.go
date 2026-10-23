@@ -141,7 +141,8 @@ func TestFullResyncBufferOverflow(t *testing.T) {
 	runStrings(exec, "SET", "key1", "val1")
 
 	// Set tiny buffer limit (64 bytes)
-	session := exec.PrepareFullResyncWithCap(64)
+	exec.Repl().SetSyncBufferLimit(64)
+	session := exec.PrepareFullResync()
 
 	// Fire mutations totaling much more than 64 bytes
 	for i := 0; i < 10; i++ {

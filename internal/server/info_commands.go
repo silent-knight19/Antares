@@ -5,6 +5,7 @@ import (
 	"net"
 	"os"
 	"runtime"
+	"runtime/metrics"
 	"strconv"
 	"strings"
 	"time"
@@ -180,13 +181,17 @@ func (e *Executor) clientsInfo(b *strings.Builder) {
 }
 
 func (e *Executor) memoryInfo(b *strings.Builder) {
-	var m runtime.MemStats
-	runtime.ReadMemStats(&m)
+	samples := []metrics.Sample{
+		{Name: "/memory/classes/total:bytes"},
+		{Name: "/memory/classes/heap/objects:bytes"},
+	}
+	metrics.Read(samples)
+	rss := samples[0].Value.Uint64()
+	alloc := samples[1].Value.Uint64()
 	usage := e.store.MemoryUsage()
 	used := uint64(usage.Total)
 	overhead := uint64(usage.Total - usage.Dataset)
 	dataset := uint64(usage.Dataset)
-	rss := m.Sys
 	e.stats.ObserveMemory(used)
 	peak := e.stats.PeakMemory.Load()
 	if peak < used {
@@ -217,8 +222,8 @@ func (e *Executor) memoryInfo(b *strings.Builder) {
 	field(b, "used_memory_startup", "0")
 	field(b, "used_memory_dataset", strconv.FormatUint(dataset, 10))
 	fmt.Fprintf(b, "used_memory_dataset_perc:%.2f%%\r\n", datasetPerc)
-	field(b, "allocator_allocated", strconv.FormatUint(m.Alloc, 10))
-	field(b, "allocator_active", strconv.FormatUint(m.HeapInuse, 10))
+	field(b, "allocator_allocated", strconv.FormatUint(alloc, 10))
+	field(b, "allocator_active", strconv.FormatUint(alloc, 10))
 	field(b, "allocator_resident", strconv.FormatUint(rss, 10))
 	field(b, "total_system_memory", "0")
 	field(b, "total_system_memory_human", "0B")

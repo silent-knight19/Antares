@@ -22,19 +22,11 @@ func lookupTyped(st *store.Store, key string, kind store.Kind) (store.Value, boo
 }
 
 func buildHashIndex(hash []store.HashEntry) map[string]int {
-	index := make(map[string]int, len(hash))
-	for i, entry := range hash {
-		index[string(entry.Field)] = i
-	}
-	return index
+	return store.BuildHashIndex(hash)
 }
 
 func buildSetIndex(members [][]byte) map[string]int {
-	index := make(map[string]int, len(members))
-	for i, member := range members {
-		index[string(member)] = i
-	}
-	return index
+	return store.BuildSetIndex(members)
 }
 
 // rightSize releases an oversized backing array after a collection shrinks.

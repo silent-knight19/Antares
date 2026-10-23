@@ -20,11 +20,7 @@ const (
 // first (ADR-010).
 func WriteSnapshot(w io.Writer, st *store.Store) error {
 	bw := bufio.NewWriterSize(w, 64<<10)
-	for _, key := range st.Keys() {
-		v, ok := st.Lookup(key)
-		if !ok {
-			continue
-		}
+	err := st.ForEach(func(key string, v store.Value, expiresAt int64) error {
 		switch v.Kind {
 		case store.KindString:
 			if err := writeSnapshotCommand(bw, []byte("SET"), []byte(key), v.Str); err != nil {
@@ -58,12 +54,16 @@ func WriteSnapshot(w io.Writer, st *store.Store) error {
 				}
 			}
 		}
-		if at, ok := st.ExpiresAt(key); ok && at != 0 {
-			deadline := strconv.AppendInt(nil, at, 10)
+		if expiresAt != 0 {
+			deadline := strconv.AppendInt(nil, expiresAt, 10)
 			if err := writeSnapshotCommand(bw, []byte("PEXPIREAT"), []byte(key), deadline); err != nil {
 				return err
 			}
 		}
+		return nil
+	})
+	if err != nil {
+		return err
 	}
 	return bw.Flush()
 }

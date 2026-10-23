@@ -85,27 +85,6 @@ func (b *SyncBuffer) notifyLocked() {
 	}
 }
 
-// Drain extracts all buffered chunks, resetting the buffer to empty.
-// If the buffer previously overflowed, Drain returns ErrSyncBufferOverflow.
-func (b *SyncBuffer) Drain() ([]byte, error) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-
-	if b.overflow {
-		return nil, ErrSyncBufferOverflow
-	}
-	if len(b.chunks) == 0 {
-		return nil, nil
-	}
-
-	out := make([]byte, 0, b.buffered)
-	for _, chunk := range b.chunks {
-		out = append(out, chunk...)
-	}
-	b.chunks = b.chunks[:0]
-	b.buffered = 0
-	return out, nil
-}
 
 // DrainChunks returns all accumulated chunks without flattening into a single slice,
 // resetting the buffer.

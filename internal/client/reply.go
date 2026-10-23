@@ -116,11 +116,18 @@ func readBulk(r *bufio.Reader) (Reply, error) {
 	if n < 0 || n > protocol.MaxBulkLen {
 		return Reply{}, fmt.Errorf("client: invalid bulk length %d", n)
 	}
-	buf := make([]byte, n+2)
+	buf := make([]byte, n)
 	if _, err := io.ReadFull(r, buf); err != nil {
 		return Reply{}, fmt.Errorf("client: read bulk: %w", err)
 	}
-	return Reply{Kind: KindBulk, Text: string(buf[:n])}, nil
+	var trailer [2]byte
+	if _, err := io.ReadFull(r, trailer[:]); err != nil {
+		return Reply{}, fmt.Errorf("client: read bulk trailer: %w", err)
+	}
+	if trailer[0] != '\r' || trailer[1] != '\n' {
+		return Reply{}, errors.New("client: invalid bulk CRLF trailer")
+	}
+	return Reply{Kind: KindBulk, Text: string(buf)}, nil
 }
 
 func readArray(r *bufio.Reader, depth int) (Reply, error) {

@@ -26,7 +26,7 @@ const (
 	defaultTargetTTL    = 5 * time.Second
 	probeTimeout        = 500 * time.Millisecond
 	maxBodyBytes        = 1 << 20
-	maxScanCount        = 1000
+	maxScanCount        = 100
 	maxReplyBytes       = 8 << 20
 )
 
@@ -137,10 +137,20 @@ func (b *Bridge) guard(next http.Handler) http.Handler {
 			return
 		}
 		if r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions {
+			if sec := r.Header.Get("Sec-Fetch-Site"); sec == "cross-site" {
+				writeError(w, http.StatusForbidden, errors.New("forbidden origin"))
+				return
+			}
 			if origin := r.Header.Get("Origin"); origin != "" {
 				u, err := url.Parse(origin)
 				if err != nil || u.Host != r.Host {
 					writeError(w, http.StatusForbidden, errors.New("forbidden origin"))
+					return
+				}
+			} else if ref := r.Header.Get("Referer"); ref != "" {
+				u, err := url.Parse(ref)
+				if err != nil || u.Host != r.Host {
+					writeError(w, http.StatusForbidden, errors.New("forbidden referer"))
 					return
 				}
 			}
@@ -774,7 +784,17 @@ func (b *Bridge) handleDurabilitySim(w http.ResponseWriter, r *http.Request) {
 
 	timeline := make([]durabilityTimelineEntry, 0, count)
 	tsPrefix := b.clock.Now().UnixNano()
-	var simulatedOffset int64 = 4096
+	infoRes0, _ := b.antares.exec(ctx, "INFO", "persistence")
+	var currentOffset int64
+	if infoRes0.Reply.Kind == client.KindBulk {
+		if fields := parseInfoFields(infoRes0.Reply.Text); fields != nil {
+			if s, ok := fields["aof_current_size"]; ok {
+				if n, err := strconv.ParseInt(s, 10, 64); err == nil {
+					currentOffset = n
+				}
+			}
+		}
+	}
 
 	for i := 1; i <= count; i++ {
 		key := fmt.Sprintf("durability:sim:%d:%d", tsPrefix, i)
@@ -782,14 +802,14 @@ func (b *Bridge) handleDurabilitySim(w http.ResponseWriter, r *http.Request) {
 		t0 := b.clock.Now()
 		res, err := b.antares.exec(ctx, "SET", key, val)
 		lat := ms(b.clock.Since(t0))
-		simulatedOffset += int64(len(res.Raw) + len(key) + len(val) + 24)
+		currentOffset += int64(len(res.Raw) + len(key) + len(val) + 24)
 
 		if err != nil {
 			timeline = append(timeline, durabilityTimelineEntry{
 				Seq:       i,
 				Key:       key,
 				Status:    "write_failed: " + err.Error(),
-				Offset:    simulatedOffset,
+				Offset:    currentOffset,
 				LatencyMS: lat,
 			})
 			break
@@ -799,7 +819,7 @@ func (b *Bridge) handleDurabilitySim(w http.ResponseWriter, r *http.Request) {
 			Seq:       i,
 			Key:       key,
 			Status:    "fsync_acknowledged",
-			Offset:    simulatedOffset,
+			Offset:    currentOffset,
 			LatencyMS: lat,
 		})
 	}
@@ -823,6 +843,13 @@ func (b *Bridge) handleDurabilitySim(w http.ResponseWriter, r *http.Request) {
 	var persFields map[string]string
 	if infoRes.Reply.Kind == client.KindBulk {
 		persFields = parseInfoFields(infoRes.Reply.Text)
+		if persFields != nil {
+			if s, ok := persFields["aof_current_size"]; ok {
+				if n, err := strconv.ParseInt(s, 10, 64); err == nil && n > 0 {
+					currentOffset = n
+				}
+			}
+		}
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -832,7 +859,7 @@ func (b *Bridge) handleDurabilitySim(w http.ResponseWriter, r *http.Request) {
 		"recovered_keys":    recovered,
 		"lost_acked_writes": lost,
 		"badge":             "0 acked writes lost",
-		"final_aof_offset":  simulatedOffset,
+		"final_aof_offset":  currentOffset,
 		"timeline":          timeline,
 		"persistence":       persFields,
 	})
@@ -850,7 +877,7 @@ func (b *Bridge) handleEvictionPool(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
 
-	scanRes, err := b.antares.exec(ctx, "SCAN", "0", "COUNT", "32")
+	scanRes, err := b.antares.exec(ctx, "SCAN", "0", "COUNT", "16")
 	var sampleKeys []string
 	if err == nil && scanRes.Reply.Kind == client.KindArray && len(scanRes.Reply.Array) == 2 {
 		for _, item := range scanRes.Reply.Array[1].Array {
@@ -860,28 +887,28 @@ func (b *Bridge) handleEvictionPool(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if len(sampleKeys) == 0 {
-		sampleKeys = []string{"seed:sample:1", "seed:sample:2", "seed:sample:3", "seed:sample:4"}
+	candidates := make([]evictionCandidate, 16)
+	var pttlReplies []client.Reply
+	if len(sampleKeys) > 0 {
+		pttlCmds := make([][]string, len(sampleKeys))
+		for i, k := range sampleKeys {
+			pttlCmds[i] = []string{"PTTL", k}
+		}
+		pttlReplies, _ = b.antares.execMany(ctx, pttlCmds...)
 	}
 
-	candidates := make([]evictionCandidate, 16)
-	maxIdle := -1
 	victimIdx := -1
-
 	for i := 0; i < 16; i++ {
-		key := fmt.Sprintf("empty_slot_%d", i)
+		key := ""
 		idle := 0
 		var ttl int64 = -1
 
 		if i < len(sampleKeys) {
 			key = sampleKeys[i]
-			hash := 0
-			for _, ch := range key {
-				hash = (hash*31 + int(ch)) % 1000
+			if i < len(pttlReplies) && pttlReplies[i].Kind == client.KindInteger {
+				ttl = pttlReplies[i].Int
 			}
-			idle = 10 + (hash % 300)
-			if idle > maxIdle {
-				maxIdle = idle
+			if victimIdx == -1 {
 				victimIdx = i
 			}
 		}

@@ -16,7 +16,7 @@ func TestSyncBufferAppendAndDrain(t *testing.T) {
 	}
 
 	// 1. Drain on empty buffer returns nil, nil
-	drained, err := buf.Drain()
+	drained, err := buf.DrainChunks()
 	if err != nil || drained != nil {
 		t.Fatalf("expected nil on empty drain, got %v, %v", drained, err)
 	}
@@ -37,13 +37,17 @@ func TestSyncBufferAppendAndDrain(t *testing.T) {
 	}
 
 	// 3. Drain and verify content
-	drained, err = buf.Drain()
+	drained, err = buf.DrainChunks()
 	if err != nil {
 		t.Fatalf("drain: %v", err)
 	}
+	var joined []byte
+	for _, chunk := range drained {
+		joined = append(joined, chunk...)
+	}
 	want := append(append([]byte(nil), p1...), p2...)
-	if !bytes.Equal(drained, want) {
-		t.Fatalf("drained = %q, want %q", drained, want)
+	if !bytes.Equal(joined, want) {
+		t.Fatalf("drained = %q, want %q", joined, want)
 	}
 
 	// 4. Verify buffer reset after drain
@@ -104,9 +108,6 @@ func TestSyncBufferOverflow(t *testing.T) {
 	}
 
 	// Drain after overflow should return ErrSyncBufferOverflow
-	if _, err := buf.Drain(); !errors.Is(err, ErrSyncBufferOverflow) {
-		t.Fatalf("drain after overflow = %v, want ErrSyncBufferOverflow", err)
-	}
 	if _, err := buf.DrainChunks(); !errors.Is(err, ErrSyncBufferOverflow) {
 		t.Fatalf("drain chunks after overflow = %v, want ErrSyncBufferOverflow", err)
 	}
@@ -153,12 +154,16 @@ func TestSyncBufferConcurrent(t *testing.T) {
 		for {
 			select {
 			case <-done:
-				d, _ := buf.Drain()
-				drainedTotal.Add(int64(len(d)))
+				chunks, _ := buf.DrainChunks()
+				for _, c := range chunks {
+					drainedTotal.Add(int64(len(c)))
+				}
 				return
 			default:
-				d, _ := buf.Drain()
-				drainedTotal.Add(int64(len(d)))
+				chunks, _ := buf.DrainChunks()
+				for _, c := range chunks {
+					drainedTotal.Add(int64(len(c)))
+				}
 			}
 		}
 	}()
@@ -167,8 +172,10 @@ func TestSyncBufferConcurrent(t *testing.T) {
 	close(done)
 
 	wantTotal := int64(numWriters * itemsPerWriter * len(payload))
-	finalDrain, _ := buf.Drain()
-	drainedTotal.Add(int64(len(finalDrain)))
+	finalChunks, _ := buf.DrainChunks()
+	for _, c := range finalChunks {
+		drainedTotal.Add(int64(len(c)))
+	}
 
 	if drainedTotal.Load() != wantTotal {
 		t.Fatalf("drained total = %d, want %d", drainedTotal.Load(), wantTotal)

@@ -2,6 +2,7 @@ package persist
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -99,13 +100,28 @@ func recoverFrames(r io.Reader, size int64, apply func(payload []byte) error, re
 			report.Reason = "partial frame payload"
 			break
 		}
-		payload := make([]byte, int(n))
-		if _, err := io.ReadFull(r, payload); err != nil {
-			if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+		var payload []byte
+		if size > 0 || n <= 64<<10 {
+			payload = make([]byte, int(n))
+			if _, err := io.ReadFull(r, payload); err != nil {
+				if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+					report.Reason = "partial frame payload"
+					break
+				}
+				return report, err
+			}
+		} else {
+			buf := bytes.NewBuffer(make([]byte, 0, 64<<10))
+			lr := io.LimitReader(r, int64(n))
+			copied, err := io.Copy(buf, lr)
+			if err != nil {
+				return report, err
+			}
+			if copied < int64(n) {
 				report.Reason = "partial frame payload"
 				break
 			}
-			return report, err
+			payload = buf.Bytes()
 		}
 		if crc32.ChecksumIEEE(payload) != binary.LittleEndian.Uint32(header[4:8]) {
 			report.Reason = "frame checksum mismatch"
@@ -127,6 +143,10 @@ func recoverFrames(r io.Reader, size int64, apply func(payload []byte) error, re
 		return report, fmt.Errorf("persist: %s at byte %d (repair discards the tail): %w", report.Reason, offset, ErrCorrupt)
 	}
 	report.Truncated = true
-	report.TruncatedBytes = size - offset
+	if size > offset {
+		report.TruncatedBytes = size - offset
+	} else {
+		report.TruncatedBytes = 0
+	}
 	return report, nil
 }

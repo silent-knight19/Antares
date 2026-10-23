@@ -60,7 +60,7 @@ func globMatchImpl(pattern, value []byte, skipLongerMatches *bool, nesting int) 
 					p--
 					plen++
 					break
-				} else if plen >= 3 && pattern[p+1] == '-' {
+				} else if plen >= 3 && pattern[p+1] == '-' && pattern[p+2] != ']' {
 					start, end := pattern[p], pattern[p+2]
 					if start > end {
 						start, end = end, start

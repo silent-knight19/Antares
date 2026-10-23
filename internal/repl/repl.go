@@ -57,7 +57,6 @@ type State struct {
 	slaveReadOnly   bool
 	slavePriority   int
 
-	connectedSlaves int
 	slaves          []*SlaveInfo
 	slavesByID      map[uint64]*SlaveInfo
 	nextSlaveID     uint64
@@ -103,7 +102,6 @@ func NewState(replID string, clk clock.Clock) *State {
 		slaveReplOffset:  0,
 		slaveReadOnly:    true,
 		slavePriority:    100,
-		connectedSlaves:  0,
 		slavesByID:       make(map[uint64]*SlaveInfo),
 		backlogActive:    true,
 		backlogSize:      DefaultBacklogSize,
@@ -616,17 +614,7 @@ func (s *State) Slaves() []SlaveInfo {
 func (s *State) ConnectedSlaves() int {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	if len(s.slaves) > 0 {
-		return len(s.slaves)
-	}
-	return s.connectedSlaves
-}
-
-// SetConnectedSlaves updates connected replicas count.
-func (s *State) SetConnectedSlaves(count int) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.connectedSlaves = count
+	return len(s.slaves)
 }
 
 // FormatInfo renders the # Replication section for INFO.
@@ -639,11 +627,7 @@ func (s *State) FormatInfo() string {
 
 	if s.role == RoleMaster {
 		field(&b, "role", "master")
-		connectedCount := len(s.slaves)
-		if connectedCount == 0 && s.connectedSlaves > 0 {
-			connectedCount = s.connectedSlaves
-		}
-		field(&b, "connected_slaves", fmt.Sprintf("%d", connectedCount))
+		field(&b, "connected_slaves", fmt.Sprintf("%d", len(s.slaves)))
 
 		for i, sl := range s.slaves {
 			lag := 0
@@ -705,7 +689,7 @@ func (s *State) FormatInfo() string {
 		}
 		field(&b, "slave_read_only", readOnly)
 		field(&b, "replica_announced", "1")
-		field(&b, "connected_slaves", fmt.Sprintf("%d", s.connectedSlaves))
+		field(&b, "connected_slaves", "0")
 		field(&b, "master_failover_state", "no-failover")
 		field(&b, "master_replid", s.masterReplID)
 		field(&b, "master_replid2", s.masterReplID2)

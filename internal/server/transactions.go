@@ -151,6 +151,11 @@ func (e *Executor) execute(req execRequest, tx *txState) {
 		case "exec":
 			e.execTransaction(req, tx)
 		default:
+			if len(tx.queued) >= 65536 {
+				tx.dirty = true
+				req.out.Error("ERR max queued transaction commands reached")
+				return
+			}
 			tx.queued = append(tx.queued, req.req)
 			req.out.Simple("QUEUED")
 		}
@@ -233,6 +238,18 @@ func (e *Executor) execTransaction(req execRequest, tx *txState) {
 	if aborted {
 		req.out.NullArray()
 		return
+	}
+	if e.aof != nil {
+		if aofErr := e.aof.Failed(); aofErr != nil {
+			for _, queued := range queue {
+				if len(queued) > 0 {
+					if cmd, ok := e.commands.Lookup(queued[0]); ok && cmd.Write {
+						req.out.Error("MISCONF Errors writing to the AOF file: " + aofErr.Error())
+						return
+					}
+				}
+			}
+		}
 	}
 
 	req.out.ArrayHeader(len(queue))

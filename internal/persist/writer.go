@@ -432,6 +432,11 @@ func (w *Writer) finishRewrite(tempPath string) error {
 	info, err := f.Stat()
 	if err != nil {
 		f.Close()
+		w.markFailed(err)
+		w.mu.Lock()
+		w.rewriting = false
+		w.rewriteBuf = nil
+		w.mu.Unlock()
 		return err
 	}
 	w.mu.Lock()

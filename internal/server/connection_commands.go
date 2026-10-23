@@ -10,14 +10,14 @@ import (
 
 func registerConnectionCommands(reg *Registry, e *Executor) {
 	reg.Register(Command{Name: "hello", Arity: -1, Handler: func(args [][]byte, out *protocol.Encoder) {
-		helloCommand(args, out)
+		helloCommand(e, args, out)
 	}})
 	reg.Register(Command{Name: "client", Arity: -2, Handler: func(args [][]byte, out *protocol.Encoder) {
 		clientCommand(e, args, out)
 	}})
 }
 
-func helloCommand(args [][]byte, out *protocol.Encoder) {
+func helloCommand(e *Executor, args [][]byte, out *protocol.Encoder) {
 	version := int64(2)
 	if len(args) > 0 {
 		n, ok := parseHelloVersion(args[0])
@@ -66,10 +66,14 @@ func helloCommand(args [][]byte, out *protocol.Encoder) {
 	out.Int(version)
 	out.Bulk([]byte("id"))
 	out.Int(1)
+	role := "master"
+	if e != nil && e.repl != nil && !e.repl.IsMaster() {
+		role = "slave"
+	}
 	out.Bulk([]byte("mode"))
 	out.Bulk([]byte("standalone"))
 	out.Bulk([]byte("role"))
-	out.Bulk([]byte("master"))
+	out.Bulk([]byte(role))
 	out.Bulk([]byte("modules"))
 	out.ArrayHeader(0)
 }

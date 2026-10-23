@@ -41,21 +41,6 @@ func (e *Executor) PrepareFullResync() *FullResyncSession {
 	}
 }
 
-// PrepareFullResyncWithCap is PrepareFullResync with a custom buffer limit for tests.
-func (e *Executor) PrepareFullResyncWithCap(maxBytes int64) *FullResyncSession {
-	snap := e.store.Copy()
-	syncBuf := repl.NewSyncBuffer(maxBytes)
-	snapOffset := e.repl.RegisterSyncBufferWithOffset(syncBuf)
-
-	return &FullResyncSession{
-		MasterReplID:   e.repl.MasterReplID(),
-		SnapshotOffset: snapOffset,
-		Snapshot:       snap,
-		SyncBuffer:     syncBuf,
-		repl:           e.repl,
-	}
-}
-
 // Stream streams +FULLRESYNC, the framed snapshot, and drains all concurrent
 // mutations accumulated during snapshot streaming to w (ADR-007, ADR-010).
 // It unregisters the SyncBuffer when done.

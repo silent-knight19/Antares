@@ -65,7 +65,13 @@ type Store struct {
 	scanSeed    maphash.Seed
 	expiredKeys uint64
 	mutations   uint64
-	usage       Usage
+	usage        Usage
+	onLazyExpire func(key string)
+}
+
+// SetOnLazyExpire registers a callback invoked when a key is deleted by lazy expiry.
+func (s *Store) SetOnLazyExpire(fn func(key string)) {
+	s.onLazyExpire = fn
 }
 
 func New() *Store { return NewWithClock(clock.Real{}) }
@@ -232,10 +238,10 @@ func (s *Store) removeValue(key string) {
 // check so a key expiring mid-command cannot be resurrected without a TTL.
 func (s *Store) SetPreservingTTL(key string, value Value) {
 	if value.Kind == KindHash && value.HashIndex == nil {
-		value.HashIndex = buildHashIndex(value.Hash)
+		value.HashIndex = BuildHashIndex(value.Hash)
 	}
 	if value.Kind == KindSet && value.SetIndex == nil {
-		value.SetIndex = buildSetIndex(value.Set)
+		value.SetIndex = BuildSetIndex(value.Set)
 	}
 	// Stamp the access clock here so a freshly created value never reads as
 	// maximally idle (handlers build Value literals with Lru unset).
@@ -248,10 +254,10 @@ func (s *Store) SetPreservingTTL(key string, value Value) {
 // SetPreservingTTLFast overwrites key with precomputed usage, bypassing usageOf.
 func (s *Store) SetPreservingTTLFast(key string, value Value, usage Usage) {
 	if value.Kind == KindHash && value.HashIndex == nil {
-		value.HashIndex = buildHashIndex(value.Hash)
+		value.HashIndex = BuildHashIndex(value.Hash)
 	}
 	if value.Kind == KindSet && value.SetIndex == nil {
-		value.SetIndex = buildSetIndex(value.Set)
+		value.SetIndex = BuildSetIndex(value.Set)
 	}
 	value.Lru = s.lruClock()
 	value.Usage = usage
@@ -259,7 +265,8 @@ func (s *Store) SetPreservingTTLFast(key string, value Value, usage Usage) {
 	s.mutations++
 }
 
-func buildHashIndex(hash []HashEntry) map[string]int {
+// BuildHashIndex constructs a field-to-index lookup map for hash entries.
+func BuildHashIndex(hash []HashEntry) map[string]int {
 	index := make(map[string]int, len(hash))
 	for i, entry := range hash {
 		index[string(entry.Field)] = i
@@ -267,7 +274,8 @@ func buildHashIndex(hash []HashEntry) map[string]int {
 	return index
 }
 
-func buildSetIndex(members [][]byte) map[string]int {
+// BuildSetIndex constructs a member-to-index lookup map for set elements.
+func BuildSetIndex(members [][]byte) map[string]int {
 	index := make(map[string]int, len(members))
 	for i, member := range members {
 		index[string(member)] = i
@@ -299,6 +307,7 @@ func (s *Store) Rename(src, dst string) {
 	delete(s.expires, src)
 	delete(s.data, dst)
 	delete(s.expires, dst)
+	value.Usage = usageOf(dst, value)
 	s.storeValue(dst, value)
 	if hasExpiry {
 		s.expires[dst] = expiresAt
@@ -321,6 +330,26 @@ func (s *Store) ExpiredCount() uint64 { return s.expiredKeys }
 // by lazy access or the active cycle. This is Redis's DBSIZE semantics.
 func (s *Store) Len() int {
 	return len(s.data)
+}
+
+// ForEach calls fn for each live key and its value and optional expiry deadline (0 if none).
+// If fn returns an error, iteration stops and returns that error.
+func (s *Store) ForEach(fn func(key string, v Value, expiresAt int64) error) error {
+	now := s.NowMs()
+	for key, v := range s.data {
+		at, hasExpiry := s.expires[key]
+		if hasExpiry && now > at {
+			continue
+		}
+		var exp int64
+		if hasExpiry {
+			exp = at
+		}
+		if err := fn(key, v, exp); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // Keys returns live key names. It does not delete expired keys, matching
@@ -358,11 +387,10 @@ func (s *Store) Flush() {
 	s.mutations++
 }
 
-// ExpireSample samples up to limit volatile keys and deletes those whose
-// deadline is before nowMs. It returns the sampled and expired counts.
-func (s *Store) ExpireSample(nowMs int64, limit int) (expired, sampled int) {
+// ExpireSampleKeys samples up to limit volatile keys, deletes expired ones, and returns their names.
+func (s *Store) ExpireSampleKeys(nowMs int64, limit int) (expiredKeys []string, sampled int) {
 	if limit <= 0 {
-		return 0, 0
+		return nil, 0
 	}
 	for key, at := range s.expires {
 		if sampled == limit {
@@ -374,10 +402,17 @@ func (s *Store) ExpireSample(nowMs int64, limit int) (expired, sampled int) {
 			delete(s.data, key)
 			delete(s.expires, key)
 			s.expiredKeys++
-			expired++
+			expiredKeys = append(expiredKeys, key)
 		}
 	}
-	return expired, sampled
+	return expiredKeys, sampled
+}
+
+// ExpireSample samples up to limit volatile keys and deletes those whose
+// deadline is before nowMs. It returns the sampled and expired counts.
+func (s *Store) ExpireSample(nowMs int64, limit int) (expired, sampled int) {
+	keys, sampled := s.ExpireSampleKeys(nowMs, limit)
+	return len(keys), sampled
 }
 
 // ExpiresAt returns the absolute expiry of a live key and whether the key
@@ -440,6 +475,9 @@ func (s *Store) live(key string) (Value, bool) {
 		delete(s.data, key)
 		delete(s.expires, key)
 		s.expiredKeys++
+		if s.onLazyExpire != nil {
+			s.onLazyExpire(key)
+		}
 		return Value{}, false
 	}
 	value.Lru = s.lruClock()
