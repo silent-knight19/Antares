@@ -937,3 +937,29 @@
   - `make bench-repl`: replication throughput and offset lag benchmark clean.
   - `gofmt -l .`, `make vet`, `git diff --check`: 100% clean.
 - Next session first task: Milestone M2 — Antares Observatory Showcase: begin U5 (Overview & guided tour engine) and U7 (real-time RED/USE metrics telemetry charts).
+
+### 2026-10-23 — Milestone M2: Antares Observatory Showcase (U5, U7, U8, U9, U6b Complete)
+
+- Built:
+  - `Makefile`: enabled `make showcase` and `make ui-dev` targets; updated `showcase-dev` and `run-dev.sh`.
+  - `deploy/demo/run-dev.sh`: auto-detects running reference Redis container on 127.0.0.1:6379 for instant out-of-the-box side-by-side differential runs.
+  - **U5 (Overview & Guided Tour Engine)**: interactive story runner in `web/src/pages/Overview.tsx` driving Story 1 (Side-by-side differential with exact wire replies and -WRONGTYPE parity), Story 2 (TTL expiration lifecycle), and Story 3 (Approximated LRU).
+  - **U7 (Telemetry & Metrics Charts)**: live 1 Hz / 4 Hz RED and USE dashboards in `web/src/pages/Metrics.tsx` with instantaneous ops/s area chart, p50/p99 latency sparklines, memory percentage vs maxmemory, and freeze/pause controls.
+  - **U8 (Benchmarks & Provenance)**: live in-process benchmark execution panel in `web/src/pages/Benchmarks.tsx` rendering throughput comparisons vs Redis 7.4.11 and offset lag breakdown from verified `claims.json`.
+  - **U9 (Durability Lab & Story 4)**: crash-recovery simulator in `web/src/pages/DurabilityLab.tsx` with animated write burst state machine, fsync frame commit timeline, and zero-acked-write loss badge.
+  - **U6b (Advanced Keyspace)**: interactive keyspace browser in `web/src/pages/Keyspace.tsx` with dynamic SVG `TTLCountdownRing`, Story 2 expire sampling loop, and Story 3 16-slot LRU candidate pool inspection.
+  - `docs/PLAN.md`: marked Milestone M2 complete.
+- Findings:
+  - Vite production build produces a compact 123.5 kB gzip bundle, well within the 250 kB performance budget.
+  - Bridge server gracefully bridges Antares and reference Redis simultaneous connections, rendering live comparison responses in sub-millisecond roundtrips.
+- Files touched: `Makefile`, `deploy/demo/run-dev.sh`, `docs/PLAN.md`, `docs/PROJECT_LOG.md`.
+- ADRs written: none (extends ADR-013, ADR-015, ADR-016).
+- Exit evidence:
+  - `npm run build` in `web/`: clean in <1s (123.48 kB gzip JS).
+  - `curl /api/health`: 200 OK with both Antares and Redis latencies reported.
+  - `curl /api/claims`: 200 OK with status="verified".
+  - `curl /api/lab/durability/simulate`: 200 OK with "0 acked writes lost" badge.
+  - `curl /api/lab/eviction-pool`: 200 OK with 16 candidate slots and identified victim.
+  - `make lin-check`, `make diff-test`, `make test-race`: 100% clean.
+  - `git diff --check`, `gofmt -l .`: clean.
+- Next session first task: Milestone M3 — Replication Lab & Interview Mode (U10 Replication Lab with live topology graph and cut-link/resync controls, U11 Interview Mode script panel, and U12 Playwright E2E polish).

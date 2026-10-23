@@ -9,6 +9,10 @@ cd "$root"
 antares_port=${ANTARES_PORT:-6380}
 observatory_port=${OBS_PORT:-6390}
 redis_addr=${REDIS_ADDR:-}
+if [[ -z "$redis_addr" ]] && (exec 3<>"/dev/tcp/127.0.0.1/6379") 2>/dev/null; then
+	exec 3>&-
+	redis_addr="127.0.0.1:6379"
+fi
 
 ./bin/antares -port "$antares_port" &
 antares_pid=$!

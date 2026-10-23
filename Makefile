@@ -124,6 +124,12 @@ verify: test-race clock-check diff-test tcl crash-test lin-check
 	@REPL_REQUESTS=500000 REPL_RUNS=3 WRITE_CLAIMS=1 python3 ./bench/scripts/run-repl-bench.py
 	@echo "==> Verification complete: all tests, diffs, Tcl, crash-safety, fuzz, and benchmarks green!"
 
-showcase showcase-e2e ui-dev:
-	@echo "make $@: not implemented yet — arrives at the phase marked in docs/PLAN.md §5–§7 (DoD: §2)"
+showcase: build ui-build
+	@deploy/demo/run-dev.sh
+
+ui-dev:
+	cd web && npm run dev
+
+showcase-e2e:
+	@echo "make $@: not implemented yet — arrives at U12 in docs/PLAN.md §6"
 	@exit 1
