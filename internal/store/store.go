@@ -194,6 +194,14 @@ func (s *Store) Set(key string, value []byte) {
 	s.mutations++
 }
 
+// SetWithUsage stores value under key with precalculated usage.
+func (s *Store) SetWithUsage(key string, value []byte, u Usage) {
+	v := Value{Kind: KindString, Str: value, Lru: s.lruClock(), Usage: u}
+	s.storeValue(key, v)
+	delete(s.expires, key)
+	s.mutations++
+}
+
 // SetWithTTL stores value under key with an absolute Unix-millisecond expiry.
 func (s *Store) SetWithTTL(key string, value []byte, expiresAtMs int64) {
 	v := Value{Kind: KindString, Str: value, Lru: s.lruClock()}

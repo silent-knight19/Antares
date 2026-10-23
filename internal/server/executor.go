@@ -65,6 +65,7 @@ type Executor struct {
 
 type execRequest struct {
 	req       protocol.Request
+	batch     []protocol.Request
 	out       *protocol.Encoder
 	conn      *ConnState
 	done      chan struct{}
@@ -215,6 +216,36 @@ func (e *Executor) Handle(req protocol.Request, out *protocol.Encoder, conn *Con
 // executor runs it.
 func (e *Executor) HandleContext(ctx context.Context, req protocol.Request, out *protocol.Encoder, conn *ConnState) {
 	e.handle(ctx, req, out, conn, 0, 0)
+}
+
+// HandleBatch executes a slice of pipelined requests sequentially and returns
+// once all replies are written to out.
+func (e *Executor) HandleBatch(batch []protocol.Request, out *protocol.Encoder, conn *ConnState) {
+	if len(batch) == 0 {
+		return
+	}
+	if len(batch) == 1 {
+		e.Handle(batch[0], out, conn)
+		return
+	}
+	if conn == nil {
+		conn = &ConnState{}
+	}
+	done := donePool.Get().(chan struct{})
+	select {
+	case e.requests <- execRequest{batch: batch, out: out, conn: conn, done: done, ctx: context.Background()}:
+	case <-e.quit:
+		donePool.Put(done)
+		return
+	case <-e.done:
+		donePool.Put(done)
+		return
+	}
+	select {
+	case <-done:
+		donePool.Put(done)
+	case <-e.done:
+	}
 }
 
 // HandleReplicated applies one command from the master stream. The offset is
@@ -368,6 +399,8 @@ func (e *Executor) run(req execRequest) {
 			cmd := ""
 			if len(req.req) > 0 {
 				cmd = string(req.req[0])
+			} else if len(req.batch) > 0 && len(req.batch[0]) > 0 {
+				cmd = string(req.batch[0][0])
 			}
 			slog.Error("command handler panicked", "command", cmd, "panic", r)
 			req.out.Reset()
@@ -381,6 +414,22 @@ func (e *Executor) run(req execRequest) {
 	if req.ctx != nil && req.ctx.Err() != nil {
 		return
 	}
+	if len(req.batch) > 0 {
+		for _, single := range req.batch {
+			subReq := execRequest{
+				req:  single,
+				out:  req.out,
+				conn: req.conn,
+				ctx:  req.ctx,
+			}
+			e.runSingle(subReq)
+		}
+		return
+	}
+	e.runSingle(req)
+}
+
+func (e *Executor) runSingle(req execRequest) {
 	tx := &req.conn.tx
 	if e.aofWriteBlocked(req.req, req.out) {
 		tx.dirty = true

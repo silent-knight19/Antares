@@ -122,13 +122,17 @@ func setCommand(st *store.Store, args [][]byte, out *protocol.Encoder) {
 		return
 	}
 
+	u := store.Usage{
+		Dataset: int64(len(args[1])),
+		Total:   store.EntryOverhead + int64(len(key)) + int64(len(args[1])),
+	}
 	switch {
 	case opts.keepTTL:
-		st.SetPreservingTTL(key, store.Value{Kind: store.KindString, Str: args[1]})
+		st.SetPreservingTTLFast(key, store.Value{Kind: store.KindString, Str: args[1], Usage: u}, u)
 	case opts.hasExpire:
 		st.SetWithTTL(key, args[1], expiresAt)
 	default:
-		st.Set(key, args[1])
+		st.SetWithUsage(key, args[1], u)
 	}
 
 	if opts.get {
@@ -277,10 +281,14 @@ func incrDecrCommand(st *store.Store, keyBytes []byte, incr int64, out *protocol
 	}
 	current += incr
 	newValue := strconv.AppendInt(nil, current, 10)
+	u := store.Usage{
+		Dataset: int64(len(newValue)),
+		Total:   store.EntryOverhead + int64(len(key)) + int64(len(newValue)),
+	}
 	if exists {
-		st.SetPreservingTTL(key, store.Value{Kind: store.KindString, Str: newValue})
+		st.SetPreservingTTLFast(key, store.Value{Kind: store.KindString, Str: newValue, Usage: u}, u)
 	} else {
-		st.Set(key, newValue)
+		st.SetWithUsage(key, newValue, u)
 	}
 	out.Int(current)
 }

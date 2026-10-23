@@ -27,21 +27,21 @@
 
 | Command | Family | Antares Throughput | Reference Redis 7.4 | % of Reference Redis | Antares p50 | Antares p99 | Target Status |
 | :--- | :--- | :---: | :---: | :---: | :---: | :---: | :---: |
-| **SET** | Strings | **204,082 rps** | 64,309 rps | **317.3%** | 0.15 ms | 0.33 ms | **Exceeds target (>100k)** |
-| **PING_MBULK** | Protocol | **206,186 rps** | 65,147 rps | **316.5%** | 0.15 ms | 0.30 ms | **Exceeds target (>100k)** |
-| **PING_INLINE** | Protocol | **208,333 rps** | 67,797 rps | **307.3%** | 0.14 ms | 0.29 ms | **Exceeds target (>100k)** |
-| **GET** | Strings | **196,078 rps** | 64,516 rps | **303.9%** | 0.15 ms | 0.32 ms | **Exceeds target (>100k)** |
-| **LPUSH** | Lists | **185,185 rps** | 66,667 rps | **277.8%** | 0.16 ms | 0.33 ms | **Exceeds target (>100k)** |
-| **SADD** | Sets | **206,186 rps** | 75,188 rps | **274.2%** | 0.14 ms | 0.34 ms | **Exceeds target (>100k)** |
-| **INCR** | Strings | **175,439 rps** | 66,007 rps | **265.8%** | 0.17 ms | 0.33 ms | **Exceeds target (>100k)** |
-| **RPOP** | Lists | **196,078 rps** | 76,046 rps | **257.8%** | 0.16 ms | 0.32 ms | **Exceeds target (>100k)** |
-| **SPOP** | Sets | **196,078 rps** | 76,628 rps | **255.9%** | 0.15 ms | 0.30 ms | **Exceeds target (>100k)** |
-| **HSET** | Hashes | **196,078 rps** | 77,220 rps | **253.9%** | 0.16 ms | 0.34 ms | **Exceeds target (>100k)** |
-| **LPOP** | Lists | **196,078 rps** | 78,125 rps | **251.0%** | 0.16 ms | 0.29 ms | **Exceeds target (>100k)** |
-| **RPUSH** | Lists | **188,679 rps** | 75,188 rps | **250.9%** | 0.16 ms | 0.32 ms | **Exceeds target (>100k)** |
-| **MSET** | Strings (10k) | **172,414 rps** | 71,685 rps | **240.5%** | 0.17 ms | 0.49 ms | **Exceeds target (>100k)** |
+| **LPUSH** | Lists | **208,333 rps** | 62,696 rps | **332.3%** | 0.14 ms | 0.31 ms | **Exceeds target (3.32× Redis)** |
+| **RPUSH** | Lists | **208,333 rps** | 65,147 rps | **319.8%** | 0.14 ms | 0.32 ms | **Exceeds target (3.20× Redis)** |
+| **PING_MBULK** | Protocol | **215,054 rps** | 68,259 rps | **315.1%** | 0.13 ms | 0.29 ms | **Exceeds target (3.15× Redis)** |
+| **LPOP** | Lists | **198,020 rps** | 66,667 rps | **297.0%** | 0.15 ms | 0.37 ms | **Exceeds target (2.97× Redis)** |
+| **INCR** | Strings | **192,308 rps** | 65,147 rps | **295.2%** | 0.15 ms | 0.34 ms | **Exceeds target (2.95× Redis)** |
+| **MSET** | Strings (10k) | **198,020 rps** | 68,259 rps | **290.1%** | 0.15 ms | 0.44 ms | **Exceeds target (2.90× Redis)** |
+| **PING_INLINE** | Protocol | **219,780 rps** | 77,220 rps | **284.6%** | 0.13 ms | 0.26 ms | **Exceeds target (2.85× Redis)** |
+| **GET** | Strings | **186,916 rps** | 66,007 rps | **283.2%** | 0.15 ms | 0.34 ms | **Exceeds target (2.83× Redis)** |
+| **SET** | Strings | **185,185 rps** | 65,574 rps | **282.4%** | 0.15 ms | 0.39 ms | **Exceeds target (2.82× Redis)** |
+| **SADD** | Sets | **192,308 rps** | 75,188 rps | **255.8%** | 0.15 ms | 0.31 ms | **Exceeds target (2.56× Redis)** |
+| **RPOP** | Lists | **188,679 rps** | 74,074 rps | **254.7%** | 0.16 ms | 0.32 ms | **Exceeds target (2.55× Redis)** |
+| **HSET** | Hashes | **175,439 rps** | 74,074 rps | **236.8%** | 0.17 ms | 0.33 ms | **Exceeds target (2.37× Redis)** |
+| **SPOP** | Sets | **175,439 rps** | 74,074 rps | **236.8%** | 0.16 ms | 0.30 ms | **Exceeds target (2.37× Redis)** |
 
-*Observation*: For non-pipelined loopback requests on macOS, Antares' goroutine-per-conn I/O batching and zero-copy stack decoding to the keyspace executor achieve lower round-trip latency (~0.14–0.17ms vs ~0.6–0.7ms in reference Redis), yielding 172k–208k rps across all 13 feature workloads (2.4× to 3.2× faster than Redis 7.4).
+*Observation*: For non-pipelined loopback requests on macOS, Antares' goroutine-per-conn I/O batching, pre-allocated memory indexing, and zero-allocation stack decoding achieve lower round-trip latency (~0.13–0.17ms vs ~0.6–0.7ms in reference Redis), yielding 175k–220k rps across all 13 feature workloads (2.37× to 3.32× faster than Redis 7.4).
 
 ---
 
@@ -49,21 +49,21 @@
 
 | Command | Family | Antares Throughput | Reference Redis 7.4 | % of Reference Redis | Antares p50 | Antares p99 | Target Status |
 | :--- | :--- | :---: | :---: | :---: | :---: | :---: | :---: |
-| **MSET** | Strings (10k) | **666,667 rps** | 512,820 rps | **130.0%** | 1.17 ms | 1.66 ms | **Surpasses Redis (+30.0%)** |
-| **GET** | Strings | **952,381 rps** | 869,565 rps | **109.5%** | 0.80 ms | 1.24 ms | **Surpasses Redis (+9.5%)** |
-| **INCR** | Strings | **909,091 rps** | 833,333 rps | **109.1%** | 0.82 ms | 1.30 ms | **Surpasses Redis (+9.1%)** |
-| **HSET** | Hashes | **909,091 rps** | 833,333 rps | **109.1%** | 0.88 ms | 1.44 ms | **Surpasses Redis (+9.1%)** |
-| **PING_MBULK** | Protocol | **952,381 rps** | 909,091 rps | **104.8%** | 0.82 ms | 1.33 ms | **Surpasses Redis (+4.8%)** |
-| **SET** | Strings | **869,565 rps** | 833,333 rps | **104.3%** | 0.88 ms | 1.60 ms | **Surpasses Redis (+4.3%)** |
-| **LPOP** | Lists | **909,091 rps** | 909,091 rps | **100.0%** | 0.83 ms | 1.39 ms | **Matches Redis (100.0%)** |
-| **RPOP** | Lists | **952,381 rps** | 952,381 rps | **100.0%** | 0.81 ms | 1.23 ms | **Matches Redis (100.0%)** |
-| **RPUSH** | Lists | **869,565 rps** | 909,091 rps | **95.7%** | 0.87 ms | 1.54 ms | **Near parity (95.7%)** |
-| **PING_INLINE** | Protocol | **909,091 rps** | 952,381 rps | **95.5%** | 0.86 ms | 1.30 ms | **Near parity (95.5%)** |
-| **SADD** | Sets | **909,091 rps** | 1,000,000 rps | **90.9%** | 0.82 ms | 1.28 ms | **Within target range** |
-| **SPOP** | Sets | **952,381 rps** | 1,052,632 rps | **90.5%** | 0.83 ms | 1.24 ms | **Within target range** |
-| **LPUSH** | Lists | **833,333 rps** | 952,381 rps | **87.5%** | 0.89 ms | 1.61 ms | **Within target range** |
+| **PING_INLINE** | Protocol | **3,333,333 rps** | 1,000,000 rps | **333.3%** | 0.13 ms | 0.21 ms | **Crushes Redis (+233.3%)** |
+| **PING_MBULK** | Protocol | **3,333,333 rps** | 1,052,632 rps | **316.7%** | 0.13 ms | 0.30 ms | **Crushes Redis (+216.7%)** |
+| **SPOP** | Sets | **2,857,143 rps** | 952,381 rps | **300.0%** | 0.19 ms | 0.68 ms | **Crushes Redis (+200.0%)** |
+| **LPUSH** | Lists | **2,500,000 rps** | 869,565 rps | **287.5%** | 0.27 ms | 0.64 ms | **Crushes Redis (+187.5%)** |
+| **GET** | Strings | **2,857,143 rps** | 1,000,000 rps | **285.7%** | 0.18 ms | 0.57 ms | **Crushes Redis (+185.7%)** |
+| **SADD** | Sets | **2,857,143 rps** | 1,000,000 rps | **285.7%** | 0.20 ms | 0.53 ms | **Crushes Redis (+185.7%)** |
+| **RPOP** | Lists | **2,500,000 rps** | 909,091 rps | **275.0%** | 0.26 ms | 0.66 ms | **Crushes Redis (+175.0%)** |
+| **HSET** | Hashes | **2,222,222 rps** | 833,333 rps | **266.7%** | 0.33 ms | 0.66 ms | **Crushes Redis (+166.7%)** |
+| **INCR** | Strings | **2,500,000 rps** | 952,381 rps | **262.5%** | 0.27 ms | 0.57 ms | **Crushes Redis (+162.5%)** |
+| **RPUSH** | Lists | **2,500,000 rps** | 952,381 rps | **262.5%** | 0.28 ms | 0.85 ms | **Crushes Redis (+162.5%)** |
+| **LPOP** | Lists | **2,500,000 rps** | 952,381 rps | **262.5%** | 0.26 ms | 0.54 ms | **Crushes Redis (+162.5%)** |
+| **SET** | Strings | **2,222,222 rps** | 909,091 rps | **244.4%** | 0.34 ms | 0.68 ms | **Crushes Redis (+144.4%)** |
+| **MSET** | Strings (10k) | **769,231 rps** | 555,556 rps | **138.5%** | 0.97 ms | 1.36 ms | **Surpasses Redis (+38.5%)** |
 
-*Observation*: With zero-allocation protocol decoding, stack-based ASCII command routing, 16KB symmetric write-buffering, and 256-request executor batch draining, Antares reaches 833k–952k rps on single-key commands and 666k rps on 10-key MSET. Antares now matches or outperforms Redis 7.4 on 8 workloads (MSET at 130.0%, GET at 109.5%, INCR at 109.1%, HSET at 109.1%, PING_MBULK at 104.8%, SET at 104.3%, LPOP at 100.0%, RPOP at 100.0%), with all other operations at 87.5%–95.7% of C Redis.
+*Observation*: With pipeline batch execution (`HandleBatch`), zero-channel PING bypass, O(1) set memory calculations, and exponential list headroom expansion, **Antares outperforms Redis 7.4 on 100% of workloads (all 13 operations)**, achieving between **1.38× and 3.33× the throughput of reference Redis** (up to 3.33M rps).
 
 ---
 
@@ -77,15 +77,15 @@
 
 | Pipeline | No replica (median rps) | With replica (median rps) | Retained | Overhead | No-replica stdev | With-replica stdev |
 | :--- | :---: | :---: | :---: | :---: | :---: | :---: |
-| **P=1** | **179,856** | **129,534** | **72.0%** | **28.0%** | 5,383 | 7,074 |
-| **P=16** | **866,551** | **567,537** | **65.5%** | **34.5%** | 4,864 | 23,983 |
+| **P=1** | **188,395** | **135,906** | **72.1%** | **27.9%** | 5,910 | 1,071 |
+| **P=16** | **1,901,141** | **1,204,819** | **63.4%** | **36.6%** | 103,491 | 36,201 |
 
 ### Lag Under Load
 
 | Pipeline | Samples | Median gap | p95 gap | Max gap | Max catch-up |
 | :--- | :---: | :---: | :---: | :---: | :---: |
-| **P=1** | 228 | 0 B | 180 B | **4,770 B** | 0.1 ms |
-| **P=16** | 55 | 199,620 B | 3,777,390 B | **4,127,445 B** | 88.8 ms |
+| **P=1** | 218 | 0 B | 630 B | **12,420 B** | 0.1 ms |
+| **P=16** | 27 | 6,950,655 B | 14,673,870 B | **15,409,575 B** | 382.8 ms |
 
 *Context*: macOS laptop, `darwin/arm64`, Go 1.27.1, commit `aaed613`, timestamp `2026-10-23T07:38:03Z`. Replication under P=16 retained over 567,000 rps with zero link drops.
 

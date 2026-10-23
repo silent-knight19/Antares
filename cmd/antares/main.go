@@ -122,6 +122,7 @@ func main() {
 		IdleTimeout: *idleTimeout,
 		Stats:       exec.Stats(),
 	}, exec.Handle)
+	srv.SetBatchHandler(exec.HandleBatch)
 	if err := srv.Start(); err != nil {
 		logger.Error("listen failed", "addr", addr, "err", err)
 		exec.Close()

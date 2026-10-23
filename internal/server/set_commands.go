@@ -75,10 +75,12 @@ func saddCommand(st *store.Store, args [][]byte, out *protocol.Encoder) {
 	index := v.SetIndex
 	dataset := v.Usage.Dataset
 	if !exists || index == nil {
-		index = buildSetIndex(members)
 		if !exists {
+			index = make(map[string]int, max(len(args)-1, 64))
 			members = make([][]byte, 0, max(len(args)-1, 64))
 			dataset = 0
+		} else {
+			index = buildSetIndex(members)
 		}
 	}
 	added := int64(0)

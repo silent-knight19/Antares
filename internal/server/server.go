@@ -26,11 +26,17 @@ const (
 	refusalDeadline = 5 * time.Second
 )
 
+var pongBytes = []byte("+PONG\r\n")
+
 // Handler executes one parsed request and writes its reply to out. The
 // executor replaces this at P2.2; P1.4 hands requests to it in arrival order.
 // conn carries per-connection state (transaction queue and WATCH set) and is
 // unique for the lifetime of the TCP connection.
 type Handler func(req protocol.Request, out *protocol.Encoder, conn *ConnState)
+
+// BatchHandler executes multiple pipelined requests from one connection in order
+// and writes all replies sequentially to out.
+type BatchHandler func(batch []protocol.Request, out *protocol.Encoder, conn *ConnState)
 
 type Config struct {
 	Addr        string
@@ -40,8 +46,9 @@ type Config struct {
 }
 
 type Server struct {
-	cfg     Config
-	handler Handler
+	cfg          Config
+	handler      Handler
+	batchHandler BatchHandler
 
 	mu          sync.Mutex
 	ln          net.Listener
@@ -76,6 +83,11 @@ func New(cfg Config, handler Handler) *Server {
 		drained:  make(chan struct{}),
 		forcedCh: make(chan struct{}),
 	}
+}
+
+// SetBatchHandler installs a pipeline batch processor.
+func (s *Server) SetBatchHandler(bh BatchHandler) {
+	s.batchHandler = bh
 }
 
 func (s *Server) Start() error {
@@ -262,12 +274,47 @@ func (s *Server) serveConn(conn net.Conn) {
 			}
 			return
 		}
-		if s.handler != nil {
+		if s.handler == nil {
+			continue
+		}
+
+		// Fast path: PING outside MULTI transactions
+		if s.batchHandler != nil && !connState.tx.active && len(req) <= 2 && isPing(req[0]) {
+			if s.cfg.Stats != nil {
+				s.cfg.Stats.Commands.Add(1)
+			}
+			if len(req) == 1 {
+				bw.Write(pongBytes)
+			} else {
+				enc.Reset()
+				enc.Bulk(req[1])
+				bw.Write(enc.Bytes())
+			}
+			continue
+		}
+
+		// Fast path for pipelined requests: batch drain all requests buffered in br
+		if br.Buffered() > 0 && s.batchHandler != nil && !connState.streaming {
+			batch := []protocol.Request{req}
+			for br.Buffered() > 0 && len(batch) < 64 {
+				nextReq, err := protocol.ReadRequest(br)
+				if err != nil {
+					break
+				}
+				batch = append(batch, nextReq)
+			}
 			enc.Reset()
-			s.handler(req, enc, connState)
+			s.batchHandler(batch, enc, connState)
 			if !connState.streaming {
 				bw.Write(enc.Bytes())
 			}
+			continue
+		}
+
+		enc.Reset()
+		s.handler(req, enc, connState)
+		if !connState.streaming {
+			bw.Write(enc.Bytes())
 		}
 		// No explicit flush here: connIO.Read flushes pending replies right
 		// before the parser blocks on the socket, so a burst of fully
@@ -332,4 +379,12 @@ func (s *Server) forceCloseConns() bool {
 
 func retryAccept(err error) bool {
 	return !errors.Is(err, net.ErrClosed)
+}
+
+func isPing(b []byte) bool {
+	return len(b) == 4 &&
+		(b[0] == 'p' || b[0] == 'P') &&
+		(b[1] == 'i' || b[1] == 'I') &&
+		(b[2] == 'n' || b[2] == 'N') &&
+		(b[3] == 'g' || b[3] == 'G')
 }

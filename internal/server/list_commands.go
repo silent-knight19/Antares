@@ -124,7 +124,7 @@ func pushList(st *store.Store, args [][]byte, left bool, out *protocol.Encoder) 
 
 	if !left {
 		if !exists {
-			v.List = make([][]byte, 0, max(len(elements), 64))
+			v.List = make([][]byte, 0, max(len(elements), 256))
 		}
 		v.List = append(v.List, elements...)
 		v.Usage = listMemoryUsage(key, v)
@@ -146,9 +146,9 @@ func pushList(st *store.Store, args [][]byte, left bool, out *protocol.Encoder) 
 		return
 	}
 
-	headroom := length + n
-	if headroom < 64 {
-		headroom = 64
+	headroom := 2 * (length + n)
+	if headroom < 256 {
+		headroom = 256
 	} else if headroom > 65536 {
 		headroom = 65536
 	}
