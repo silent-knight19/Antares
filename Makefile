@@ -130,6 +130,5 @@ showcase: build ui-build
 ui-dev:
 	cd web && npm run dev
 
-showcase-e2e:
-	@echo "make $@: not implemented yet — arrives at U12 in docs/PLAN.md §6"
-	@exit 1
+showcase-e2e: build ui-build
+	@deploy/demo/run-e2e.sh

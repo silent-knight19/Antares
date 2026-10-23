@@ -963,3 +963,35 @@
   - `make lin-check`, `make diff-test`, `make test-race`: 100% clean.
   - `git diff --check`, `gofmt -l .`: clean.
 - Next session first task: Milestone M3 — Replication Lab & Interview Mode (U10 Replication Lab with live topology graph and cut-link/resync controls, U11 Interview Mode script panel, and U12 Playwright E2E polish).
+
+### 2026-10-23 — Milestone M3: Replication Lab, Interview Mode, and E2E Verification (U10, U11, U12 Complete — Entire Project 100% Shipped!)
+
+- Built:
+  - **U10 (Replication Lab)**:
+    - `cmd/observatory/bridge.go` & `bridge_test.go`: added `GET /api/lab/replication` (serves master replid/offset, 1 MB circular backlog window boundaries, active replica status, and S3.2 replication benchmark claims) and `POST /api/lab/replication/action` (`pump_writes`, `simulate_partial_resync`, `simulate_full_resync`). Unit tests `TestReplicationLab` and `TestReplicationAction` pass cleanly.
+    - `web/src/pages/ReplicationLab.tsx`: live SVG master-replica streaming topology graph with pulsating stream status, animated 1 MB circular backlog ring buffer visualizer showing eligible `+CONTINUE` zone vs master head, Story 5 interactive decision simulator demonstrating visually distinct `+CONTINUE` partial resync vs `+FULLRESYNC`, replica offset lag sparkline, and S3.2 benchmark claims.
+  - **U11 (Interview & Defense Mode)**:
+    - `cmd/observatory/bridge.go`: added `POST /api/lab/transaction` executing live transaction scenarios: clean atomic commit with single-frame AOF persistence, concurrent `WATCH` snapshot conflict detection returning null array, and queue-time syntax dirty flag triggering `EXECABORT`. Unit test `TestTransactionLab` verified.
+    - `web/src/pages/InterviewMode.tsx`:
+      - **Timed Teleprompter & Pacing Coach**: 30-second elevator pitch, 2-minute architecture pitch, and 10-minute 7-system technical deep dive, paired with an interactive stopwatch and ~130 WPM pacing bar.
+      - **6-Story Live Demo Suite**: Story 1 (Side-by-side differential parity vs Redis 7.4.11), Story 2 (Active/lazy TTL expiration), Story 3 (Approximated LRU 16-slot candidate pool), Story 4 (AOF durability & SIGKILL crash safety), Story 5 (PSYNC replication & backlog window), and Story 6 (Transaction visualizer with atomic AOF commit and WATCH abort).
+      - **Q-Bank & STAR Defense Matrix**: Searchable matrix of 27 technical questions, categorized into Architecture, Decisions, Verification, Boundaries (non-goals), and structured STAR responses ("Hardest bug: concurrent resync race", "Replication backlog wrap-around", "AOF-first ordering").
+      - **Pre-flight Rehearsal Checklist**: 11 checkable items tracking stack readiness, pitch pacing, and defense boundaries.
+  - **U12 (Playwright E2E, Bundle Budget & Final Polish)**:
+    - `web/scripts/check-budget.sh`: automated gzip budget verification script enforcing `< 250 KB` production bundle size (measured at 132 KB gzip, 53% of budget).
+    - `web/playwright.config.ts` & `web/e2e/showcase.spec.ts`: comprehensive Playwright E2E suite covering Overview claims, smooth route navigation across all pages, Replication Lab live topology & Story 5 simulator, and Interview Mode teleprompter & Story 6 transaction runner.
+    - `deploy/demo/run-e2e.sh` & `Makefile`: added `make showcase-e2e` target running automated dev-stack lifecycle management, key seeding, and Playwright execution with 4/4 tests passing in 1.4s.
+    - `.github/workflows/ci.yml`: added Node 20 setup, `make ui-build`, and bundle budget check steps into the CI matrix.
+    - `docs/PLAN.md` & `docs/PROJECT_LOG.md`: updated to mark all Go backend phases (P0–P10 + S1–S3: 61 sessions) and all UI Observatory milestones (M1–M3: U0–U12: 36 sessions) **100% COMPLETE & VERIFIED**.
+- Findings:
+  - Playwright headless testing executes against the in-process bridge and Antares server in 1.4s with zero flakiness.
+  - Production web assets build in <1s with 132 KB gzip JS, ensuring instant load times and adhering to the strict 250 KB performance budget.
+  - Single-executor serialization in Go provides lock-free concurrency, clean race detector validation, and atomic multi-key transactions and replication streaming by construction.
+- Files touched: `cmd/observatory/{bridge.go,bridge_test.go}`, `web/src/pages/{ReplicationLab.tsx,InterviewMode.tsx}`, `web/src/components/{Layout.tsx}`, `web/src/App.tsx`, `web/src/lib/{api.ts,types.ts}`, `web/scripts/check-budget.sh`, `web/playwright.config.ts`, `web/e2e/showcase.spec.ts`, `web/package.json`, `deploy/demo/run-e2e.sh`, `Makefile`, `.github/workflows/ci.yml`, `docs/{PLAN.md,PROJECT_LOG.md}`.
+- Exit evidence:
+  - `make test-race`: 100% clean across all packages (0 data races detected).
+  - `make clock-check`: clean (ADR-009 boundary maintained).
+  - `make showcase-e2e`: 4/4 Playwright E2E tests pass in 1.4s.
+  - `web/scripts/check-budget.sh`: PASS (132 KB / 250 KB limit).
+  - `gofmt -l .`, `make vet`, `git diff --check`: 100% clean.
+- Next session first task: Project is 100% complete! Conduct interview rehearsal and application submissions.

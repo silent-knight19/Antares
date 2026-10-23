@@ -44,3 +44,10 @@ jobs:
         run: REDIS_REF_ADDR=127.0.0.1:6379 go test -count=1 -run 'TestDiff' ./tests/differential/
       - name: fuzz smoke
         run: make fuzz FUZZTIME=20s
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: web build & bundle budget check
+        run: |
+          make ui-build
+          ./web/scripts/check-budget.sh
