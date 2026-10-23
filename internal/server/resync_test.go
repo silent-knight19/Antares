@@ -266,4 +266,3 @@ func TestReplicaDatasetEqualityConcurrentFuzz(t *testing.T) {
 
 	assertStoresEqual(t, masterStore, replicaStore)
 }
-

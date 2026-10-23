@@ -394,4 +394,3 @@ func TestReplicationEdgeCasesAndMemorySafety(t *testing.T) {
 		t.Fatalf("negative ACK offset was accepted:\n%s", info3)
 	}
 }
-

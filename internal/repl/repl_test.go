@@ -177,4 +177,3 @@ func TestSlaveManagementAndInfoFormatting(t *testing.T) {
 		t.Fatalf("INFO replication missing re-indexed slave0:\n%s", infoAfterRemove)
 	}
 }
-

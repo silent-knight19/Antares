@@ -10,8 +10,8 @@ import (
 
 func TestTrackedReaderByteAccuracy(t *testing.T) {
 	cmd1 := []byte("*3\r\n$3\r\nSET\r\n$3\r\nfoo\r\n$3\r\nbar\r\n") // 31 bytes
-	cmd2 := []byte("*1\r\n$4\r\nPING\r\n")                        // 14 bytes
-	cmd3 := []byte("*2\r\n$3\r\nDEL\r\n$3\r\nfoo\r\n")            // 21 bytes
+	cmd2 := []byte("*1\r\n$4\r\nPING\r\n")                          // 14 bytes
+	cmd3 := []byte("*2\r\n$3\r\nDEL\r\n$3\r\nfoo\r\n")              // 21 bytes
 
 	var stream bytes.Buffer
 	stream.Write(cmd1)

@@ -402,4 +402,3 @@ func TestReplicaFullResyncAndApplyLoop(t *testing.T) {
 	_ = pw.Close()
 	_ = <-loopErrCh
 }
-
