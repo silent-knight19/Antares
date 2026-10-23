@@ -762,3 +762,30 @@
   - "Why must AOF append precede feeding the replication backlog?" → If the backlog were fed first and the AOF disk write subsequently failed with `-MISCONF`, the client would be told the write failed while replicas had already received and applied it, creating unrecoverable state divergence.
   - "How is split-brain prevented during promotion?" → Promoting a replica with `REPLICAOF NO ONE` assigns a fresh random replid and resets the backlog. If an old master subsequently rejoins, the replid mismatch triggers a full resync, overwriting divergent state.
 - Proof: `internal/repl/` (`handshake.go`, `backlog.go`, `repl.go`, `snapshot.go`), `internal/server/persistence.go` (`appendEffects`), `internal/server/executor.go` (`persistEvictions`), `internal/server/replica_commands.go`; `TestPSyncDecisionPath`, `TestReplicaReconnectUsesPartialResync`, `TestSlowReplicaDoesNotBlockMaster`, `TestSlowFullResyncDisconnectsOnWriteTimeout`, `TestReplicaChaos50Kills`, `TestSplitBrainPromotionForcesFullResync`, `TestAOFAppendFailureDoesNotFeedReplication`; `docs/FAILURE_MODES.md`, `tests/linearizability/linearizability_test.go`, `bench/scripts/run-repl-bench.py`.
+
+## ADR-031 — Pipelined Command Batching, Zero-Channel Fast Paths, and Collection Memory Alignment
+- Date: 2026-10-23 · Phase: Optimization · Status: Accepted
+- Context: While Antares was 2.5× faster than reference Redis 7.4.11 in sequential non-pipelined workloads ($P=1$), initial pipelined benchmarks ($P=16$) showed minor deficits on `LPUSH` (-12.5%), `SPOP` (-9.5%), `SADD` (-9.1%), and `RPUSH` (-4.3%). Profiling revealed that per-command channel synchronization across 50 concurrent client connections was generating 800 goroutine context switches per pipeline batch. In addition, set memory calculation was performing an $O(N)$ full-scan on every mutation, list headroom expansion was too small, and stateless `PING` commands were competing for executor turns.
+- Options:
+  - A. Multi-threaded sharded keyspace with mutexes per bucket.
+  - B. Pipeline batch draining (`HandleBatch`) across incoming connection buffers, zero-channel stateless command fast paths (`PING`), $O(1)$ set memory formulas, and geometric list headroom doubling ($2 \times (\text{len} + n)$).
+  - C. Increase channel buffer sizes only without batching.
+- Decision: B.
+  - **Pipeline Batch Draining (`HandleBatch`)**: When `br.Buffered() > 0`, the connection goroutine drains up to 64 consecutive requests from `bufio.Reader` directly into a `batch []protocol.Request` slice and dispatches it in ONE channel operation to the executor. The executor processes all commands sequentially and fires ONE completion signal, reducing scheduler context switches by up to 93.75%.
+  - **Zero-Channel Direct `PING` Bypass**: Standalone `PING` outside transactions writes pre-allocated static bytes (`+PONG\r\n`) directly to the connection writer with an atomic counter increment, bypassing the executor channel completely.
+  - **$O(1)$ Set Memory Tracking & Pre-allocated Indexing**: Replaced full-set scans with $O(1)$ arithmetic calculation (`setMemoryUsage`) and 64-capacity initial map allocation.
+  - **Geometric List Headroom Expansion**: Doubled list expansion headroom ($2 \times (\text{len} + n)$) with an initial capacity of 256 elements, eliminating repeated slice allocations on `LPUSH` and `RPUSH`.
+- Why chosen:
+  - Preserves the single-executor concurrency model: zero keyspace locks, 100% race-detector clean.
+  - Outpaces reference Redis 7.4.11 across 100% of benchmark workloads (all 13 commands, both $P=1$ and $P=16$).
+  - Pipelined throughput increased from 833k rps to **2.50M – 3.33M rps** (+38.5% to +233.3% lead over Redis).
+- Why rejected:
+  - A: Violates single-executor simplicity (ADR-002), complicates atomic transactions and AOF append serialization, and introduces lock contention.
+  - C: Channel buffers do not reduce the number of goroutine deschedule/reschedule events per command.
+- Trade-offs accepted:
+  - Batched requests execute sequentially under a single turn: a very large batch from one connection could briefly delay other connections if not clamped; clamped to 64 requests per drain.
+- Interview Q&A:
+  - "Why did Go originally lag behind C Redis in pipelined execution?" → Because delivering 16 pipelined commands one-by-one over a channel forced 16 goroutine deschedule/reschedules per batch per connection. Batch draining collapses 16 round-trips into 1.
+  - "How did you ensure the PING bypass doesn't violate transaction atomicity?" → The bypass explicitly checks `!connState.tx.active`. If a client has opened a `MULTI` transaction, `PING` is queued normally in the transaction state machine.
+- Proof: `internal/server/server.go`, `internal/server/executor.go`, `internal/server/set_commands.go`, `internal/server/list_commands.go`, `cmd/antares/main.go`; `docs/BENCHMARKS.md`, `bench/results/fbca281.json`, `claims.json`.
+
