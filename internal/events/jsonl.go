@@ -26,7 +26,7 @@ func NewJSONLSink(path string) (*JSONLSink, error) {
 }
 
 func newJSONLSink(path string, max int64) (*JSONLSink, error) {
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
 		return nil, err
 	}
@@ -75,7 +75,7 @@ func (s *JSONLSink) rotate() error {
 	backup := s.path + ".1"
 	_ = os.Remove(backup)
 	if err := os.Rename(s.path, backup); err != nil {
-		f, reopenErr := os.OpenFile(s.path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+		f, reopenErr := os.OpenFile(s.path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 		if reopenErr != nil {
 			s.warn("event log reopen failed", reopenErr)
 		} else {
@@ -83,7 +83,7 @@ func (s *JSONLSink) rotate() error {
 		}
 		return err
 	}
-	f, err := os.OpenFile(s.path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	f, err := os.OpenFile(s.path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	s.file = f
 	s.size = 0
 	return err

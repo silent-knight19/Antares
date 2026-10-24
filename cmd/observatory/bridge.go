@@ -108,14 +108,27 @@ func (b *Bridge) routes() http.Handler {
 	mux.HandleFunc("GET /api/claims", b.handleClaims)
 	mux.HandleFunc("GET /api/benchmarks", b.handleBenchmarks)
 	mux.HandleFunc("POST /api/benchmarks/run", b.handleBenchmarkRun)
-	mux.HandleFunc("POST /api/lab/durability/simulate", b.handleDurabilitySim)
+	mux.HandleFunc("POST /api/lab/durability/simulate", demoModeGate(b.handleDurabilitySim))
 	mux.HandleFunc("GET /api/lab/eviction-pool", b.handleEvictionPool)
 	mux.HandleFunc("GET /api/lab/replication", b.handleReplicationLab)
-	mux.HandleFunc("POST /api/lab/replication/action", b.handleReplicationAction)
-	mux.HandleFunc("POST /api/lab/transaction", b.handleTransactionLab)
+	mux.HandleFunc("POST /api/lab/replication/action", demoModeGate(b.handleReplicationAction))
+	mux.HandleFunc("POST /api/lab/transaction", demoModeGate(b.handleTransactionLab))
 	mux.HandleFunc("GET /api/events/stream", b.handleEvents)
 	mux.Handle("/", http.HandlerFunc(b.serveStatic))
 	return b.guard(mux)
+}
+
+// demoModeGate ensures destructive lab endpoints are only accessible when DEMO_MODE=1.
+func demoModeGate(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if os.Getenv("DEMO_MODE") != "1" {
+			writeJSON(w, http.StatusForbidden, map[string]string{
+				"error": "lab endpoint disabled: DEMO_MODE=1 required",
+			})
+			return
+		}
+		next(w, r)
+	}
 }
 
 // guard keeps the local console out of reach of DNS rebinding and cross-site

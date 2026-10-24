@@ -101,7 +101,7 @@ func Open(path string, policy FsyncPolicy) (*Writer, error) {
 }
 
 func openWriter(path string, policy FsyncPolicy, syncFn func(*os.File) error, interval time.Duration) (*Writer, error) {
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
 		return nil, err
 	}
@@ -396,7 +396,7 @@ func (w *Writer) finishRewrite(tempPath string) error {
 	buffered := append([]byte(nil), w.rewriteBuf...)
 	w.mu.Unlock()
 
-	tmp, err := os.OpenFile(tempPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	tmp, err := os.OpenFile(tempPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
 		return err
 	}
@@ -420,7 +420,7 @@ func (w *Writer) finishRewrite(tempPath string) error {
 		return err
 	}
 	syncDir(w.path)
-	f, err := os.OpenFile(w.path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	f, err := os.OpenFile(w.path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
 		w.markFailed(err)
 		w.mu.Lock()
@@ -464,7 +464,7 @@ func syncDir(path string) {
 }
 
 func (w *Writer) reopenAfterFailedRewrite() {
-	f, err := os.OpenFile(w.path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	f, err := os.OpenFile(w.path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
 		w.markFailed(err)
 		return

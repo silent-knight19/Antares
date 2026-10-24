@@ -98,6 +98,16 @@ func runIteration(t *testing.T, bin string, seed int) {
 		}
 	}()
 
+	startWait := time.Now()
+	for time.Since(startWait) < 5*time.Second {
+		mu.Lock()
+		count := len(acked)
+		mu.Unlock()
+		if count > 0 {
+			break
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
 	time.Sleep(time.Duration(10+seed%30) * time.Millisecond)
 	if err := cmd.Process.Kill(); err != nil {
 		t.Fatalf("kill: %v", err)

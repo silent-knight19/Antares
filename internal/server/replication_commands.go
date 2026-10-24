@@ -296,12 +296,19 @@ func (e *Executor) replconfCommand(args [][]byte, out *protocol.Encoder, conn *C
 	sub := strings.ToLower(string(args[0]))
 	switch sub {
 	case "listening-port":
-		if len(args) >= 2 {
-			if port, err := strconv.Atoi(string(args[1])); err == nil && port >= 0 && port <= 65535 {
-				slaveID := e.ensureSlave(conn)
-				if slaveID != 0 && e.repl != nil {
-					e.repl.UpdateSlavePort(slaveID, port)
-				}
+		if len(args) < 2 {
+			out.Error(protocol.SyntaxError)
+			return
+		}
+		port, err := strconv.Atoi(string(args[1]))
+		if err != nil {
+			out.Error(protocol.NotInteger)
+			return
+		}
+		if port >= 0 && port <= 65535 {
+			slaveID := e.ensureSlave(conn)
+			if slaveID != 0 && e.repl != nil {
+				e.repl.UpdateSlavePort(slaveID, port)
 			}
 		}
 		out.Simple("OK")

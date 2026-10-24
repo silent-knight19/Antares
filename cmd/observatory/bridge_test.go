@@ -387,6 +387,7 @@ func TestBenchmarks(t *testing.T) {
 }
 
 func TestDurabilitySim(t *testing.T) {
+	t.Setenv("DEMO_MODE", "1")
 	_, ts := newTestBridge(t)
 	payload, _ := json.Marshal(map[string]any{"count": 10})
 	resp, err := http.Post(ts.URL+"/api/lab/durability/simulate", "application/json", bytes.NewReader(payload))
@@ -451,6 +452,7 @@ func TestReplicationLab(t *testing.T) {
 }
 
 func TestReplicationAction(t *testing.T) {
+	t.Setenv("DEMO_MODE", "1")
 	_, ts := newTestBridge(t)
 
 	// 1. Pump writes
@@ -519,6 +521,7 @@ func TestReplicationAction(t *testing.T) {
 }
 
 func TestTransactionLab(t *testing.T) {
+	t.Setenv("DEMO_MODE", "1")
 	_, ts := newTestBridge(t)
 
 	// 1. Clean commit

@@ -1,0 +1,979 @@
+{
+	"Golang errors": {},
+	"Issues": [
+		{
+			"severity": "HIGH",
+			"confidence": "MEDIUM",
+			"cwe": {
+				"id": "190",
+				"url": "https://cwe.mitre.org/data/definitions/190.html"
+			},
+			"rule_id": "G115",
+			"details": "integer overflow conversion uint64 -\u003e int64",
+			"file": "/Users/sachinkumarsingh/Projectss/Antares/internal/server/config_commands.go",
+			"code": "203: \t}\n204: \treturn int64(n * mul), true\n205: }\n",
+			"line": "204",
+			"column": "14",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "HIGH",
+			"confidence": "MEDIUM",
+			"cwe": {
+				"id": "190",
+				"url": "https://cwe.mitre.org/data/definitions/190.html"
+			},
+			"rule_id": "G115",
+			"details": "integer overflow conversion int64 -\u003e uint64",
+			"file": "/Users/sachinkumarsingh/Projectss/Antares/internal/server/info_commands.go",
+			"code": "240: \tfield(b, \"maxmemory\", strconv.FormatInt(e.maxmemory, 10))\n241: \tfield(b, \"maxmemory_human\", bytesHuman(uint64(e.maxmemory)))\n242: \tfield(b, \"maxmemory_policy\", e.maxmemoryPolicy)\n",
+			"line": "241",
+			"column": "47",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "HIGH",
+			"confidence": "MEDIUM",
+			"cwe": {
+				"id": "190",
+				"url": "https://cwe.mitre.org/data/definitions/190.html"
+			},
+			"rule_id": "G115",
+			"details": "integer overflow conversion int64 -\u003e uint64",
+			"file": "/Users/sachinkumarsingh/Projectss/Antares/internal/server/info_commands.go",
+			"code": "193: \toverhead := uint64(usage.Total - usage.Dataset)\n194: \tdataset := uint64(usage.Dataset)\n195: \te.stats.ObserveMemory(used)\n",
+			"line": "194",
+			"column": "19",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "HIGH",
+			"confidence": "MEDIUM",
+			"cwe": {
+				"id": "190",
+				"url": "https://cwe.mitre.org/data/definitions/190.html"
+			},
+			"rule_id": "G115",
+			"details": "integer overflow conversion int64 -\u003e uint64",
+			"file": "/Users/sachinkumarsingh/Projectss/Antares/internal/server/info_commands.go",
+			"code": "192: \tused := uint64(usage.Total)\n193: \toverhead := uint64(usage.Total - usage.Dataset)\n194: \tdataset := uint64(usage.Dataset)\n",
+			"line": "193",
+			"column": "20",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "HIGH",
+			"confidence": "MEDIUM",
+			"cwe": {
+				"id": "190",
+				"url": "https://cwe.mitre.org/data/definitions/190.html"
+			},
+			"rule_id": "G115",
+			"details": "integer overflow conversion int64 -\u003e uint64",
+			"file": "/Users/sachinkumarsingh/Projectss/Antares/internal/server/info_commands.go",
+			"code": "191: \tusage := e.store.MemoryUsage()\n192: \tused := uint64(usage.Total)\n193: \toverhead := uint64(usage.Total - usage.Dataset)\n",
+			"line": "192",
+			"column": "16",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "HIGH",
+			"confidence": "MEDIUM",
+			"cwe": {
+				"id": "190",
+				"url": "https://cwe.mitre.org/data/definitions/190.html"
+			},
+			"rule_id": "G115",
+			"details": "integer overflow conversion int64 -\u003e uint32",
+			"file": "/Users/sachinkumarsingh/Projectss/Antares/internal/store/store.go",
+			"code": "94: // lruClock is the current time on the 24-bit seconds clock.\n95: func (s *Store) lruClock() uint32 { return uint32(s.clock.Now().Unix()) \u0026 lruClockMask }\n96: \n",
+			"line": "95",
+			"column": "50",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "HIGH",
+			"confidence": "MEDIUM",
+			"cwe": {
+				"id": "190",
+				"url": "https://cwe.mitre.org/data/definitions/190.html"
+			},
+			"rule_id": "G115",
+			"details": "integer overflow conversion int -\u003e uint64",
+			"file": "/Users/sachinkumarsingh/Projectss/Antares/internal/store/scan.go",
+			"code": "89: \tsize := uint64(minScanBuckets)\n90: \tfor size \u003c uint64(n) {\n91: \t\tsize \u003c\u003c= 1\n",
+			"line": "90",
+			"column": "19",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "HIGH",
+			"confidence": "MEDIUM",
+			"cwe": {
+				"id": "190",
+				"url": "https://cwe.mitre.org/data/definitions/190.html"
+			},
+			"rule_id": "G115",
+			"details": "integer overflow conversion int -\u003e uint64",
+			"file": "/Users/sachinkumarsingh/Projectss/Antares/internal/persist/writer.go",
+			"code": "308: \tw.stats.CurrentSize += int64(len(data))\n309: \tw.stats.Appends += uint64(records)\n310: \tif w.rewriting {\n",
+			"line": "309",
+			"column": "27",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "HIGH",
+			"confidence": "MEDIUM",
+			"cwe": {
+				"id": "190",
+				"url": "https://cwe.mitre.org/data/definitions/190.html"
+			},
+			"rule_id": "G115",
+			"details": "integer overflow conversion int -\u003e uint32",
+			"file": "/Users/sachinkumarsingh/Projectss/Antares/internal/persist/frame.go",
+			"code": "21: \tvar header [FrameHeaderSize]byte\n22: \tbinary.LittleEndian.PutUint32(header[0:4], uint32(len(payload)))\n23: \tbinary.LittleEndian.PutUint32(header[4:8], crc32.ChecksumIEEE(payload))\n",
+			"line": "22",
+			"column": "51",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "HIGH",
+			"confidence": "MEDIUM",
+			"cwe": {
+				"id": "338",
+				"url": "https://cwe.mitre.org/data/definitions/338.html"
+			},
+			"rule_id": "G404",
+			"details": "Use of weak random number generator (math/rand or math/rand/v2 instead of crypto/rand)",
+			"file": "/Users/sachinkumarsingh/Projectss/Antares/internal/server/set_commands.go",
+			"code": "388: \tfor i := int64(0); i \u003c take; i++ {\n389: \t\tout.Bulk(members[rand.IntN(len(members))])\n390: \t}\n",
+			"line": "389",
+			"column": "20",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "HIGH",
+			"confidence": "MEDIUM",
+			"cwe": {
+				"id": "338",
+				"url": "https://cwe.mitre.org/data/definitions/338.html"
+			},
+			"rule_id": "G404",
+			"details": "Use of weak random number generator (math/rand or math/rand/v2 instead of crypto/rand)",
+			"file": "/Users/sachinkumarsingh/Projectss/Antares/internal/server/set_commands.go",
+			"code": "372: \t\tif take == 1 {\n373: \t\t\tout.Bulk(members[rand.IntN(len(members))])\n374: \t\t\treturn\n",
+			"line": "373",
+			"column": "21",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "HIGH",
+			"confidence": "MEDIUM",
+			"cwe": {
+				"id": "338",
+				"url": "https://cwe.mitre.org/data/definitions/338.html"
+			},
+			"rule_id": "G404",
+			"details": "Use of weak random number generator (math/rand or math/rand/v2 instead of crypto/rand)",
+			"file": "/Users/sachinkumarsingh/Projectss/Antares/internal/server/set_commands.go",
+			"code": "354: \tif !hasCount {\n355: \t\tout.Bulk(members[rand.IntN(len(members))])\n356: \t\treturn\n",
+			"line": "355",
+			"column": "20",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "HIGH",
+			"confidence": "MEDIUM",
+			"cwe": {
+				"id": "338",
+				"url": "https://cwe.mitre.org/data/definitions/338.html"
+			},
+			"rule_id": "G404",
+			"details": "Use of weak random number generator (math/rand or math/rand/v2 instead of crypto/rand)",
+			"file": "/Users/sachinkumarsingh/Projectss/Antares/internal/server/set_commands.go",
+			"code": "260: \tfor range take {\n261: \t\tpos := rand.IntN(len(members))\n262: \t\tpopped := members[pos]\n",
+			"line": "261",
+			"column": "10",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "HIGH",
+			"confidence": "MEDIUM",
+			"cwe": {
+				"id": "338",
+				"url": "https://cwe.mitre.org/data/definitions/338.html"
+			},
+			"rule_id": "G404",
+			"details": "Use of weak random number generator (math/rand or math/rand/v2 instead of crypto/rand)",
+			"file": "/Users/sachinkumarsingh/Projectss/Antares/internal/server/set_commands.go",
+			"code": "244: \t\tout.ArrayHeader(1)\n245: \t\tout.Bulk(popMember(st, key, v, rand.IntN(len(members))))\n246: \t\treturn\n",
+			"line": "245",
+			"column": "34",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "HIGH",
+			"confidence": "MEDIUM",
+			"cwe": {
+				"id": "338",
+				"url": "https://cwe.mitre.org/data/definitions/338.html"
+			},
+			"rule_id": "G404",
+			"details": "Use of weak random number generator (math/rand or math/rand/v2 instead of crypto/rand)",
+			"file": "/Users/sachinkumarsingh/Projectss/Antares/internal/server/set_commands.go",
+			"code": "235: \tif !hasCount {\n236: \t\tout.Bulk(popMember(st, key, v, rand.IntN(len(members))))\n237: \t\treturn\n",
+			"line": "236",
+			"column": "34",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "HIGH",
+			"confidence": "MEDIUM",
+			"cwe": {
+				"id": "338",
+				"url": "https://cwe.mitre.org/data/definitions/338.html"
+			},
+			"rule_id": "G404",
+			"details": "Use of weak random number generator (math/rand or math/rand/v2 instead of crypto/rand)",
+			"file": "/Users/sachinkumarsingh/Projectss/Antares/internal/server/hash_commands.go",
+			"code": "386: \tfor i := int64(0); i \u003c take; i++ {\n387: \t\temit(hash[rand.IntN(len(hash))])\n388: \t}\n",
+			"line": "387",
+			"column": "13",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "HIGH",
+			"confidence": "MEDIUM",
+			"cwe": {
+				"id": "338",
+				"url": "https://cwe.mitre.org/data/definitions/338.html"
+			},
+			"rule_id": "G404",
+			"details": "Use of weak random number generator (math/rand or math/rand/v2 instead of crypto/rand)",
+			"file": "/Users/sachinkumarsingh/Projectss/Antares/internal/server/hash_commands.go",
+			"code": "370: \t\tif take == 1 {\n371: \t\t\temit(hash[rand.IntN(len(hash))])\n372: \t\t\treturn\n",
+			"line": "371",
+			"column": "14",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "HIGH",
+			"confidence": "MEDIUM",
+			"cwe": {
+				"id": "338",
+				"url": "https://cwe.mitre.org/data/definitions/338.html"
+			},
+			"rule_id": "G404",
+			"details": "Use of weak random number generator (math/rand or math/rand/v2 instead of crypto/rand)",
+			"file": "/Users/sachinkumarsingh/Projectss/Antares/internal/server/hash_commands.go",
+			"code": "340: \tif !hasCount {\n341: \t\tout.Bulk(hash[rand.IntN(len(hash))].Field)\n342: \t\treturn\n",
+			"line": "341",
+			"column": "17",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "HIGH",
+			"confidence": "MEDIUM",
+			"cwe": {
+				"id": "338",
+				"url": "https://cwe.mitre.org/data/definitions/338.html"
+			},
+			"rule_id": "G404",
+			"details": "Use of weak random number generator (math/rand or math/rand/v2 instead of crypto/rand)",
+			"file": "/Users/sachinkumarsingh/Projectss/Antares/internal/server/collection_helpers.go",
+			"code": "50: \tfor len(seen) \u003c take {\n51: \t\tindex := rand.IntN(n)\n52: \t\tif _, ok := seen[index]; ok {\n",
+			"line": "51",
+			"column": "12",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "HIGH",
+			"confidence": "MEDIUM",
+			"cwe": {
+				"id": "338",
+				"url": "https://cwe.mitre.org/data/definitions/338.html"
+			},
+			"rule_id": "G404",
+			"details": "Use of weak random number generator (math/rand or math/rand/v2 instead of crypto/rand)",
+			"file": "/Users/sachinkumarsingh/Projectss/Antares/internal/server/collection_helpers.go",
+			"code": "43: \tif take \u003e n/2 {\n44: \t\tfor _, index := range rand.Perm(n)[:take] {\n45: \t\t\temit(index)\n",
+			"line": "44",
+			"column": "25",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "HIGH",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "22",
+				"url": "https://cwe.mitre.org/data/definitions/22.html"
+			},
+			"rule_id": "G703",
+			"details": "Path traversal via taint analysis: os.Stat",
+			"file": "/Users/sachinkumarsingh/Projectss/Antares/cmd/observatory/bridge.go",
+			"code": "1474: \t\tfull := filepath.Join(b.cfg.WebDir, rel)\n1475: \t\tif info, err := os.Stat(full); err == nil \u0026\u0026 !info.IsDir() {\n1476: \t\t\thttp.ServeFile(w, r, full)\n",
+			"line": "1475",
+			"column": "26",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "HIGH",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "22",
+				"url": "https://cwe.mitre.org/data/definitions/22.html"
+			},
+			"rule_id": "G703",
+			"details": "Path traversal via taint analysis: net/http.ServeFile",
+			"file": "/Users/sachinkumarsingh/Projectss/Antares/cmd/observatory/bridge.go",
+			"code": "1475: \t\tif info, err := os.Stat(full); err == nil \u0026\u0026 !info.IsDir() {\n1476: \t\t\thttp.ServeFile(w, r, full)\n1477: \t\t\treturn\n",
+			"line": "1476",
+			"column": "18",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "MEDIUM",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "22",
+				"url": "https://cwe.mitre.org/data/definitions/22.html"
+			},
+			"rule_id": "G304",
+			"details": "Potential file inclusion via variable",
+			"file": "/Users/sachinkumarsingh/Projectss/Antares/internal/persist/writer.go",
+			"code": "398: \n399: \ttmp, err := os.OpenFile(tempPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)\n400: \tif err != nil {\n",
+			"line": "399",
+			"column": "14",
+			"nosec": false,
+			"suppressions": null,
+			"autofix": "Consider using os.Root to scope file access under a fixed root (Go \u003e=1.24). Prefer root.Open/root.Stat over os.Open/os.Stat to prevent directory traversal."
+		},
+		{
+			"severity": "MEDIUM",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "22",
+				"url": "https://cwe.mitre.org/data/definitions/22.html"
+			},
+			"rule_id": "G304",
+			"details": "Potential file inclusion via variable",
+			"file": "/Users/sachinkumarsingh/Projectss/Antares/internal/persist/writer.go",
+			"code": "103: func openWriter(path string, policy FsyncPolicy, syncFn func(*os.File) error, interval time.Duration) (*Writer, error) {\n104: \tf, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)\n105: \tif err != nil {\n",
+			"line": "104",
+			"column": "12",
+			"nosec": false,
+			"suppressions": null,
+			"autofix": "Consider using os.Root to scope file access under a fixed root (Go \u003e=1.24). Prefer root.Open/root.Stat over os.Open/os.Stat to prevent directory traversal."
+		},
+		{
+			"severity": "MEDIUM",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "22",
+				"url": "https://cwe.mitre.org/data/definitions/22.html"
+			},
+			"rule_id": "G304",
+			"details": "Potential file inclusion via variable",
+			"file": "/Users/sachinkumarsingh/Projectss/Antares/internal/persist/recovery.go",
+			"code": "36: \tvar report RecoveryReport\n37: \tf, err := os.Open(path)\n38: \tif errors.Is(err, os.ErrNotExist) {\n",
+			"line": "37",
+			"column": "12",
+			"nosec": false,
+			"suppressions": null,
+			"autofix": "Consider using os.Root to scope file access under a fixed root (Go \u003e=1.24). Prefer root.Open/root.Stat over os.Open/os.Stat to prevent directory traversal."
+		},
+		{
+			"severity": "MEDIUM",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "22",
+				"url": "https://cwe.mitre.org/data/definitions/22.html"
+			},
+			"rule_id": "G304",
+			"details": "Potential file inclusion via variable",
+			"file": "/Users/sachinkumarsingh/Projectss/Antares/internal/events/jsonl.go",
+			"code": "28: func newJSONLSink(path string, max int64) (*JSONLSink, error) {\n29: \tf, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)\n30: \tif err != nil {\n",
+			"line": "29",
+			"column": "12",
+			"nosec": false,
+			"suppressions": null,
+			"autofix": "Consider using os.Root to scope file access under a fixed root (Go \u003e=1.24). Prefer root.Open/root.Stat over os.Open/os.Stat to prevent directory traversal."
+		},
+		{
+			"severity": "MEDIUM",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "22",
+				"url": "https://cwe.mitre.org/data/definitions/22.html"
+			},
+			"rule_id": "G304",
+			"details": "Potential file inclusion via variable",
+			"file": "/Users/sachinkumarsingh/Projectss/Antares/cmd/observatory/bridge.go",
+			"code": "595: \t\tlatestFile = matches[len(matches)-1]\n596: \t\treportData, _ = os.ReadFile(latestFile)\n597: \t}\n",
+			"line": "596",
+			"column": "19",
+			"nosec": false,
+			"suppressions": null,
+			"autofix": "Consider using os.Root to scope file access under a fixed root (Go \u003e=1.24). Prefer root.Open/root.Stat over os.Open/os.Stat to prevent directory traversal."
+		},
+		{
+			"severity": "MEDIUM",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "22",
+				"url": "https://cwe.mitre.org/data/definitions/22.html"
+			},
+			"rule_id": "G304",
+			"details": "Potential file inclusion via variable",
+			"file": "/Users/sachinkumarsingh/Projectss/Antares/cmd/observatory/bridge.go",
+			"code": "591: \t\tlatestFile = benchFiles[len(benchFiles)-1]\n592: \t\treportData, _ = os.ReadFile(latestFile)\n593: \t} else if len(matches) \u003e 0 {\n",
+			"line": "592",
+			"column": "19",
+			"nosec": false,
+			"suppressions": null,
+			"autofix": "Consider using os.Root to scope file access under a fixed root (Go \u003e=1.24). Prefer root.Open/root.Stat over os.Open/os.Stat to prevent directory traversal."
+		},
+		{
+			"severity": "MEDIUM",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "22",
+				"url": "https://cwe.mitre.org/data/definitions/22.html"
+			},
+			"rule_id": "G304",
+			"details": "Potential file inclusion via variable",
+			"file": "/Users/sachinkumarsingh/Projectss/Antares/cmd/observatory/bridge.go",
+			"code": "548: \tfor _, p := range candidates {\n549: \t\tif content, readErr := os.ReadFile(p); readErr == nil {\n550: \t\t\tdata = content\n",
+			"line": "549",
+			"column": "26",
+			"nosec": false,
+			"suppressions": null,
+			"autofix": "Consider using os.Root to scope file access under a fixed root (Go \u003e=1.24). Prefer root.Open/root.Stat over os.Open/os.Stat to prevent directory traversal."
+		},
+		{
+			"severity": "MEDIUM",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "276",
+				"url": "https://cwe.mitre.org/data/definitions/276.html"
+			},
+			"rule_id": "G302",
+			"details": "Expect file permissions to be 0600 or less",
+			"file": "/Users/sachinkumarsingh/Projectss/Antares/internal/persist/writer.go",
+			"code": "466: func (w *Writer) reopenAfterFailedRewrite() {\n467: \tf, err := os.OpenFile(w.path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)\n468: \tif err != nil {\n",
+			"line": "467",
+			"column": "12",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "MEDIUM",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "276",
+				"url": "https://cwe.mitre.org/data/definitions/276.html"
+			},
+			"rule_id": "G302",
+			"details": "Expect file permissions to be 0600 or less",
+			"file": "/Users/sachinkumarsingh/Projectss/Antares/internal/persist/writer.go",
+			"code": "422: \tsyncDir(w.path)\n423: \tf, err := os.OpenFile(w.path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)\n424: \tif err != nil {\n",
+			"line": "423",
+			"column": "12",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "MEDIUM",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "276",
+				"url": "https://cwe.mitre.org/data/definitions/276.html"
+			},
+			"rule_id": "G302",
+			"details": "Expect file permissions to be 0600 or less",
+			"file": "/Users/sachinkumarsingh/Projectss/Antares/internal/persist/writer.go",
+			"code": "398: \n399: \ttmp, err := os.OpenFile(tempPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)\n400: \tif err != nil {\n",
+			"line": "399",
+			"column": "14",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "MEDIUM",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "276",
+				"url": "https://cwe.mitre.org/data/definitions/276.html"
+			},
+			"rule_id": "G302",
+			"details": "Expect file permissions to be 0600 or less",
+			"file": "/Users/sachinkumarsingh/Projectss/Antares/internal/persist/writer.go",
+			"code": "103: func openWriter(path string, policy FsyncPolicy, syncFn func(*os.File) error, interval time.Duration) (*Writer, error) {\n104: \tf, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)\n105: \tif err != nil {\n",
+			"line": "104",
+			"column": "12",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "MEDIUM",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "276",
+				"url": "https://cwe.mitre.org/data/definitions/276.html"
+			},
+			"rule_id": "G302",
+			"details": "Expect file permissions to be 0600 or less",
+			"file": "/Users/sachinkumarsingh/Projectss/Antares/internal/events/jsonl.go",
+			"code": "85: \t}\n86: \tf, err := os.OpenFile(s.path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)\n87: \ts.file = f\n",
+			"line": "86",
+			"column": "12",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "MEDIUM",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "276",
+				"url": "https://cwe.mitre.org/data/definitions/276.html"
+			},
+			"rule_id": "G302",
+			"details": "Expect file permissions to be 0600 or less",
+			"file": "/Users/sachinkumarsingh/Projectss/Antares/internal/events/jsonl.go",
+			"code": "77: \tif err := os.Rename(s.path, backup); err != nil {\n78: \t\tf, reopenErr := os.OpenFile(s.path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)\n79: \t\tif reopenErr != nil {\n",
+			"line": "78",
+			"column": "19",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "MEDIUM",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "276",
+				"url": "https://cwe.mitre.org/data/definitions/276.html"
+			},
+			"rule_id": "G302",
+			"details": "Expect file permissions to be 0600 or less",
+			"file": "/Users/sachinkumarsingh/Projectss/Antares/internal/events/jsonl.go",
+			"code": "28: func newJSONLSink(path string, max int64) (*JSONLSink, error) {\n29: \tf, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)\n30: \tif err != nil {\n",
+			"line": "29",
+			"column": "12",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "LOW",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "118",
+				"url": "https://cwe.mitre.org/data/definitions/118.html"
+			},
+			"rule_id": "G602",
+			"details": "slice index out of range",
+			"file": "/Users/sachinkumarsingh/Projectss/Antares/cmd/observatory/bridge.go",
+			"code": "925: \tif victimIdx \u003e= 0 {\n926: \t\tcandidates[victimIdx].IsVictim = true\n927: \t}\n",
+			"line": "926",
+			"column": "13",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "LOW",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "703",
+				"url": "https://cwe.mitre.org/data/definitions/703.html"
+			},
+			"rule_id": "G104",
+			"details": "Errors unhandled",
+			"file": "/Users/sachinkumarsingh/Projectss/Antares/internal/server/server.go",
+			"code": "374: \tfor _, conn := range conns {\n375: \t\tconn.Close()\n376: \t}\n",
+			"line": "375",
+			"column": "3",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "LOW",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "703",
+				"url": "https://cwe.mitre.org/data/definitions/703.html"
+			},
+			"rule_id": "G104",
+			"details": "Errors unhandled",
+			"file": "/Users/sachinkumarsingh/Projectss/Antares/internal/server/server.go",
+			"code": "356: \tif c.timeout \u003e 0 {\n357: \t\tc.Conn.SetWriteDeadline(time.Now().Add(c.timeout))\n358: \t}\n",
+			"line": "357",
+			"column": "3",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "LOW",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "703",
+				"url": "https://cwe.mitre.org/data/definitions/703.html"
+			},
+			"rule_id": "G104",
+			"details": "Errors unhandled",
+			"file": "/Users/sachinkumarsingh/Projectss/Antares/internal/server/server.go",
+			"code": "345: \tif c.timeout \u003e 0 {\n346: \t\tc.Conn.SetReadDeadline(time.Now().Add(c.timeout))\n347: \t}\n",
+			"line": "346",
+			"column": "3",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "LOW",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "703",
+				"url": "https://cwe.mitre.org/data/definitions/703.html"
+			},
+			"rule_id": "G104",
+			"details": "Errors unhandled",
+			"file": "/Users/sachinkumarsingh/Projectss/Antares/internal/server/server.go",
+			"code": "316: \t\tif !connState.streaming {\n317: \t\t\tbw.Write(enc.Bytes())\n318: \t\t}\n",
+			"line": "317",
+			"column": "4",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "LOW",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "703",
+				"url": "https://cwe.mitre.org/data/definitions/703.html"
+			},
+			"rule_id": "G104",
+			"details": "Errors unhandled",
+			"file": "/Users/sachinkumarsingh/Projectss/Antares/internal/server/server.go",
+			"code": "308: \t\t\tif !connState.streaming {\n309: \t\t\t\tbw.Write(enc.Bytes())\n310: \t\t\t}\n",
+			"line": "309",
+			"column": "5",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "LOW",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "703",
+				"url": "https://cwe.mitre.org/data/definitions/703.html"
+			},
+			"rule_id": "G104",
+			"details": "Errors unhandled",
+			"file": "/Users/sachinkumarsingh/Projectss/Antares/internal/server/server.go",
+			"code": "290: \t\t\t\tenc.Bulk(req[1])\n291: \t\t\t\tbw.Write(enc.Bytes())\n292: \t\t\t}\n",
+			"line": "291",
+			"column": "5",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "LOW",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "703",
+				"url": "https://cwe.mitre.org/data/definitions/703.html"
+			},
+			"rule_id": "G104",
+			"details": "Errors unhandled",
+			"file": "/Users/sachinkumarsingh/Projectss/Antares/internal/server/server.go",
+			"code": "286: \t\t\tif len(req) == 1 {\n287: \t\t\t\tbw.Write(pongBytes)\n288: \t\t\t} else {\n",
+			"line": "287",
+			"column": "5",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "LOW",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "703",
+				"url": "https://cwe.mitre.org/data/definitions/703.html"
+			},
+			"rule_id": "G104",
+			"details": "Errors unhandled",
+			"file": "/Users/sachinkumarsingh/Projectss/Antares/internal/server/server.go",
+			"code": "272: \t\t\t\tbw.Write(enc.Bytes())\n273: \t\t\t\tbw.Flush()\n274: \t\t\t}\n",
+			"line": "273",
+			"column": "5",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "LOW",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "703",
+				"url": "https://cwe.mitre.org/data/definitions/703.html"
+			},
+			"rule_id": "G104",
+			"details": "Errors unhandled",
+			"file": "/Users/sachinkumarsingh/Projectss/Antares/internal/server/server.go",
+			"code": "271: \t\t\t\tenc.Error(protocol.ProtocolErrorReply(pe.Msg))\n272: \t\t\t\tbw.Write(enc.Bytes())\n273: \t\t\t\tbw.Flush()\n",
+			"line": "272",
+			"column": "5",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "LOW",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "703",
+				"url": "https://cwe.mitre.org/data/definitions/703.html"
+			},
+			"rule_id": "G104",
+			"details": "Errors unhandled",
+			"file": "/Users/sachinkumarsingh/Projectss/Antares/internal/server/server.go",
+			"code": "233: \t\t}\n234: \t\tconn.Close()\n235: \t}()\n",
+			"line": "234",
+			"column": "3",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "LOW",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "703",
+				"url": "https://cwe.mitre.org/data/definitions/703.html"
+			},
+			"rule_id": "G104",
+			"details": "Errors unhandled",
+			"file": "/Users/sachinkumarsingh/Projectss/Antares/internal/server/server.go",
+			"code": "210: \t\t\t}\n211: \t\t\tconn.Close()\n212: \t\t\tcontinue\n",
+			"line": "211",
+			"column": "4",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "LOW",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "703",
+				"url": "https://cwe.mitre.org/data/definitions/703.html"
+			},
+			"rule_id": "G104",
+			"details": "Errors unhandled",
+			"file": "/Users/sachinkumarsingh/Projectss/Antares/internal/server/server.go",
+			"code": "208: \t\t\t\tconn.SetWriteDeadline(time.Now().Add(refusalDeadline))\n209: \t\t\t\tconn.Write([]byte(errMaxClients))\n210: \t\t\t}\n",
+			"line": "209",
+			"column": "5",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "LOW",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "703",
+				"url": "https://cwe.mitre.org/data/definitions/703.html"
+			},
+			"rule_id": "G104",
+			"details": "Errors unhandled",
+			"file": "/Users/sachinkumarsingh/Projectss/Antares/internal/server/server.go",
+			"code": "207: \t\t\tif !stopped {\n208: \t\t\t\tconn.SetWriteDeadline(time.Now().Add(refusalDeadline))\n209: \t\t\t\tconn.Write([]byte(errMaxClients))\n",
+			"line": "208",
+			"column": "5",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "LOW",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "703",
+				"url": "https://cwe.mitre.org/data/definitions/703.html"
+			},
+			"rule_id": "G104",
+			"details": "Errors unhandled",
+			"file": "/Users/sachinkumarsingh/Projectss/Antares/internal/server/server.go",
+			"code": "144: \t\tif ln != nil {\n145: \t\t\tln.Close()\n146: \t\t}\n",
+			"line": "145",
+			"column": "4",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "LOW",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "703",
+				"url": "https://cwe.mitre.org/data/definitions/703.html"
+			},
+			"rule_id": "G104",
+			"details": "Errors unhandled",
+			"file": "/Users/sachinkumarsingh/Projectss/Antares/internal/server/persistence.go",
+			"code": "300: \tif err := tmp.Sync(); err != nil {\n301: \t\ttmp.Close()\n302: \t\t_ = e.aof.AbortRewrite(tmpPath)\n",
+			"line": "301",
+			"column": "3",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "LOW",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "703",
+				"url": "https://cwe.mitre.org/data/definitions/703.html"
+			},
+			"rule_id": "G104",
+			"details": "Errors unhandled",
+			"file": "/Users/sachinkumarsingh/Projectss/Antares/internal/server/persistence.go",
+			"code": "295: \tif err := persist.WriteSnapshot(tmp, snapshot); err != nil {\n296: \t\ttmp.Close()\n297: \t\t_ = e.aof.AbortRewrite(tmpPath)\n",
+			"line": "296",
+			"column": "3",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "LOW",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "703",
+				"url": "https://cwe.mitre.org/data/definitions/703.html"
+			},
+			"rule_id": "G104",
+			"details": "Errors unhandled",
+			"file": "/Users/sachinkumarsingh/Projectss/Antares/internal/persist/writer.go",
+			"code": "433: \tif err != nil {\n434: \t\tf.Close()\n435: \t\tw.markFailed(err)\n",
+			"line": "434",
+			"column": "3",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "LOW",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "703",
+				"url": "https://cwe.mitre.org/data/definitions/703.html"
+			},
+			"rule_id": "G104",
+			"details": "Errors unhandled",
+			"file": "/Users/sachinkumarsingh/Projectss/Antares/internal/persist/writer.go",
+			"code": "407: \tif err := w.syncFn(tmp); err != nil {\n408: \t\ttmp.Close()\n409: \t\treturn err\n",
+			"line": "408",
+			"column": "3",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "LOW",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "703",
+				"url": "https://cwe.mitre.org/data/definitions/703.html"
+			},
+			"rule_id": "G104",
+			"details": "Errors unhandled",
+			"file": "/Users/sachinkumarsingh/Projectss/Antares/internal/persist/writer.go",
+			"code": "403: \tif err := writeFull(tmp, buffered); err != nil {\n404: \t\ttmp.Close()\n405: \t\treturn err\n",
+			"line": "404",
+			"column": "3",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "LOW",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "703",
+				"url": "https://cwe.mitre.org/data/definitions/703.html"
+			},
+			"rule_id": "G104",
+			"details": "Errors unhandled",
+			"file": "/Users/sachinkumarsingh/Projectss/Antares/internal/persist/writer.go",
+			"code": "109: \tif err != nil {\n110: \t\tf.Close()\n111: \t\treturn nil, err\n",
+			"line": "110",
+			"column": "3",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "LOW",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "703",
+				"url": "https://cwe.mitre.org/data/definitions/703.html"
+			},
+			"rule_id": "G104",
+			"details": "Errors unhandled",
+			"file": "/Users/sachinkumarsingh/Projectss/Antares/internal/persist/recovery.go",
+			"code": "50: \tif err != nil {\n51: \t\tf.Close()\n52: \t\treturn report, err\n",
+			"line": "51",
+			"column": "3",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "LOW",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "703",
+				"url": "https://cwe.mitre.org/data/definitions/703.html"
+			},
+			"rule_id": "G104",
+			"details": "Errors unhandled",
+			"file": "/Users/sachinkumarsingh/Projectss/Antares/internal/persist/recovery.go",
+			"code": "45: \tif err != nil {\n46: \t\tf.Close()\n47: \t\treturn report, err\n",
+			"line": "46",
+			"column": "3",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "LOW",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "703",
+				"url": "https://cwe.mitre.org/data/definitions/703.html"
+			},
+			"rule_id": "G104",
+			"details": "Errors unhandled",
+			"file": "/Users/sachinkumarsingh/Projectss/Antares/internal/events/jsonl.go",
+			"code": "34: \tif err != nil {\n35: \t\tf.Close()\n36: \t\treturn nil, err\n",
+			"line": "35",
+			"column": "3",
+			"nosec": false,
+			"suppressions": null
+		}
+	],
+	"Stats": {
+		"files": 60,
+		"lines": 12101,
+		"nosec": 0,
+		"found": 60
+	},
+	"GosecVersion": "dev"
+}

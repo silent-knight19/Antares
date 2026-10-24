@@ -128,7 +128,9 @@ func newExecutorWithPing(st *store.Store, reg *Registry, active bool, c clock.Cl
 	}
 	e.repl = repl.NewState(e.stats.ReplID, c)
 	e.store.SetOnLazyExpire(func(key string) {
-		_ = e.persistEvictions([]string{key})
+		if err := e.persistEvictions([]string{key}); err != nil {
+			slog.Error("failed to append lazy expiry eviction to AOF", "key", key, "err", err)
+		}
 	})
 	if reg == nil {
 		reg = NewRegistry()
@@ -366,7 +368,9 @@ func (e *Executor) loop() {
 		case <-timer.C:
 			expiredKeys, _ := e.expiry.RunKeys(e.clock.Now().UnixMilli(), e.cycleBudget())
 			if len(expiredKeys) > 0 {
-				_ = e.persistEvictions(expiredKeys)
+				if err := e.persistEvictions(expiredKeys); err != nil {
+					slog.Error("failed to append active expiry evictions to AOF", "keys", len(expiredKeys), "err", err)
+				}
 			}
 			timer.Reset(e.cycleInterval())
 		case <-e.hzChanged:

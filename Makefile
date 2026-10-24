@@ -16,7 +16,7 @@ REF_ADDR ?= 127.0.0.1:6379
 PORT ?= 6380
 
 .PHONY: help build test test-race vet fmt tidy run run-observatory clean fuzz \
-	verify diff-test clock-check lin-check tcl-expire tcl-incr crash-test bench bench-repl tcl showcase showcase-dev showcase-e2e ui-dev ui-build seed
+	verify diff-test clock-check lin-check tcl-expire tcl-incr crash-test bench bench-repl tcl showcase showcase-dev showcase-e2e ui-dev ui-build seed sec-audit
 
 help:
 	@echo "Antares targets:"
@@ -24,6 +24,7 @@ help:
 	@echo "  test             run all Go tests"
 	@echo "  test-race        run all Go tests with the race detector"
 	@echo "  vet              run go vet"
+	@echo "  sec-audit        run security analysis (staticcheck, govulncheck, gosec, fuzz smoke, security regression suite)"
 	@echo "  fmt              format the tree with gofmt"
 	@echo "  tidy             go mod tidy"
 	@echo "  run              run the antares server on 127.0.0.1:6380 (flags: -port -max-conns -idle-timeout -appendonly -aof-file -appendfsync -aof-repair)"
@@ -132,3 +133,19 @@ ui-dev:
 
 showcase-e2e: build ui-build
 	@deploy/demo/run-e2e.sh
+
+sec-audit:
+	@echo "==> Running staticcheck..."
+	@PATH="$$HOME/go/bin:$$PATH" staticcheck ./... || true
+	@echo "==> Running govulncheck..."
+	@PATH="$$HOME/go/bin:$$PATH" govulncheck ./... || true
+	@echo "==> Running gosec..."
+	@PATH="$$HOME/go/bin:$$PATH" gosec -quiet -exclude=G104 ./... || true
+	@echo "==> Running security regression suite..."
+	$(GO) test -v -count=1 ./security/...
+	$(GO) test -v -count=1 ./cmd/observatory/ -run 'TestBridge(SSRF|CSRF)'
+	@echo "==> Running security fuzz smoke (5s per target)..."
+	$(GO) test -run='^$$' -fuzz=FuzzReadRequest -fuzztime=5s ./internal/protocol/
+	$(GO) test -run='^$$' -fuzz=FuzzRecoverFile -fuzztime=5s ./internal/persist/
+	$(GO) test -run='^$$' -fuzz=FuzzSnapshotStream -fuzztime=5s ./security/
+	@echo "==> Security audit suite complete."
